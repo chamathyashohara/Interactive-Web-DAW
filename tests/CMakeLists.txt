@@ -23,6 +23,10 @@ add_executable(rr_unit_tests
     audio/test_wav_format.cpp
     audio/test_wav_inspect.cpp
     audio/test_wav_writer.cpp
+    network/test_clock_offset.cpp
+    network/test_control_link.cpp
+    network/test_control_protocol.cpp
+    session/test_session_machine.cpp
     shared/test_build_info.cpp
     shared/test_clock.cpp
     shared/test_config.cpp
@@ -32,7 +36,7 @@ add_executable(rr_unit_tests
     shared/test_role.cpp
     session/test_states.cpp)
 
-target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio Catch2::Catch2WithMain)
+target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network Catch2::Catch2WithMain)
 target_include_directories(rr_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/audio")
 rr_set_compiler_options(rr_unit_tests)
 

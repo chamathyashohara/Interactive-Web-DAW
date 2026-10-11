@@ -51,6 +51,9 @@ public:
 
     bool valid() const noexcept;
     void close() noexcept;
+    // Graceful half-close: no more sends; queued data is still delivered (avoids the reset
+    // that an immediate close() sends when unread data is pending, which would discard it).
+    void shutdown_send() noexcept;
     std::intptr_t native() const noexcept { return handle_; }
 
     // Waits until any socket is readable/writable (or timeout). Returns false on error.

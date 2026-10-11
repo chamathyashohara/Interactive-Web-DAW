@@ -211,6 +211,16 @@ void TcpSocket::close() noexcept {
     }
 }
 
+void TcpSocket::shutdown_send() noexcept {
+    if (handle_ != kInvalid) {
+#ifdef _WIN32
+        ::shutdown(raw(handle_), SD_SEND);
+#else
+        ::shutdown(raw(handle_), SHUT_WR);
+#endif
+    }
+}
+
 bool TcpSocket::listen_on(const std::string& ipv4, std::uint16_t port, std::string& error) {
     close();
     sockaddr_in addr{};
