@@ -150,3 +150,68 @@ TEST_CASE("A new target applies at the next fill, not mid-stream", "[media][jitt
     jb.reset();
     CHECK(jb.target() == 1);  // clamped
 }
+
+TEST_CASE("An excessive backlog (playback stall) is cut back to the target at once", "[media][jitter]") {
+    JitterBuffer jb(3, 20);
+    JbPacket out;
+    std::uint32_t next = 0;
+    for (; next < 3; ++next) {
+        jb.insert(packet(next));
+    }
+    REQUIRE(jb.playing());
+    // Playback stalls for 300 ms at 10 ms frames: 30 packets pile up.
+    for (int i = 0; i < 30; ++i) {
+        jb.insert(packet(next++));
+    }
+    CHECK(jb.held() == 33);
+    REQUIRE(jb.pull(out) == Pull::Packet);
+    CHECK(jb.held() == 2);                     // target 3, then one was played
+    CHECK(jb.stats().catchup_frames == 30);
+    CHECK(out.seq == 30);                      // the newest audio is played, not 300 ms old audio
+    CHECK(jb.stats().lost == 0);
+    // Up to target + 8 is tolerated (bursty arrival is normal).
+    for (int i = 0; i < 9; ++i) {
+        jb.insert(packet(next++));
+    }
+    jb.pull(out);
+    CHECK(jb.stats().catchup_frames == 30);
+}
+
+TEST_CASE("A sender pause (sequence stops, playout continues) resyncs after 3 late arrivals", "[media][jitter]") {
+    JitterBuffer jb(2, 20);
+    JbPacket out;
+    jb.insert(packet(0));
+    jb.insert(packet(1));
+    jb.pull(out);
+    jb.pull(out);
+    for (int i = 0; i < 6; ++i) {
+        CHECK(jb.pull(out) == Pull::Underrun);  // the sender paused for 60 ms
+    }
+    // It resumes with seq 2, 3, 4 ... (it never sent 2..7 before): all behind next_seq.
+    CHECK(jb.insert(packet(2)) == Insert::Late);
+    CHECK(jb.insert(packet(3)) == Insert::Late);
+    CHECK(jb.insert(packet(4)) == Insert::Late);  // third in a row: resync, 4 is kept
+    CHECK(jb.stats().resyncs == 1);
+    CHECK_FALSE(jb.playing());
+    jb.insert(packet(5));
+    REQUIRE(jb.playing());
+    REQUIRE(jb.pull(out) == Pull::Packet);
+    CHECK(out.seq == 4);
+    CHECK(jb.stats().underruns == 6);  // not 20: no wait for the stall limit
+}
+
+TEST_CASE("Isolated late packets (reordering) do not resync", "[media][jitter]") {
+    JitterBuffer jb(2, 20);
+    JbPacket out;
+    for (std::uint32_t s = 0; s < 4; ++s) {
+        jb.insert(packet(s));
+    }
+    jb.pull(out);
+    jb.pull(out);
+    CHECK(jb.insert(packet(0)) == Insert::Late);
+    CHECK(jb.insert(packet(4)) == Insert::Accepted);
+    CHECK(jb.insert(packet(1)) == Insert::Late);
+    CHECK(jb.insert(packet(5)) == Insert::Accepted);
+    CHECK(jb.stats().resyncs == 0);
+    CHECK(jb.playing());
+}

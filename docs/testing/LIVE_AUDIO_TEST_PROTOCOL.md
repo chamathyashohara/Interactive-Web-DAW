@@ -1,4 +1,6 @@
-# Live Audio Test Protocol (Stage 7: one-way live audio, producer → performer)
+# Live Audio Test Protocol (Stage 7: one-way, Stage 8: two-way live audio)
+
+> **Stage 8:** live audio is now two-way. §1–§3 are the Stage 7 one-way procedure, kept as they were; the probe reproduces them with `--one-way`. Stage 8 runs and tests are in §4–§6.
 
 **Scope:** the live monitor stream only. The producer's microphone is heard at the performer's PC (Opus over UDP, ADR-017). Session control is SESSION_TEST_PROTOCOL. Two-way talkback is not built.
 
@@ -84,3 +86,62 @@ Troubleshooting:
 - **Performer shows "no live packets":** the producer is not sending, or its reports are failing (see above).
 - **"needs 48000 Hz":** set the device's default format to 48 000 Hz in Windows Sound settings. There is no resampler (ADR-013).
 - **Underruns or concealment counted but no packets lost:** the buffer is too small for the timing on that network or device. Raise the jitter buffer.
+
+## 4. Stage 8: two instances on one PC (done on the development PC, 11 Oct 2026; evidence `2026-10-11_devpc_stage8_duplex_runs.txt`)
+Both probes run with `--live`, which is two-way. The producer's test tone is 440 Hz and the performer's is 660 Hz, so a sink shows who is heard. Each probe saves a sink (`--live-sink wav:`) and, where needed, its source on the same test clock (`--source-wav`). Analyse with `tools/audit/analyse_live_duplex.py --sink … [--source …] --own-hz … --remote-hz …`.
+
+| Run | What it shows | Producer / performer options and script |
+|---|---|---|
+| D1 | Both directions at once; each side hears only the other | tone / tone, wav sinks |
+| D2 | **Recording, send mute and receive mute at once.** Masters complete; masters contain no received audio | `--audio` on both (real input recorded); producer `record`, `mute on/off`, `stop`; performer `hear off/on` |
+| D3 | **Accidental feedback / duplicate audio and software round trip:** the performer sends back what it hears (`--live-source echo`), and the producer finds its own bursts in what it hears | producer `--live-source bursts --source-wav`; performer `--live-source echo`; jitter 3 and 8 frames (**excessive buffering**: the round trip grows with the buffer) |
+| D4 | **Asymmetric failure during a take:** producer → performer blackholed for 6 s; the other direction and both recordings unaffected | performer `blackhole on; wait 6; blackhole off` |
+| D4b | The same without the control-link hint: the performer stops after 3 s (no blind sending) and resumes at once afterwards | performer `--no-control-hint` |
+| D5 | **Device change:** the performer re-opens its input, then its output, while both directions run (real devices, −60 dB) | `--audio --live-sink device --live-gain-db -60`; performer `reopen-input`, `reopen-output` |
+| D6 | Different impairments per direction are counted per direction | producer `--sim-loss 5`; performer `--sim-dup 3 --sim-burst 150:20` |
+
+## 5. Stage 8: two PCs on one private LAN (NOT YET RUN), the acceptance run
+Preconditions:
+- SESSION_TEST_PROTOCOL §2 preconditions.
+- **Headphones on BOTH PCs.** There is no echo cancellation.
+- Input and output at 48 000 Hz on both PCs.
+- Producer firewall rule for UDP on the media port (§3).
+
+Steps (the apps, with the Live audio panel under the Session panel):
+1. Create and join a session. Tick consent on both PCs.
+2. On both PCs: open input and output, tick **Send my microphone live** and **Hear …**, and set the volume to about −30 dB.
+3. **Both people hear each other** (acceptance 1). Each says a sentence; the other confirms hearing it. Note the five status rows on both PCs.
+4. **Recording while talking** (acceptance 2): **Record (both)**, talk for 30 s, **Stop (both)**.
+   - Both takes must be complete.
+   - Listen to each master: it must contain only that PC's own microphone (with headphones, no voice of the other person).
+5. **Mute and monitor controls are independent and visible** (acceptance 3), during a take:
+   - performer **Mute my microphone**: the producer's incoming row shows "remote MUTED", and the performer's recording row still shows RECORDING;
+   - producer untick **Hear the performer**: the performer's outgoing row shows "remote has hearing switched off";
+   - change each volume, then undo each control.
+6. **One direction fails** (acceptance 4), during a take: on the producer PC, block inbound UDP for the media port for about 10 s (disable the §3 rule, or `New-NetFirewallRule … -Action Block`, removed afterwards).
+   - The performer → producer direction stops. The producer's incoming row shows "NO PACKETS".
+   - Producer → performer continues while the control link is up.
+   - **Neither recording row changes. Both takes complete.**
+   - Re-enable the rule: the stream resumes.
+7. **Duplicate audio / feedback check:** with the performer briefly on **speakers** at low volume (only for this check, and NOT during a take), the producer speaks.
+   - The producer hears themselves delayed. This is the failure mode headphones prevent.
+   - Then back to headphones: the echo must be gone.
+8. **Excessive buffering:** set the jitter buffer to 16 frames on one PC, then to 1 frame.
+   - Note the subjective delay and the underruns/concealed per minute, per direction.
+   - Return to 3.
+9. **Device change:** while talking, the performer unplugs the headset (or chooses another device in the audio panel) and plugs it back.
+   - No crash.
+   - The rows show the device state.
+   - The live streams resume after the device is re-opened.
+10. Both PCs: **Export live report (one page)**, and add the test conditions (network, switch, Wi-Fi or cable, distance, headphones) to the test record.
+
+What may be claimed afterwards: only the observed results, with these conditions. No echo cancellation exists, so none may be claimed.
+
+## 6. Echo cancellation, headphones and what the app does about feedback
+- **Echo cancellation is NOT implemented** (LATER-03). Nothing in the app removes the other person's voice from your microphone.
+- **Headphones are required on both PCs.** The Live audio panel says so, and the one-page report records whether headphones were confirmed.
+- What the app does:
+  - it never plays a side's own stream back to it (the stream-id check; `wrong_stream` counter);
+  - it never writes received live audio into a recording (separate rings, ADR-007/017/018);
+  - it lets each person mute their microphone without stopping their recording.
+- Feedback through the air (speakers → microphone) is **not detected automatically in the apps**. It is measured in tests with `analyse_live_duplex.py` (own-tone share and burst delay).

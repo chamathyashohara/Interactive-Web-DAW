@@ -355,3 +355,19 @@ Maximum datagram 1472 bytes (no IP fragmentation on a 1500-byte MTU).
 | Performer (receiver) | received, expected, lost estimate, duplicates, reordered, late, inter-arrival jitter (RFC 3550 estimator over arrival time vs `media_index`), largest arrival gap, buffer fill/target/max, played, lost (concealed), underruns, refills, drift skips, too-early resets, decode errors, queue-full drops, invalid by reason, max decode+mix time per callback, wrong-rate callbacks, output peak |
 
 **Measurement terms (kept distinct):** inter-arrival jitter describes packet timing at the receiver. It is not latency. The loss estimate comes from sequence numbers, and loss after the last received packet cannot be seen. None of these counters measure acoustic (mouth-to-ear) latency, which needs a loopback measurement with real devices (MONITOR_LOOPBACK_TEST_PROTOCOL, not yet run for the live path).
+
+## 13. Live media 1.1 additions: two-way (Stage 8, authoritative where it differs from §12)
+
+Decision: ADR-018. Header layout unchanged (version 1).
+
+| Item | Rule |
+|---|---|
+| Streams | **1** = producer microphone (producer → performer), **2** = performer microphone (performer → producer). Any other id: `bad_payload`. |
+| One UDP flow | Both streams and all reports travel between the producer's bound media socket and the performer's connected socket (one 5-tuple). No new port and no performer firewall rule. |
+| AUDIO flags | bits 0–1 codec (1 = Opus); **bit 2 = sender muted**: the payload is encoded silence and the stream keeps running; bits 3–7 = 0 |
+| Direction check | AUDIO / END_OF_STREAM must carry the receiver's *incoming* stream id, and RECEIVER_REPORT the receiver's *outgoing* stream id. Otherwise `wrong_stream`: dropped and counted (e.g. a side's own stream coming back). |
+| Reports | Whoever receives a stream reports on it every 500 ms (header `stream_id` = that stream). The producer now also reports (on stream 2). Flag bit 0 = "playing" (the receiver's *hear* switch), bit 1 = closing. |
+| Peer learning | Producer: the performer endpoint is learned from **any** valid datagram from the performer's control IP. Performer: fixed peer (connected socket). |
+| Reachability | Send while a valid datagram arrived within 3 s **or** the control link is Connected, unless the peer sent a closing report. One failed direction does not stop the other while control is up. |
+| Sequence numbers | Start at 0 when the endpoint starts and **continue across pauses** (send off/on, peer unreachable). A step back of ≥ 64 counts as a stream restart (`stream_restarts`), not as duplicates. |
+| Jitter buffer | Adds **catch-up** (more than target + max(8, target) held → drop to the target, `catchup_frames`) and **resync** (3 consecutive late arrivals → refill, `resyncs`) |

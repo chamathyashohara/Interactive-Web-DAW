@@ -1,5 +1,5 @@
 // rr_session_probe: scriptable command-line producer or performer, using exactly the library
-// code of the apps (rr_control). For two-instance tests on one PC and two-PC tests without Qt.
+// code of the apps (rr_control, rr_media). For two-instance tests on one PC and two-PC tests without Qt.
 //
 //   rr_session_probe --interfaces
 //   rr_session_probe --producer  [--bind <ip>] [--port <n>] [--code-file <path>] [--audio] [--out <dir>]
@@ -14,36 +14,53 @@
 //   wait-link <State> [s]
 //   record | stop | stop-and-save | drop-link | leave | quit
 //   consent on|off
-//   live on|off           producer: send the live stream; performer: play it (Stage 7)
+//   live on|off           send this side's live stream (Stage 7/8)
+//   mute on|off           send flagged silence instead of the microphone (stream keeps running)
+//   hear on|off           play the incoming live stream (receive mute)
+//   blackhole on|off      TEST ONLY: drop every received media datagram (one direction fails)
+//   reopen-input          re-open the input device (device-change test; needs --audio)
+//   reopen-output         re-open the output device (device-change test; needs --live-sink device)
 //   live-stats            print the live counters now
+//   live-report <file>    write the one-page live diagnostics report now
 // Default scripts: producer "wait-ready; record; wait 3; stop; wait-state Ready 10; wait 1; quit",
 //                  performer "wait-ready 30; wait-closed".
 // Without --audio the TEST RECORDER (no audio, nothing written) is used and labelled as such.
 //
-// Live audio (Stage 7, one way: producer -> performer; ADR-017), enabled with --live:
+// Live audio (ADR-017, ADR-018), enabled with --live. Two-way by default (Stage 8): the producer
+// sends stream 1 and receives stream 2, the performer the opposite. --one-way = Stage 7
+// (producer -> performer only).
 //   --media-port <n>          UDP media port on the producer (default: control port + 1)
-//   --live-source tone|mic    producer: TEST TONE (440 Hz, -20 dBFS, labelled) or the open input
-//                             (mic needs --audio); default: mic with --audio, else tone
+//   --live-source tone|bursts|silence|echo|mic
+//                             tone = TEST TONE (producer 440 Hz, performer 660 Hz, -20 dBFS);
+//                             bursts = 50 ms of that tone every 500 ms (for delay measurement);
+//                             echo = TEST: send back what this side hears (simulates speakers
+//                             feeding the microphone); mic = the open input (needs --audio).
+//                             Default: mic with --audio, else tone.
 //   --live-sink null|wav:<file>|device
-//                             performer: a 10 ms TEST PLAYBACK CLOCK that discards (null) or
-//                             saves (wav) what would be played, or the default output device
+//                             null/wav: a 10 ms TEST PLAYBACK CLOCK (wav saves what would play);
+//                             device: the default output device
+//   --source-wav <file>       save what the test source sent, on the same clock as the sink
 //   --live-gain-db <dB>       -60..0 (default -12)   --jitter-frames <n> 1..16 (default 3)
 //   --frame-ms 2.5|5|10|20 (default 10)   --bitrate <bit/s> 16000..128000 (default 64000)
 //   --application lowdelay|audio (default lowdelay)
+//   --no-control-hint         do not treat the control link as proof that the peer is reachable
+//   --report <file>           write the one-page live diagnostics report at the end
+//   --conditions "<text>"     test conditions written into the report
 //   test only: --sim-loss <pct> --sim-dup <pct> --sim-reorder <pct> --sim-burst <every>:<length>
-//              --sim-seed <n>   (applied by the producer's sender before sendto)
+//              --sim-seed <n>   (applied to THIS side's outgoing stream before sendto)
 // Exit code 0 = script completed, 1 = a step failed or timed out, 2 = usage error.
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <functional>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -52,8 +69,8 @@
 #include "rr/audio/audio_engine.hpp"
 #include "rr/audio/wav_writer.hpp"
 #include "rr/control/session_controller.hpp"
-#include "rr/media/live_receiver.hpp"
-#include "rr/media/live_sender.hpp"
+#include "rr/media/live_endpoint.hpp"
+#include "rr/media/live_report.hpp"
 #include "rr/network/socket.hpp"
 #include "rr/shared/build_info.hpp"
 #include "rr/shared/clock.hpp"
@@ -83,9 +100,10 @@ int usage() {
                  "[--log <file>] [--script \"...\"]\n"
                  "  rr_session_probe --performer --host <ip> [--port <n>] (--code <digits>|--code-file <path>) [--audio] "
                  "[--out <dir>] [--log <file>] [--script \"...\"]\n"
-                 "  live audio (one way, producer -> performer): --live [--media-port <n>] [--live-source tone|mic]\n"
-                 "    [--live-sink null|wav:<file>|device] [--live-gain-db <dB>] [--jitter-frames <n>] [--frame-ms <ms>]\n"
-                 "    [--bitrate <bit/s>] [--application lowdelay|audio]\n"
+                 "  live audio (two-way; --one-way = producer -> performer only): --live [--media-port <n>]\n"
+                 "    [--live-source tone|bursts|silence|echo|mic] [--live-sink null|wav:<file>|device] [--source-wav <file>]\n"
+                 "    [--live-gain-db <dB>] [--jitter-frames <n>] [--frame-ms <ms>] [--bitrate <bit/s>]\n"
+                 "    [--application lowdelay|audio] [--no-control-hint] [--report <file>] [--conditions \"<text>\"]\n"
                  "  test only: --test-protocol-major <n> announces a different protocol major version in HELLO\n"
                  "  test only: --sim-loss <pct> --sim-dup <pct> --sim-reorder <pct> --sim-burst <every>:<len> --sim-seed <n>\n");
     return 2;
@@ -219,7 +237,7 @@ void sleep_until_precise(std::chrono::steady_clock::time_point deadline) {
 }
 
 // Calls `tick` every 10 ms on its own thread, on absolute deadlines (no cumulative drift).
-// TEST CLOCK: stands in for a capture or playback callback when no device is used.
+// TEST CLOCK: stands in for the capture and playback callbacks when no device is used.
 class TenMsClock {
 public:
     explicit TenMsClock(std::function<void()> tick) : tick_(std::move(tick)) {
@@ -247,9 +265,14 @@ private:
 
 struct LiveOptions {
     bool enabled = false;
+    bool one_way = false;
+    bool control_hint = true;
     std::uint16_t media_port = 0;
     std::string source = "auto";
     std::string sink = "null";
+    std::string source_wav;
+    std::string report_path;
+    std::string conditions = "two processes on one PC (development PC)";
     media::LiveCodecSettings codec;
     media::LivePlayoutSettings playout;
     media::ImpairmentSettings sim;
@@ -259,58 +282,54 @@ unsigned long long u(std::uint64_t v) {
     return static_cast<unsigned long long>(v);
 }
 
-void print_live(const char* who, const media::LiveSender* sender, const media::LiveReceiver* receiver, bool full) {
-    if (sender != nullptr && sender->running()) {
-        const auto s = sender->stats();
-        std::printf("[%s] live send: %s, peer %s, packets %llu (%llu B), encode errors %llu, send errors %llu, "
-                    "tap gaps %llu fr, backlog trims %llu fr, sim dropped/dup/reorder %llu/%llu/%llu\n",
-                    who, s.streaming ? "STREAMING" : (s.sending_enabled ? "waiting for performer" : "off"),
-                    s.peer_known ? s.peer_endpoint.c_str() : "-", u(s.packets_sent), u(s.bytes_sent), u(s.encode_errors),
-                    u(s.send_errors), u(s.tap_gap_frames), u(s.backlog_trim_frames), u(s.test_dropped),
-                    u(s.test_duplicated), u(s.test_reordered));
-        if (s.has_report) {
-            const auto& r = s.last_report;
-            std::printf("[%s]   performer reports (%.0f ms ago): received %llu, lost est %llu, late %u, dup %u, "
-                        "reordered %u, jitter %.3f ms, buffer %u/%u, underruns %u, concealed %u, decode errors %u, "
-                        "invalid %u\n",
-                        who, s.last_report_age_ms, u(r.received), u(r.lost_estimate), r.late, r.duplicates, r.reordered,
-                        r.jitter_us / 1000.0, r.jb_fill, r.jb_target, r.underruns, r.concealed, r.decode_errors,
-                        r.invalid_packets);
-        }
-        if (full) {
-            std::printf("[%s]   codec %s, %s, frame %u samples (%.1f ms), %d bit/s CBR, complexity %d, lookahead %d "
-                        "samples (%.2f ms); streams %llu, reports %llu, peer timeouts %llu, invalid in %llu (src %llu, "
-                        "crc %llu, session %llu), max encode %.3f ms, tap overflow events %llu\n",
-                        who, s.opus_version.c_str(), s.application.c_str(), s.frame_samples,
-                        media::frame_ms(s.frame_samples), s.bitrate_bps, s.complexity, s.lookahead_samples,
-                        s.lookahead_samples / 48.0, u(s.streams_started), u(s.reports_received), u(s.peer_timeouts),
-                        u(s.invalid.total()), u(s.invalid.src_rejected), u(s.invalid.bad_crc), u(s.invalid.bad_session),
-                        static_cast<double>(s.max_encode_ns) / 1e6, u(s.tap.overflow_events));
+// What the TEST CLOCK sends and what it plays, sample-aligned (same tick).
+struct TestAudio {
+    std::mutex mutex;
+    std::vector<float> sent;
+    std::vector<float> heard;
+};
+
+bool save_wav(const std::string& path, const std::vector<float>& samples) {
+    audio::WavWriter w;
+    audio::WavFormat f;
+    f.sample_rate = 48000;
+    f.channels = 1;
+    return w.open(path, f) && w.write_frames(samples.data(), samples.size()) && w.finalise();
+}
+
+void print_live(const char* who, const media::LiveEndpoint& ep) {
+    if (!ep.running()) {
+        return;
+    }
+    const media::EndpointStats e = ep.stats();
+    if (const media::OutgoingStream* out = ep.outgoing()) {
+        const auto o = out->stats();
+        std::printf("[%s] OUT stream %u: %s | packets %llu, muted frames %llu, send errors %llu, tap gaps %llu fr, "
+                    "backlog trims %llu fr, sim drop/dup/reorder %llu/%llu/%llu\n",
+                    who, o.stream_id, media::outgoing_status_text(o, e).c_str(), u(o.packets_sent), u(o.muted_frames),
+                    u(o.send_errors), u(o.tap_gap_frames), u(o.backlog_trim_frames), u(o.test_dropped),
+                    u(o.test_duplicated), u(o.test_reordered));
+        if (e.has_remote_report) {
+            const auto& r = e.remote_report;
+            std::printf("[%s]   remote reports on it: received %llu, lost est %llu, late %u, dup %u, reordered %u, "
+                        "jitter %.3f ms, buffer %u/%u, underruns %u, concealed %u\n",
+                        who, u(r.received), u(r.lost_estimate), r.late, r.duplicates, r.reordered, r.jitter_us / 1000.0,
+                        r.jb_fill, r.jb_target, r.underruns, r.concealed);
         }
     }
-    if (receiver != nullptr && receiver->running()) {
-        const auto r = receiver->stats();
-        std::printf("[%s] live receive: %s, received %llu, lost est %llu, dup %llu, reordered %llu, late %llu, "
-                    "jitter %.3f ms, max gap %.1f ms, buffer %u/%u (max %u), underruns %llu, concealed %llu, "
-                    "decode errors %llu, invalid %llu, output peak %.1f dBFS\n",
-                    who, r.output_enabled ? (r.jb_playing ? "PLAYING" : "filling") : "output off", u(r.arrival.received),
-                    u(r.arrival.lost_estimate), u(r.arrival.duplicates), u(r.arrival.reordered), u(r.jb.late),
-                    r.arrival.jitter_ms, r.arrival.max_gap_ms, r.jb_held, r.jb_target, r.jb_max_held, u(r.jb.underruns),
-                    u(r.concealed), u(r.decode_errors), u(r.invalid.total()), static_cast<double>(r.output_peak_dbfs));
-        if (full) {
-            std::printf("[%s]   played %llu, lost (concealed) %llu, rebuffers %llu, drift skips %llu, too-early resets "
-                        "%llu, stream resets %llu, end-of-stream %llu, queue-full drops %llu, render callbacks %llu, "
-                        "max render %.3f ms, wrong-rate callbacks %llu, reports sent %llu, gain %.1f dB\n",
-                        who, u(r.jb.played), u(r.jb.lost), u(r.jb.rebuffers), u(r.jb.drift_skips),
-                        u(r.jb.too_early_resets), u(r.jb.resets), u(r.end_of_stream), u(r.queue_full_drops),
-                        u(r.render_callbacks), static_cast<double>(r.max_render_ns) / 1e6, u(r.wrong_rate_callbacks),
-                        u(r.reports_sent), static_cast<double>(r.gain_db));
-            std::printf("[%s]   invalid by reason: src %llu, oversized %llu, length %llu, version %llu, type %llu, "
-                        "crc %llu, session %llu, payload %llu\n",
-                        who, u(r.invalid.src_rejected), u(r.invalid.oversized), u(r.invalid.bad_length),
-                        u(r.invalid.bad_version), u(r.invalid.bad_type), u(r.invalid.bad_crc), u(r.invalid.bad_session),
-                        u(r.invalid.bad_payload));
-        }
+    if (const media::IncomingStream* in = ep.incoming()) {
+        const auto i = in->stats();
+        std::printf("[%s] IN  stream %u: %s | received %llu, lost est %llu, dup %llu, reordered %llu, late %llu, "
+                    "jitter %.3f ms, max gap %.1f ms, buffer %u/%u (max %u), underruns %llu, concealed %llu, catch-up %llu, "
+                    "queue-full %llu, resyncs %llu\n",
+                    who, i.stream_id, media::incoming_status_text(i, e).c_str(), u(i.arrival.received),
+                    u(i.arrival.lost_estimate), u(i.arrival.duplicates), u(i.arrival.reordered), u(i.jb.late),
+                    i.arrival.jitter_ms, i.arrival.max_gap_ms, i.jb_held, i.jb_target, i.jb_max_held, u(i.jb.underruns),
+                    u(i.concealed), u(i.jb.catchup_frames), u(i.queue_full_drops), u(i.jb.resyncs));
+    }
+    if (e.invalid.total() > 0 || e.test_blackholed > 0) {
+        std::printf("[%s]   invalid %llu (wrong stream %llu), TEST blackholed %llu\n", who, u(e.invalid.total()),
+                    u(e.invalid.wrong_stream), u(e.test_blackholed));
     }
     std::fflush(stdout);
 }
@@ -363,9 +382,14 @@ int main(int argc, char* argv[]) {
         else if (a == "--script") script = next();
         else if (a == "--test-protocol-major") test_major = static_cast<std::uint16_t>(std::atoi(next().c_str()));
         else if (a == "--live") live.enabled = true;
+        else if (a == "--one-way") live.one_way = true;
+        else if (a == "--no-control-hint") live.control_hint = false;
         else if (a == "--media-port") live.media_port = static_cast<std::uint16_t>(std::atoi(next().c_str()));
         else if (a == "--live-source") live.source = next();
         else if (a == "--live-sink") live.sink = next();
+        else if (a == "--source-wav") live.source_wav = next();
+        else if (a == "--report") live.report_path = next();
+        else if (a == "--conditions") live.conditions = next();
         else if (a == "--live-gain-db") live.playout.gain_db = static_cast<float>(std::atof(next().c_str()));
         else if (a == "--jitter-frames") live.playout.target_frames = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--frame-ms") live.codec.frame_samples = static_cast<std::uint32_t>(std::lround(std::atof(next().c_str()) * 48.0));
@@ -390,6 +414,9 @@ int main(int argc, char* argv[]) {
     if (live.media_port == 0) {
         live.media_port = static_cast<std::uint16_t>(port + 1);
     }
+    // Which streams this side has.
+    const bool has_out = live.enabled && (producer || !live.one_way);
+    const bool has_in = live.enabled && (!producer || !live.one_way);
     if (live.enabled) {
         std::string bad = media::validate(live.codec);
         if (bad.empty()) {
@@ -405,6 +432,10 @@ int main(int argc, char* argv[]) {
         if (live.source == "mic" && !use_audio) {
             std::fprintf(stderr, "--live-source mic needs --audio (an open input device)\n");
             return 2;
+        }
+        if (live.source != "mic" && live.source != "tone" && live.source != "bursts" && live.source != "silence" &&
+            live.source != "echo") {
+            return usage();
         }
     }
 
@@ -423,10 +454,13 @@ int main(int argc, char* argv[]) {
     cfg.app_version = build_info().version + " (rr_session_probe)";
     cfg.display_name = producer ? "Probe producer" : "Probe performer";
     cfg.test_protocol_major = test_major;
+    const char* who = producer ? "producer" : "performer";
 
     std::unique_ptr<audio::AudioEngine> engine;
     std::unique_ptr<control::RecorderPort> port_impl;
-    const bool device_sink = live.enabled && !producer && live.sink == "device";
+    const bool device_sink = has_in && live.sink == "device";
+    std::size_t input_index = 0;
+    std::size_t output_index = 0;
     if (use_audio || device_sink) {
         engine = std::make_unique<audio::AudioEngine>();
         std::string error;
@@ -438,34 +472,31 @@ int main(int argc, char* argv[]) {
     if (device_sink) {
         std::string error;
         const auto outputs = engine->playback_devices(error);
-        std::size_t index = 0;
         for (const auto& d : outputs) {
             if (d.is_default) {
-                index = d.index;
+                output_index = d.index;
             }
         }
-        if (outputs.empty() || !engine->open_playback(index, audio::PlaybackOptions{}, error)) {
+        if (outputs.empty() || !engine->open_playback(output_index, audio::PlaybackOptions{}, error)) {
             std::fprintf(stderr, "audio output: %s\n", outputs.empty() ? "no output device" : error.c_str());
             return 1;
         }
-        std::printf("[performer] live output: %s at %u Hz, gain %.1f dB. Use HEADPHONES (feedback and bleed into the "
-                    "master).\n",
+        std::printf("[%s] live output: %s at %u Hz, gain %.1f dB. Use HEADPHONES (no echo cancellation).\n", who,
                     engine->playback_description().device_name.c_str(), static_cast<unsigned>(engine->playback_rate()),
                     static_cast<double>(live.playout.gain_db));
     }
     if (use_audio) {
         std::string error;
         const auto devices = engine->capture_devices(error);
-        std::size_t index = 0;
         for (const auto& d : devices) {
             if (d.is_default) {
-                index = d.index;
+                input_index = d.index;
             }
         }
         if (device >= 0) {
-            index = static_cast<std::size_t>(device);
+            input_index = static_cast<std::size_t>(device);
         }
-        if (!engine->open_capture(index, audio::CaptureOptions{}, audio::RecorderOptions{}, error)) {
+        if (!engine->open_capture(input_index, audio::CaptureOptions{}, audio::RecorderOptions{}, error)) {
             std::fprintf(stderr, "audio: %s\n", error.c_str());
             return 1;
         }
@@ -475,111 +506,182 @@ int main(int argc, char* argv[]) {
     }
 
     control::SessionController controller(cfg, *port_impl, logger);
-    const char* who = producer ? "producer" : "performer";
     Probe probe{controller, 0, who, nullptr};
 
-    // ---- live audio (Stage 7): started once the session is connected ----
-    std::unique_ptr<media::LiveSender> sender;
-    std::unique_ptr<media::LiveReceiver> receiver;
-    audio::LiveTap tone_tap;
-    std::unique_ptr<TenMsClock> source_clock;
-    std::unique_ptr<TenMsClock> sink_clock;
-    std::vector<float> sink_samples;  // wav sink: what the TEST PLAYBACK CLOCK would have played
-    std::string wav_path;
-    bool live_on = true;
+    // ---- live audio: started once the session is connected ----
+    media::LiveEndpoint endpoint(&logger);
+    audio::LiveTap test_tap;   // fed by the TEST CLOCK when the source is not the microphone
+    TestAudio test_audio;
+    std::unique_ptr<TenMsClock> clock;
+    std::string sink_wav;
+    bool send_on = true;
+    bool hear_on = true;
+    bool mute_on = false;
     std::int64_t last_live_print = 0;
+    const bool test_source = has_out && live.source != "mic";
+    const bool test_sink = has_in && !device_sink;
     if (live.enabled) {
 #ifdef _WIN32
-        timeBeginPeriod(1);  // 1 ms sleep granularity for the 10 ms test clocks
+        timeBeginPeriod(1);  // 1 ms sleep granularity for the 10 ms test clock
 #endif
-        if (producer) {
-            sender = std::make_unique<media::LiveSender>(&logger);
-            if (live.source == "tone") {
-                std::printf("[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)\n");
-                tone_tap.set_source_rate(48000);
-                source_clock = std::make_unique<TenMsClock>([&tone_tap, phase = std::uint64_t{0}]() mutable {
-                    float block[480];
-                    for (std::size_t i = 0; i < 480; ++i) {
-                        block[i] = 0.1f * static_cast<float>(
-                                              std::sin(2.0 * kPi * 440.0 * static_cast<double>(phase + i) / 48000.0));
-                    }
-                    phase += 480;
-                    tone_tap.push_capture(block, 480, 1);
-                });
+        if (live.sink.rfind("wav:", 0) == 0) {
+            sink_wav = live.sink.substr(4);
+        }
+        const double hz = producer ? 440.0 : 660.0;
+        if (has_out) {
+            if (live.source == "mic") {
+                std::printf("[%s] live source: input device '%s'\n", who, engine->capture_description().device_name.c_str());
             } else {
-                std::printf("[producer] live source: input device '%s'\n",
-                            engine->capture_description().device_name.c_str());
-            }
-        } else {
-            receiver = std::make_unique<media::LiveReceiver>(&logger);
-            if (live.sink.rfind("wav:", 0) == 0) {
-                wav_path = live.sink.substr(4);
-            }
-            if (!device_sink) {
-                std::printf("[performer] live sink: TEST PLAYBACK CLOCK (10 ms), %s\n",
-                            wav_path.empty() ? "output discarded" : ("output saved to " + wav_path).c_str());
-                sink_samples.reserve(static_cast<std::size_t>(48000) * 120);  // at most 120 s are kept
+                std::printf("[%s] live source: TEST %s%s (not a microphone)\n", who,
+                            live.source == "echo"     ? "ECHO: sends back what this side hears (simulated speaker->mic)"
+                            : live.source == "silence" ? "SILENCE"
+                                                       : (live.source == "bursts" ? "BURSTS 50 ms / 500 ms of " : "TONE "),
+                            (live.source == "tone" || live.source == "bursts")
+                                ? (std::to_string(static_cast<int>(hz)) + " Hz at -20 dBFS").c_str()
+                                : "");
             }
         }
+        if (test_sink) {
+            std::printf("[%s] live sink: TEST PLAYBACK CLOCK (10 ms), %s\n", who,
+                        sink_wav.empty() ? "output discarded" : ("output saved to " + sink_wav).c_str());
+        }
+        test_tap.set_source_rate(48000);
+        test_audio.sent.reserve(static_cast<std::size_t>(48000) * 120);   // at most 120 s are kept
+        test_audio.heard.reserve(static_cast<std::size_t>(48000) * 120);
     }
+    // One TEST CLOCK renders the incoming stream and then pushes the test source, so `sent` and
+    // `heard` are sample-aligned (same tick = same time).
+    auto clock_tick = [&, phase = std::uint64_t{0}, hz = producer ? 440.0 : 660.0]() mutable {
+        float heard[480] = {};
+        if (test_sink && endpoint.incoming() != nullptr) {
+            endpoint.incoming()->render_add(heard, 480, 1, 48000);
+        }
+        float sent[480] = {};
+        if (test_source) {
+            for (std::size_t i = 0; i < 480; ++i) {
+                const std::uint64_t n = phase + i;
+                const bool on = live.source == "tone" || (live.source == "bursts" && (n % 24000) < 2400);
+                sent[i] = on ? 0.1f * static_cast<float>(std::sin(2.0 * kPi * hz * static_cast<double>(n) / 48000.0)) : 0.0f;
+                if (live.source == "echo") {
+                    sent[i] = heard[i];
+                }
+            }
+            test_tap.push_capture(sent, 480, 1);
+        }
+        phase += 480;
+        std::lock_guard<std::mutex> lock(test_audio.mutex);
+        if (test_audio.sent.size() + 480 <= test_audio.sent.capacity()) {
+            test_audio.sent.insert(test_audio.sent.end(), sent, sent + 480);
+            test_audio.heard.insert(test_audio.heard.end(), heard, heard + 480);
+        }
+    };
+
+    auto local_capture_status = [&]() -> std::string {
+        if (!has_out || live.source != "mic") {
+            return std::string("TEST SOURCE '") + live.source + "' (no capture device for the live stream)" +
+                   (engine && engine->capture_open() ? "; input device open for recording" : "");
+        }
+        if (!engine || !engine->capture_open()) {
+            return "input device CLOSED";
+        }
+        const auto& d = engine->capture_description();
+        const auto st = engine->ingest()->stats();
+        return "running: " + d.device_name + ", " + std::to_string(d.sample_rate) + " Hz, " + std::to_string(d.channels) +
+               " ch, record-ring overruns " + std::to_string(st.overrun_events) +
+               (engine->capture_fault() != audio::DeviceFault::None ? ", DEVICE FAULT" : "");
+    };
+    auto local_recording_status = [&]() -> std::string {
+        const auto s = controller.snapshot();
+        std::string r = port_impl->description() + "; session state " + std::string(session::session_state_name(s.session));
+        if (s.take.take_id != 0) {
+            r += "; take " + std::to_string(s.take.take_id) + " " +
+                 (s.take.local_finalised ? std::string(take_status_name(s.take.local_status)) + ", " +
+                                               std::to_string(s.take.local_frames) + " frames"
+                                         : std::string(s.take.local_started ? "RECORDING" : "not started"));
+        }
+        return r;
+    };
+    auto remote_status = [&]() -> std::string {
+        const auto s = controller.snapshot();
+        char rtt[64];
+        std::snprintf(rtt, sizeof rtt, "%.3f", static_cast<double>(s.link_stats.control_rtt_ns) / 1e6);
+        return "'" + s.peer_name + "' at " + s.peer_address + ", control link " +
+               std::string(session::link_state_name(s.link)) + ", control RTT " + rtt + " ms";
+    };
+    auto write_report = [&](const std::string& path) {
+        if (!endpoint.running()) {
+            std::printf("[%s] no live report: live media not running\n", who);
+            return;
+        }
+        media::LiveReportConditions c;
+        c.generated_utc = time::format_utc_iso8601_ms(time::utc_now_ms());
+        c.role = producer ? "Producer (rr_session_probe)" : "Performer (rr_session_probe)";
+        c.app_version = build_info().version;
+        c.session_id = controller.snapshot().session_id;
+        c.capture_device = (has_out && live.source == "mic") ? engine->capture_description().device_name
+                                                             : "TEST SOURCE " + live.source;
+        c.capture_rate = (has_out && live.source == "mic") ? engine->capture_description().sample_rate : 48000;
+        c.output_device = device_sink ? engine->playback_description().device_name : "TEST PLAYBACK CLOCK";
+        c.output_rate = device_sink ? engine->playback_rate() : 48000;
+        c.local_capture_status = local_capture_status();
+        c.local_recording_status = local_recording_status();
+        c.remote_participant_status = remote_status();
+        c.test_conditions = live.conditions + (live.sim.active() ? "; TEST impairment on this side's outgoing stream" : "");
+        c.headphones = "not applicable (probe)";
+        std::ofstream(path) << media::live_report_text(c, endpoint);
+        std::printf("[%s] live report written: %s\n", who, path.c_str());
+    };
+
     std::uint32_t media_session = 0;
     probe.on_pump = [&]() {
         if (!live.enabled) {
             return;
         }
         const auto snap = controller.snapshot();
+        endpoint.set_control_link_up(live.control_hint && snap.link == LinkState::Connected);
         if (snap.link == LinkState::Connected && media_session == 0 &&
             media::session_id_to_u32(snap.session_id, media_session)) {
+            media::LiveEndpointConfig c;
+            c.bind_mode = producer;
+            c.local_address = bind;
+            c.peer_address = producer ? snap.peer_address : host;
+            c.media_port = live.media_port;
+            c.session_id = media_session;
+            c.has_outgoing = has_out;
+            c.outgoing.stream_id = producer ? media::kStreamProducerMic : media::kStreamPerformerMic;
+            c.outgoing.codec = live.codec;
+            c.outgoing.test_impairment = live.sim;
+            c.has_incoming = has_in;
+            c.incoming.stream_id = producer ? media::kStreamPerformerMic : media::kStreamProducerMic;
+            c.incoming.playout = live.playout;
+            audio::LiveTap* tap = has_out ? (live.source == "mic" ? &engine->live_tap() : &test_tap) : nullptr;
             std::string error;
-            if (producer) {
-                media::LiveSenderConfig sc;
-                sc.bind_address = bind;
-                sc.media_port = live.media_port;
-                sc.session_id = media_session;
-                sc.expected_peer_address = snap.peer_address;
-                sc.codec = live.codec;
-                sc.test_impairment = live.sim;
-                audio::LiveTap& tap = live.source == "tone" ? tone_tap : engine->live_tap();
-                if (!sender->start(sc, tap, error)) {
-                    std::printf("[producer] LIVE SEND FAILED: %s\n", error.c_str());
-                } else {
-                    sender->set_sending(live_on);
-                    std::printf("[producer] live sender on UDP %s:%u for performer %s%s\n", bind.c_str(),
-                                static_cast<unsigned>(live.media_port), snap.peer_address.c_str(),
-                                live.sim.active() ? "  ** TEST IMPAIRMENT ON **" : "");
-                }
+            if (!endpoint.start(c, tap, error)) {
+                std::printf("[%s] LIVE MEDIA FAILED: %s\n", who, error.c_str());
             } else {
-                media::LiveReceiverConfig rc;
-                rc.producer_host = host;
-                rc.media_port = live.media_port;
-                rc.session_id = media_session;
-                rc.playout = live.playout;
-                if (!receiver->start(rc, error)) {
-                    std::printf("[performer] LIVE RECEIVE FAILED: %s\n", error.c_str());
-                } else {
-                    receiver->set_output_enabled(live_on);
-                    if (device_sink) {
-                        engine->attach_playback_contributor(receiver.get());
-                    } else {
-                        media::LiveReceiver* r = receiver.get();
-                        std::vector<float>* keep = wav_path.empty() ? nullptr : &sink_samples;
-                        sink_clock = std::make_unique<TenMsClock>([r, keep]() {
-                            float block[480] = {};
-                            r->render_add(block, 480, 1, 48000);
-                            if (keep != nullptr && keep->size() + 480 <= keep->capacity()) {
-                                keep->insert(keep->end(), block, block + 480);
-                            }
-                        });
-                    }
-                    std::printf("[performer] live receiver for %s:%u\n", host.c_str(),
-                                static_cast<unsigned>(live.media_port));
+                if (endpoint.outgoing()) {
+                    endpoint.outgoing()->set_enabled(send_on);
+                    endpoint.outgoing()->set_muted(mute_on);
                 }
+                if (endpoint.incoming()) {
+                    endpoint.incoming()->set_output_enabled(hear_on);
+                    if (device_sink) {
+                        engine->attach_playback_contributor(endpoint.incoming());
+                    }
+                }
+                if (test_source || test_sink) {
+                    clock = std::make_unique<TenMsClock>(clock_tick);
+                }
+                std::printf("[%s] live media on UDP %s: out %s, in %s%s\n", who, endpoint.stats().local_endpoint.c_str(),
+                            has_out ? (producer ? "stream 1" : "stream 2") : "none",
+                            has_in ? (producer ? "stream 2" : "stream 1") : "none",
+                            live.sim.active() ? "  ** TEST IMPAIRMENT ON (outgoing) **" : "");
             }
         }
         const std::int64_t now = time::monotonic_ns();
         if (now - last_live_print > 2000000000ll) {
             last_live_print = now;
-            print_live(who, sender.get(), receiver.get(), false);
+            print_live(who, endpoint);
         }
     };
     std::printf("[%s] recorder: %s\n", who, port_impl->description().c_str());
@@ -667,18 +769,38 @@ int main(int argc, char* argv[]) {
             std::string v;
             in >> v;
             controller.set_consent(v == "on");
-        } else if (cmd == "live") {
+        } else if (cmd == "live" || cmd == "mute" || cmd == "hear" || cmd == "blackhole") {
             std::string v;
             in >> v;
-            live_on = v == "on";
-            if (sender) {
-                sender->set_sending(live_on);
+            const bool on = v == "on";
+            if (cmd == "live") {
+                send_on = on;
+                if (endpoint.outgoing()) endpoint.outgoing()->set_enabled(on);
+            } else if (cmd == "mute") {
+                mute_on = on;
+                if (endpoint.outgoing()) endpoint.outgoing()->set_muted(on);
+            } else if (cmd == "hear") {
+                hear_on = on;
+                if (endpoint.incoming()) endpoint.incoming()->set_output_enabled(on);
+            } else {
+                endpoint.set_test_receive_blackhole(on);
             }
-            if (receiver) {
-                receiver->set_output_enabled(live_on);
-            }
+        } else if (cmd == "reopen-input") {
+            ok = engine && engine->capture_open() &&
+                 engine->open_capture(input_index, audio::CaptureOptions{}, audio::RecorderOptions{}, error);
+            if (!engine) error = "needs --audio";
+        } else if (cmd == "reopen-output") {
+            ok = engine && device_sink && engine->open_playback(output_index, audio::PlaybackOptions{}, error);
+            if (!device_sink) error = "needs --live-sink device";
         } else if (cmd == "live-stats") {
-            print_live(who, sender.get(), receiver.get(), true);
+            print_live(who, endpoint);
+            std::printf("[%s] STATUS local capture: %s\n[%s] STATUS local recording: %s\n[%s] STATUS remote participant: %s\n",
+                        who, local_capture_status().c_str(), who, local_recording_status().c_str(), who,
+                        remote_status().c_str());
+        } else if (cmd == "live-report") {
+            std::string path;
+            in >> path;
+            write_report(path);
         } else if (cmd == "leave") {
             controller.leave();
         } else if (cmd == "quit") {
@@ -696,31 +818,29 @@ int main(int argc, char* argv[]) {
     probe.pump();
     print_summary(controller.snapshot(), who);
     if (live.enabled) {
-        std::printf("\n[%s] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)\n", who);
-        print_live(who, sender.get(), receiver.get(), true);
+        std::printf("\n[%s] LIVE SUMMARY (live monitor streams only; the master recordings are separate files)\n", who);
+        print_live(who, endpoint);
+        if (!live.report_path.empty()) {
+            write_report(live.report_path);
+        }
     }
-    // Live teardown: stop the test clocks and detach from the device before the objects go away.
-    source_clock.reset();
-    sink_clock.reset();
+    // Live teardown: stop the test clock and detach from the device before the endpoint stops.
+    clock.reset();
     if (engine) {
         engine->detach_playback_contributor();
     }
-    if (sender) {
-        sender->stop();
-    }
-    if (receiver) {
-        receiver->stop();
-    }
-    if (!wav_path.empty()) {
-        audio::WavWriter w;
-        audio::WavFormat f;
-        f.sample_rate = 48000;
-        f.channels = 1;
-        if (w.open(wav_path, f) && w.write_frames(sink_samples.data(), sink_samples.size()) && w.finalise()) {
-            std::printf("[performer] live sink saved: %s (%zu frames; TEST PLAYBACK CLOCK output, not a recording)\n",
-                        wav_path.c_str(), sink_samples.size());
-        } else {
-            std::printf("[performer] could not save %s: %s\n", wav_path.c_str(), w.error().c_str());
+    endpoint.stop();
+    {
+        std::lock_guard<std::mutex> lock(test_audio.mutex);
+        if (!sink_wav.empty()) {
+            std::printf("[%s] live sink %s: %s (%zu frames; TEST PLAYBACK CLOCK output, not a recording)\n", who,
+                        save_wav(sink_wav, test_audio.heard) ? "saved" : "NOT SAVED", sink_wav.c_str(),
+                        test_audio.heard.size());
+        }
+        if (!live.source_wav.empty()) {
+            std::printf("[%s] test source %s: %s (%zu frames, aligned with the sink)\n", who,
+                        save_wav(live.source_wav, test_audio.sent) ? "saved" : "NOT SAVED", live.source_wav.c_str(),
+                        test_audio.sent.size());
         }
     }
 #ifdef _WIN32

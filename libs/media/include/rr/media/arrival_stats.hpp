@@ -4,7 +4,11 @@
 // from sequence numbers, sender sample counters and local arrival times (ADR-017):
 //  - loss estimate: expected (highest - first + 1, serial arithmetic) minus unique received;
 //    a packet that is merely late or reordered is not counted as lost once it arrives;
-//  - duplicates: same sequence number seen again within the last kWindow packets (dropped);
+//  - duplicates: same sequence number seen again within the last kRestartBack packets (dropped);
+//  - restart: a sequence number kRestartBack (64) or more BELOW the highest seen starts a new
+//    stream (the sender restarted, e.g. after an app restart). 64 is the jitter buffer's window:
+//    a packet that late could never be played anyway (Stage 8, found by run D4b: with the old
+//    1024 limit a restarted stream was dropped as "duplicates" for up to 1024 packets);
 //  - reordered: arrived with a sequence number below the highest already seen;
 //  - inter-arrival jitter: RFC 3550 §6.4.1 estimator J += (|D| - J) / 16, where
 //    D = (arrival_j - arrival_i) - (media_j - media_i) / 48 kHz, for consecutive arrivals;
@@ -29,7 +33,8 @@ struct ArrivalSnapshot {
 
 class ArrivalStats {
 public:
-    static constexpr std::uint32_t kWindow = 1024;
+    static constexpr std::uint32_t kWindow = 1024;     // bitmap size (>= kRestartBack)
+    static constexpr std::uint32_t kRestartBack = 64;
 
     enum class Result { New, Duplicate, Restart };
 

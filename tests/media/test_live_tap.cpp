@@ -90,3 +90,16 @@ TEST_CASE("Arrival jitter grows with irregular arrival and survives the 2^32 wra
     CHECK(s.jitter_ms < 4.5);
     CHECK_THAT(s.max_gap_ms, Catch::Matchers::WithinAbs(14.0, 1e-6));
 }
+
+TEST_CASE("A sender restart only 100 packets after its start is a new stream, not 'duplicates'", "[media][arrival]") {
+    ArrivalStats a;
+    std::int64_t t = 0;
+    for (std::uint32_t s = 0; s < 100; ++s) {
+        a.on_packet(s, s * 480ull, t += 10000000);
+    }
+    CHECK(a.on_packet(60, 60 * 480ull, t += 10000000) == ArrivalStats::Result::Duplicate);  // recent: a duplicate
+    CHECK(a.on_packet(0, 0, t += 10000000) == ArrivalStats::Result::Restart);              // 99 back: a restart
+    CHECK(a.on_packet(1, 480, t += 10000000) == ArrivalStats::Result::New);
+    CHECK(a.snapshot().duplicates == 1);
+    CHECK(a.snapshot().stream_restarts == 1);
+}

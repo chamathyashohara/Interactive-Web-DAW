@@ -69,6 +69,10 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Test-only network impairment (loss, duplicates, reordering, bursts) | `libs/media/.../net_impairment.hpp` | Implemented (test/probe only) |
 | Live audio panel (producer/performer UI) | `libs/ui_common/src/live_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
 | Live-sink WAV analysis | `tools/audit/analyse_live_sink.py` | Implemented, used for the Stage 7 evidence |
+| Two-way endpoint: one socket/thread, peer learning, reachability, direction check, reports (ADR-018) | `libs/media/.../live_endpoint.hpp` | Implemented, tested (loopback duplex tests), two-process runs |
+| Outgoing stream (tap -> Opus -> datagrams, send mute) / incoming stream (arrival, queue, jitter buffer, decode, receive mute) | `libs/media/.../outgoing_stream.hpp`, `incoming_stream.hpp` | Implemented, tested |
+| One-page live report, per-direction status texts | `libs/media/.../live_report.hpp` | Implemented, used by the probe; app export unverified (Qt) |
+| Two-way analysis (own/remote tone share, burst round trip) | `tools/audit/analyse_live_duplex.py` | Implemented, used for the Stage 8 evidence |
 | UDP clock probes (ADR-010) | - | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |

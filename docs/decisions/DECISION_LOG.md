@@ -97,3 +97,17 @@ until the architecture review.
 | D-55 | 2026-10-11 | Live monitor only: Opus PLC for lost and underrun frames, never written to any take. Live off by default on both sides; gain −60…0 dB (default −12, no boost); headphones advice in the UI. | Brief items 6 and 8. Master recordings stay independent (ADR-007). | Implemented. Qt UI unverified (not compiled). |
 | D-56 | 2026-10-11 | The probe's 10 ms **test clocks** wait in `Sleep(1)` steps on Windows. | Measured: MinGW's `sleep_until` stays on the 15.6 ms tick even with `timeBeginPeriod(1)` (10 ms deadlines p95 21 ms). This made the first loopback run show 7.4 ms jitter that was the test clock's, not the network's. | Implemented, measured |
 | D-57 | 2026-10-11 | The sender counter `packets_sent` counts **AUDIO datagrams only**. END_OF_STREAM has its own counter; `bytes_sent` covers all datagrams. | Found in the Stage 7 runs: the final sent count was exactly 2 above the received count in every run without impairment (the two END_OF_STREAM datagrams), which looked like loss | Fixed, re-run (L1-recheck: 1202 = 1202) |
+
+## Stage 8 (11 Oct 2026): two-way live audio
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-58 | 2026-10-11 | One `LiveEndpoint` per side (one socket, one media thread, one outgoing + one incoming stream). The Stage 7 `LiveSender`/`LiveReceiver` become thin wrappers (ADR-018). | Symmetric code for both directions. The unchanged Stage 7 tests act as regression tests. | Implemented, tested |
+| D-59 | 2026-10-11 | Both directions on **one UDP flow** (the producer's media port). Stream 2 = performer microphone. Strict direction check (`wrong_stream`). | No new port and no inbound rule on the performer PC. A side never plays its own stream. | Implemented, tested |
+| D-60 | 2026-10-11 | **Send mute** = flagged encoded silence (header flag bit 2); the stream keeps running. **Send off** = END_OF_STREAM. **Receive mute** = play nothing but keep receiving and reporting. None of these touch the recorder. | COM-04; brief: never conflate muting with stopping recording; the other side must see "muted", not "failure" | Implemented, tested |
+| D-61 | 2026-10-11 | No push-to-talk; continuous talkback with per-side mute | No requirement asks for push-to-talk (COM-01, COM-04) | Decided |
+| D-62 | 2026-10-11 | Reachability = datagram within 3 s **or** control link Connected (closing report overrides) | Brief task 5: one direction can fail while the other continues | Implemented, tested (unit + D4) |
+| D-63 | 2026-10-11 | Sequence numbers continue across pauses; a step back of ≥ 64 is a stream restart | Found by run D4b: a restarted stream was dropped as duplicates for about 9 s | Fixed, regression tests, re-run |
+| D-64 | 2026-10-11 | Jitter buffer **catch-up** (more than target + max(8, target) held → drop to the target) | Excessive buffering: after a 300 ms playback stall the drift skip alone needs about 30 s to remove the delay | Implemented, tested |
+| D-65 | 2026-10-11 | Jitter buffer **resync** after 3 consecutive late arrivals | Found by run D5: a 60 ms sender pause (input re-open) cost 20 underruns + 18 late; now 4 + 3 | Fixed, regression tests, re-run |
+| D-66 | 2026-10-11 | One-page live report (`live_report_text`), shared by the apps (Export) and the probe (`--report`). Five separate status rows. **No echo cancellation**; headphones required and stated. | Brief tasks 4, 6, 8; LATER-03 | Implemented. Apps unverified (Qt not compiled). |

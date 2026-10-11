@@ -620,6 +620,19 @@ LiveContext SessionPanel::live_context() const {
     c.local_address = s.bind_address;
     c.peer_address = s.peer_address;
     c.control_port = s.port;
+    c.link_state = std::string(rr::session::link_state_name(s.link));
+    c.peer_name = s.peer_name;
+    c.control_rtt_ms = static_cast<double>(s.link_stats.control_rtt_ns) / 1e6;
+    const auto& t = s.take;
+    if (t.take_id == 0) {
+        c.recording_status = "idle (no take yet); session " + std::string(rr::session::session_state_name(s.session));
+    } else if (t.local_finalised) {
+        c.recording_status = "take " + std::to_string(t.take_id) + " " + std::string(rr::take_status_name(t.local_status)) +
+                             ", " + std::to_string(t.local_frames) + " frames";
+    } else {
+        c.recording_status = std::string(t.local_started ? "RECORDING take " : "take armed/scheduled: ") +
+                             std::to_string(t.take_id);
+    }
     return c;
 }
 

@@ -110,11 +110,17 @@ TEST_CASE("Malformed datagrams are rejected with the right reason, before any fi
         d[21] = 0x00;  // codec PCM16: not negotiated in Stage 7
         refresh_crc(d);
         CHECK(check(d) == PacketCheck::BadPayload);
-        d[21] = kCodecOpus | 0x04;  // reserved bit
+        d[21] = kCodecOpus | 0x08;  // reserved bit
         refresh_crc(d);
         CHECK(check(d) == PacketCheck::BadPayload);
+        d[21] = kCodecOpus | kFlagMuted;  // muted sender (Stage 8): valid
+        refresh_crc(d);
+        CHECK(check(d) == PacketCheck::Ok);
         d[21] = kCodecOpus;
-        d[17] = 2;  // stream 2 (performer mic) does not exist in Stage 7
+        d[17] = 2;  // stream 2 = performer microphone (Stage 8): valid
+        refresh_crc(d);
+        CHECK(check(d) == PacketCheck::Ok);
+        d[17] = 3;  // no stream 3
         refresh_crc(d);
         CHECK(check(d) == PacketCheck::BadPayload);
         CHECK(check(audio_packet(0x1a2b3c4d, 1277)) == PacketCheck::BadPayload);  // > one Opus frame

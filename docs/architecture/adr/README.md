@@ -21,3 +21,4 @@ All are **Proposed** until the Stage 2 architecture review accepts them.
 | [015](ADR-015-testing.md) | Catch2 v3.16.0, test-only. Unit, loopback and acceptance tests. |
 | [016](ADR-016-control-transport-qt-free-sockets.md) | TCP control on Qt-free sockets in the core (one link thread), explicit interface, TLS deferred. **Implemented in Stage 6.** |
 | [017](ADR-017-one-way-live-audio-opus-udp.md) | One-way live audio producer → performer: Opus 1.6.1 over UDP, header v1 with sample counter and receiver reports, address learned from reports, jitter buffer in the playback callback. **Implemented in Stage 7.** |
+| [018](ADR-018-two-way-live-audio.md) | Two-way live audio: one endpoint per side, both streams on one UDP flow, send/receive mute, reachability via datagrams or the control link, catch-up and resync. **Implemented in Stage 8.** |

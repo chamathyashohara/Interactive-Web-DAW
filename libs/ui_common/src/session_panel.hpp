@@ -37,6 +37,12 @@ struct LiveContext {
     std::string local_address;       // producer: the selected interface
     std::string peer_address;        // producer: the performer; performer: the producer host
     std::uint16_t control_port = 0;
+    // For the separate status rows (Stage 8): the control link and the local recording come from
+    // the session, never from the live streams.
+    std::string link_state;          // "Connected", "LinkLost", ...
+    std::string peer_name;
+    double control_rtt_ms = 0.0;
+    std::string recording_status;    // e.g. "RECORDING take 2" / "take 1 complete, 480000 frames" / "idle"
 };
 
 // Producer/performer session control (Stage 6) on top of rr::control::SessionController.

@@ -146,14 +146,14 @@ PacketCheck parse_packet(const std::uint8_t* data, std::size_t size, std::uint32
     h.flags = data[21];
     payload = data + kHeaderBytes;
 
-    if (h.stream_id != kStreamProducerMic) {
+    if (h.stream_id != kStreamProducerMic && h.stream_id != kStreamPerformerMic) {
         return PacketCheck::BadPayload;
     }
     switch (h.type) {
         case PacketType::Audio:
             // One Opus packet: TOC byte + at most 1275 bytes per frame (RFC 6716 §3.2.1);
             // the frame length itself is checked with libopus by the receiver.
-            if ((h.flags & 0x03u) != kCodecOpus || (h.flags & 0xFCu) != 0 || payload_len == 0 || payload_len > 1276) {
+            if ((h.flags & 0x03u) != kCodecOpus || (h.flags & 0xF8u) != 0 || payload_len == 0 || payload_len > 1276) {
                 return PacketCheck::BadPayload;
             }
             break;

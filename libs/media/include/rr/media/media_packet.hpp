@@ -7,10 +7,12 @@
 //   4   8   media_index    48 kHz live-stream sample counter of the first sample in the packet
 //                          (includes samples dropped by a tap overflow, so such gaps are visible)
 //  12   4   session_id     the 8-hex-digit session id as a u32 (never 0)
-//  16   2   stream_id      1 = producer microphone (the only stream in Stage 7)
+//  16   2   stream_id      1 = producer microphone (producer -> performer)
+//                          2 = performer microphone (performer -> producer, Stage 8)
 //  18   2   payload_len    must equal datagram length - 26
 //  20   1   ver_type       high nibble = header version (1), low nibble = packet type
-//  21   1   flags          bits 0-1 codec (1 = Opus); bits 2-7 reserved, must be 0
+//  21   1   flags          AUDIO: bits 0-1 codec (1 = Opus), bit 2 = sender muted (payload is
+//                          encoded silence; the stream keeps running); bits 3-7 reserved = 0
 //  22   4   crc32          CRC-32/IEEE over bytes 0-21 and the payload (corruption only, not security)
 //
 // Big-endian. One datagram <= 1472 bytes (1500 MTU - IPv4 - UDP): no IP fragmentation.
@@ -26,14 +28,17 @@ constexpr std::size_t kMaxDatagramBytes = 1472;
 constexpr std::size_t kMaxPayloadBytes = kMaxDatagramBytes - kHeaderBytes;  // 1446
 constexpr std::uint8_t kHeaderVersion = 1;
 constexpr std::uint16_t kStreamProducerMic = 1;
+constexpr std::uint16_t kStreamPerformerMic = 2;
+constexpr std::uint8_t kFlagMuted = 0x04;  // AUDIO only
 constexpr std::uint8_t kCodecOpus = 1;
 
 enum class PacketType : std::uint8_t {
     Audio = 0,         // one Opus packet
     // 1, 2: PROBE_REQ / PROBE_RESP (designed in PROTOCOL_OVERVIEW §3.4, not implemented: rejected as bad_type)
     EndOfStream = 3,   // sender stops on purpose: receiver returns to filling without counting loss
-    ReceiverReport = 4 // performer -> producer, every 500 ms: receive counters; also tells the
-                       // producer where to send (address learning, ADR-017)
+    ReceiverReport = 4 // every 500 ms, about the stream in its stream_id: sent by whoever RECEIVES
+                       // that stream (performer about stream 1, producer about stream 2). The
+                       // performer's reports also tell the producer where to send (ADR-017).
 };
 
 struct MediaHeader {
@@ -69,8 +74,11 @@ struct InvalidCounts {
     std::uint64_t bad_crc = 0;
     std::uint64_t bad_session = 0;
     std::uint64_t bad_payload = 0;
+    std::uint64_t wrong_stream = 0;  // valid packet for a stream this side does not receive (e.g. its own
+                                     // stream coming back, or a report about a stream it does not send)
     std::uint64_t total() const noexcept {
-        return src_rejected + oversized + bad_length + bad_version + bad_type + bad_crc + bad_session + bad_payload;
+        return src_rejected + oversized + bad_length + bad_version + bad_type + bad_crc + bad_session + bad_payload +
+               wrong_stream;
     }
     void count(PacketCheck c) noexcept;
 };

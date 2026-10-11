@@ -1,0 +1,477 @@
+Stage 8 evidence: two-way live audio, development PC, 11 Oct 2026
+======================================================================
+PC: Windows 11 Pro 10.0.26300, Realtek audio (microphone endpoint MUTED in Windows -> silent input;
+speakers live, so real-output runs use -60 dB). Build: core-check-gcc (MinGW g++ 16.2), NOT the MSVC product
+build. All runs: TWO PROBE PROCESSES ON ONE PC (loopback 127.0.0.1), one run at a time. They test logic,
+codec, counters and robustness; they do NOT show two people hearing each other on two PCs, real network
+behaviour, or acoustic latency. TEST TONE / BURSTS / ECHO sources and the TEST PLAYBACK CLOCK are labelled
+stand-ins for microphones and output devices (see tools/rr_session_probe/main.cpp). Pairing codes: <redacted>.
+
+PART A. Runs that found defects (earlier builds of this stage, kept as found)
+----------------------------------------------------------------------
+### D4b (restart counted as duplicates (fixed: D-63))
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 519, lost est 0, dup 0, reordered 0, late 0, jitter 0.548 ms, max gap 12.9 ms, buffer 2/3 (max 3), underruns 0, concealed 0, catch-up 0, queue-full 0
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 721, lost est 0, dup 0, reordered 0, late 0, jitter 0.528 ms, max gap 13.0 ms, buffer 2/3 (max 3), underruns 0, concealed 0, catch-up 0, queue-full 0
+[producer] IN  stream 2: receiving; buffering | received 900, lost est 0, dup 0, reordered 0, late 0, jitter 0.831 ms, max gap 13.0 ms, buffer 0/3 (max 3), underruns 20, concealed 20, catch-up 0, queue-full 0
+[producer] IN  stream 2: NO PACKETS for 2.2 s (remote not sending, or the network/firewall blocks this direction); buffering | received 900, lost est 0, dup 0, reordered 0, late 0, jitter 0.831 ms, max gap 13.0 ms, buffer 0/3 (max
+[producer] IN  stream 2: NO PACKETS for 4.2 s (remote not sending, or the network/firewall blocks this direction); buffering | received 900, lost est 0, dup 121, reordered 0, late 0, jitter 0.831 ms, max gap 13.0 ms, buffer 0/3 (m
+[producer] IN  stream 2: NO PACKETS for 6.3 s (remote not sending, or the network/firewall blocks this direction); buffering | received 900, lost est 0, dup 323, reordered 0, late 0, jitter 0.831 ms, max gap 13.0 ms, buffer 0/3 (m
+[producer] IN  stream 2: NO PACKETS for 8.3 s (remote not sending, or the network/firewall blocks this direction); buffering | received 900, lost est 0, dup 525, reordered 0, late 0, jitter 0.831 ms, max gap 13.0 ms, buffer 0/3 (m
+
+### D5 (slow recovery after a sender pause (fixed: D-65))
+[producer] IN  stream 2: receiving; playing (peak -200.0 dBFS) | received 1601, lost est 0, dup 0, reordered 0, late 18, jitter 0.584 ms, max gap 60.4 ms, buffer 2/3 (max 3), underruns 20, concealed 20, catch-up 0, queue-full 0
+
+### D3a (one disturbed run, not reproduced (two repeats D3a2/D3a3 clean))
+[producer] IN  stream 2: receiving; playing (peak -42.9 dBFS) | received 1404, lost est 0, dup 0, reordered 0, late 86, jitter 13.143 ms, max gap 32.6 ms, buffer 1/3 (max 5), underruns 86, concealed 86, catch-up 0, queue-full 0
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\D3a\sink_p.wav, 12.07 s analysed (first 2.0 s skipped)
+  sink RMS -60.44 dBFS
+  energy share at remote tone 660 Hz: 0.000
+  energy share at OWN tone 440 Hz: 0.049  (> 0.05 = own audio coming back: feedback/duplicate)
+  bursts sent (after skip): 25, matched in sink within 450 ms: 15
+  burst onset delay source -> sink: median 55 ms, min 55 ms, max 55 ms (1 ms resolution)
+  returned burst level: -45.91 dBFS peak envelope vs sent -22.47 dBFS
+
+PART B. Final runs (final binary of this stage, after all fixes)
+----------------------------------------------------------------------
+
+### D1: both directions at once, test tones (producer 440 Hz, performer 660 Hz), test playback clocks saved to WAV
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --live-sink wav:sink_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 12; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 11; live-stats; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:50206; remote is listening | packets 1404, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1401, lost est 0, late 0, dup 0, reordered 0, jitter 1.003 ms, buffer 2/3, underruns 0, concealed 0
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1404, lost est 0, dup 0, reordered 0, late 0, jitter 0.622 ms, max gap 13.5 ms, buffer 2/3 (max 3), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream)
+[producer] STATUS local recording: TEST RECORDER (no audio, nothing is written); session state Ready
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.103 ms
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52601; remote is listening | packets 1304, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 1301, lost est 0, late 0, dup 0, reordered 0, jitter 0.813 ms, buffer 2/3, underruns 0, concealed 0
+[performer] IN  stream 1: receiving; playing (peak -32.0 dBFS) | received 1304, lost est 0, dup 0, reordered 0, late 0, jitter 0.716 ms, max gap 13.8 ms, buffer 2/3 (max 3), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream)
+[performer] STATUS local recording: TEST RECORDER (no audio, nothing is written); session state Ready
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.130 ms
+analyse_live_duplex.py producer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D1\sink_p.wav, 13.05 s analysed (first 1.0 s skipped)
+  sink RMS -35.02 dBFS
+  energy share at remote tone 660 Hz: 1.000
+  energy share at OWN tone 440 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+analyse_live_duplex.py performer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D1\sink_r.wav, 13.08 s analysed (first 1.0 s skipped)
+  sink RMS -35.03 dBFS
+  energy share at remote tone 440 Hz: 0.998
+  energy share at OWN tone 660 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1405","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1405","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1405","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1405","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+
+### D2: REAL input devices recording masters (endpoint muted -> silence) while the live streams carry test tones; producer send-mute during the take, performer receive-mute (hear off)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --audio --out takes_p --live-source tone --live-sink wav:sink_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 2; record; wait 3; mute on; wait 3; live-stats; mute off; wait 3; stop; wait-state Ready 15; wait 1; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --audio --out takes_r --live-source tone --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 3; hear off; wait 3; live-stats; hear on; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: MUTED (the remote hears silence; your recording continues) to 127.0.0.1:54165; remote is listening | packets 1005, muted frames 300, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1001, lost est 0, late 0, dup 0, reordered 0, jitter 0.625 ms, buffer 2/3, underruns 0, concealed 0
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1005, lost est 0, dup 0, reordered 0, late 0, jitter 0.664 ms, max gap 13.7 ms, buffer 2/3 (max 4), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[producer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Recording; take 1 RECORDING
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.075 ms
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:54165; remote is listening | packets 1460, muted frames 300, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1452, lost est 0, late 0, dup 0, reordered 0, jitter 0.678 ms, buffer 2/3, underruns 0, concealed 0
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1460, lost est 0, dup 0, reordered 0, late 0, jitter 0.808 ms, max gap 13.7 ms, buffer 2/3 (max 4), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[producer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready; take 1 complete, 396833 frames
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.285 ms
+  last take 1: local started (complete, 396833 frames, takes_p\20261011-102906_850c93db\take01_producer_850c93db.wav)
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52611; remote is listening | packets 800, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 751, lost est 0, late 0, dup 0, reordered 0, jitter 1.094 ms, buffer 2/3, underruns 0, concealed 0
+[performer] IN  stream 1: remote MUTED (receiving flagged silence); hearing OFF on this PC | received 800, lost est 0, dup 0, reordered 0, late 0, jitter 0.829 ms, max gap 13.6 ms, buffer 0/3 (max 4), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Recording; take 1 RECORDING
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.033 ms
+  last take 1: local started (complete, 396834 frames, takes_r\20261011-102906_850c93db\take01_performer_850c93db.wav)
+analyse_live_duplex.py producer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D2\sink_p.wav, 13.61 s analysed (first 1.0 s skipped)
+  sink RMS -35.02 dBFS
+  energy share at remote tone 660 Hz: 1.000
+  energy share at OWN tone 440 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+analyse_live_duplex.py performer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D2\sink_r.wav, 13.74 s analysed (first 1.0 s skipped)
+  sink RMS -37.09 dBFS
+  energy share at remote tone 440 Hz: 0.620
+  energy share at OWN tone 660 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+master take takes_p/20261011-102906_850c93db/take01_producer_850c93db.wav:
+  sink RMS -169.93 dBFS
+master take takes_r/20261011-102906_850c93db/take01_performer_850c93db.wav:
+  sink RMS -169.93 dBFS
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1461","send_errors":"0","muted_frames":"300","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1460","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1461","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1461","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+one-page live report written by the producer (rep_p.txt), verbatim:
+  | LIVE AUDIO DIAGNOSTICS (one page, rr.live_report.v1)
+  | Generated 2026-10-11T10:29:17.461Z | Producer (rr_session_probe) | 0.1.0 | session 850c93db
+  | Security: LAN-only, unencrypted, unauthenticated (ADR-012). Echo cancellation: NOT implemented
+  | (LATER-03); headphones are required on both PCs. Headphones: not applicable (probe)
+  | 
+  | CONDITIONS
+  |   Test set-up:   two processes on one PC (development PC)
+  |   Input:         TEST SOURCE tone @ 48000 Hz
+  |   Output:        TEST PLAYBACK CLOCK @ 48000 Hz
+  |   Media socket:  127.0.0.1:52611 <-> 127.0.0.1:54165 (bound, peer learned)
+  |   Send codec:    libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, 10.0 ms frames, 64000 bit/s CBR, complexity 5, lookahead 120 samples
+  |   Playout:       jitter target 3 frames, gain -12.0 dB, stall limit 20
+  | 
+  | STATUS (each line is independent)
+  |   Local capture:       TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+  |   Local recording:     audio input: Microphone Array (2- Realtek(R) Audio); session state Ready; take 1 complete, 396833 frames
+  |   Outgoing stream:     SENDING to 127.0.0.1:54165; remote is listening
+  |   Incoming stream:     receiving; playing (peak -32.0 dBFS)
+  |   Remote participant:  'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.285 ms
+  | 
+  | OUTGOING  this PC -> remote (stream 1, producer mic)
+  |   measured here:  packets 1460 (154760 B), muted frames 300, send errors 0, encode errors 0, capture-tap overflow 0 events/0 frames, backlog trimmed 0 frames, max encode 0.750 ms
+  |   remote reports (87 ms ago): received 1452, lost (est.) 0, late 0, duplicates 0, reordered 0, jitter 0.678 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0, listening yes
+  | 
+  | INCOMING  remote -> this PC (stream 2, performer mic)
+  |   arrival:   received 1460 of 1460 expected, lost (est.) 0, duplicates 0, reordered 0, stream restarts 0, end-of-stream 0
+  |   timing:    inter-arrival jitter 0.808 ms, largest gap 13.7 ms, last packet 5 ms ago
+  |   playout:   played 1457, late 0, lost (concealed) 0, underruns 0, concealed total 0, refills 0, drift skips 0, catch-up frames 0, resyncs 0
+  |   buffers:   jitter 2/3 (max 4), packet queue full 0, decode errors 0, max decode+mix 0.211 ms, wrong-rate callbacks 0
+  | 
+  | ENDPOINT  invalid datagrams 0 (source 0, oversized 0, length 0, version 0, type 0, CRC 0, session 0, payload 0, wrong stream 0); peer timeouts 0; reports sent 29/received 30; control link up
+  | 
+  | TERMS: jitter = packet arrival variation, not latency. Loss is estimated from sequence numbers
+  | (loss after the last packet is invisible). Concealment affects listening only, never a recording.
+  | Acoustic (mouth-to-ear) latency is NOT measured by these counters.
+one-page live report written by the performer (rep_r.txt), verbatim:
+  | LIVE AUDIO DIAGNOSTICS (one page, rr.live_report.v1)
+  | Generated 2026-10-11T10:29:17.587Z | Performer (rr_session_probe) | 0.1.0 | session 850c93db
+  | Security: LAN-only, unencrypted, unauthenticated (ADR-012). Echo cancellation: NOT implemented
+  | (LATER-03); headphones are required on both PCs. Headphones: not applicable (probe)
+  | 
+  | CONDITIONS
+  |   Test set-up:   two processes on one PC (development PC)
+  |   Input:         TEST SOURCE tone @ 48000 Hz
+  |   Output:        TEST PLAYBACK CLOCK @ 48000 Hz
+  |   Media socket:  127.0.0.1:54165 <-> 127.0.0.1:52611 (connected)
+  |   Send codec:    libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, 10.0 ms frames, 64000 bit/s CBR, complexity 5, lookahead 120 samples
+  |   Playout:       jitter target 3 frames, gain -12.0 dB, stall limit 20
+  | 
+  | STATUS (each line is independent)
+  |   Local capture:       TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+  |   Local recording:     audio input: Microphone Array (2- Realtek(R) Audio); session state NotReady; take 1 complete, 396834 frames
+  |   Outgoing stream:     paused: the remote side stopped its live audio
+  |   Incoming stream:     remote stopped sending; buffering
+  |   Remote participant:  'Probe producer' at 127.0.0.1, control link Disconnected, control RTT 0.131 ms
+  | 
+  | OUTGOING  this PC -> remote (stream 2, performer mic)
+  |   measured here:  packets 1461 (154866 B), muted frames 0, send errors 0, encode errors 0, capture-tap overflow 0 events/0 frames, backlog trimmed 0 frames, max encode 0.358 ms
+  |   remote reports (122 ms ago): received 1460, lost (est.) 0, late 0, duplicates 0, reordered 0, jitter 0.808 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0, listening yes
+  | 
+  | INCOMING  remote -> this PC (stream 1, producer mic)
+  |   arrival:   received 1461 of 1461 expected, lost (est.) 0, duplicates 0, reordered 0, stream restarts 0, end-of-stream 2
+  |   timing:    inter-arrival jitter 0.717 ms, largest gap 16.4 ms, last packet 122 ms ago
+  |   playout:   played 1155, late 0, lost (concealed) 0, underruns 0, concealed total 0, refills 0, drift skips 0, catch-up frames 0, resyncs 0
+  |   buffers:   jitter 0/3 (max 4), packet queue full 0, decode errors 0, max decode+mix 0.227 ms, wrong-rate callbacks 0
+  | 
+  | ENDPOINT  invalid datagrams 0 (source 0, oversized 0, length 0, version 0, type 0, CRC 0, session 0, payload 0, wrong stream 0); peer timeouts 0; reports sent 30/received 31; control link down
+  | 
+  | TERMS: jitter = packet arrival variation, not latency. Loss is estimated from sequence numbers
+  | (loss after the last packet is invisible). Concealment affects listening only, never a recording.
+  | Acoustic (mouth-to-ear) latency is NOT measured by these counters.
+
+### D3a: accidental-feedback simulation: producer sends 50 ms bursts, performer sends back what it hears (echo source); jitter 3 frames both sides
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --live-source bursts --jitter-frames 3 --live-sink wav:sink_p.wav --source-wav src_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 12; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --live-source echo --jitter-frames 3 --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0
+analyse_live_duplex.py (producer sink vs its source):
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D3a\sink_p.wav, 12.04 s analysed (first 2.0 s skipped)
+  sink RMS -56.83 dBFS
+  energy share at remote tone 660 Hz: 0.000
+  energy share at OWN tone 440 Hz: 0.100  (> 0.05 = own audio coming back: feedback/duplicate)
+  bursts sent (after skip): 25, matched in sink within 450 ms: 24
+  burst onset delay source -> sink: median 55 ms, min 55 ms, max 55 ms (1 ms resolution)
+  returned burst level: -45.91 dBFS peak envelope vs sent -22.47 dBFS
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1404","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1403","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1403","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1404","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+
+### D3b: as D3a with jitter 8 frames both sides (excessive buffering)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --live-source bursts --jitter-frames 8 --live-sink wav:sink_p.wav --source-wav src_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 12; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --live-source echo --jitter-frames 8 --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0
+analyse_live_duplex.py (producer sink vs its source):
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D3b\sink_p.wav, 12.03 s analysed (first 2.0 s skipped)
+  sink RMS -56.82 dBFS
+  energy share at remote tone 660 Hz: 0.000
+  energy share at OWN tone 440 Hz: 0.101  (> 0.05 = own audio coming back: feedback/duplicate)
+  bursts sent (after skip): 25, matched in sink within 450 ms: 24
+  burst onset delay source -> sink: median 165 ms, min 165 ms, max 165 ms (1 ms resolution)
+  returned burst level: -45.91 dBFS peak envelope vs sent -22.47 dBFS
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1403","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1403","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1403","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1403","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+
+### D4: asymmetric failure during a take: everything producer -> performer blackholed for 6 s on the performer; control-link hint on
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --audio --out takes_p --live-source tone --live-sink wav:sink_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 2; record; wait 12; stop; wait-state Ready 15; wait 1; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --audio --out takes_r --live-source tone --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 4; blackhole on; wait 6; live-stats; blackhole off; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:59062; remote is listening | packets 1738, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1100, lost est 602, late 0, dup 0, reordered 0, jitter 0.772 ms, buffer 2/3, underruns 20, concealed 20
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1738, lost est 0, dup 0, reordered 0, late 0, jitter 0.609 ms, max gap 13.4 ms, buffer 3/3 (max 4), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[producer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready; take 1 complete, 540794 frames
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.122 ms
+  last take 1: local started (complete, 540794 frames, takes_p\20261011-102953_4fd31715\take01_producer_4fd31715.wav)
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52641; remote is listening | packets 1203, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 600, lost est 0, late 0, dup 0, reordered 0, jitter 1.067 ms, buffer 2/3, underruns 0, concealed 0
+[performer] IN  stream 1: NO PACKETS for 6.0 s (remote not sending, or the network/firewall blocks this direction); buffering | received 601, lost est 0, dup 0, reordered 0, late 0, jitter 1.187 ms, max gap 13.3 ms, buffer 0/3 (max 3), underruns 20, concealed 20, catch-up 0, queue-full 0, resyncs 0
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 614
+[performer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Recording; take 1 RECORDING
+  last take 1: local started (complete, 540794 frames, takes_r\20261011-102953_4fd31715\take01_performer_4fd31715.wav)
+analyse_live_duplex.py producer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D4\sink_p.wav, 16.39 s analysed (first 1.0 s skipped)
+  sink RMS -35.02 dBFS
+  energy share at remote tone 660 Hz: 1.000
+  energy share at OWN tone 440 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+analyse_live_duplex.py performer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D4\sink_r.wav, 16.44 s analysed (first 1.0 s skipped)
+  sink RMS -37.01 dBFS
+  energy share at remote tone 440 Hz: 0.631
+  energy share at OWN tone 660 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+master take takes_p/20261011-102953_4fd31715/take01_producer_4fd31715.wav:
+  sink RMS -169.93 dBFS
+master take takes_r/20261011-102953_4fd31715/take01_performer_4fd31715.wav:
+  sink RMS -169.93 dBFS
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1739","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1739","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1739","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1137","lost_estimate":"602","late":"0","underruns":"20","queue_full_drops":"0","invalid":"0"}}
+one-page live report written by the producer (rep_p.txt), verbatim:
+  | LIVE AUDIO DIAGNOSTICS (one page, rr.live_report.v1)
+  | Generated 2026-10-11T10:30:07.036Z | Producer (rr_session_probe) | 0.1.0 | session 4fd31715
+  | Security: LAN-only, unencrypted, unauthenticated (ADR-012). Echo cancellation: NOT implemented
+  | (LATER-03); headphones are required on both PCs. Headphones: not applicable (probe)
+  | 
+  | CONDITIONS
+  |   Test set-up:   two processes on one PC (development PC)
+  |   Input:         TEST SOURCE tone @ 48000 Hz
+  |   Output:        TEST PLAYBACK CLOCK @ 48000 Hz
+  |   Media socket:  127.0.0.1:52641 <-> 127.0.0.1:59062 (bound, peer learned)
+  |   Send codec:    libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, 10.0 ms frames, 64000 bit/s CBR, complexity 5, lookahead 120 samples
+  |   Playout:       jitter target 3 frames, gain -12.0 dB, stall limit 20
+  | 
+  | STATUS (each line is independent)
+  |   Local capture:       TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+  |   Local recording:     audio input: Microphone Array (2- Realtek(R) Audio); session state Ready; take 1 complete, 540794 frames
+  |   Outgoing stream:     SENDING to 127.0.0.1:59062; remote is listening
+  |   Incoming stream:     receiving; playing (peak -32.0 dBFS)
+  |   Remote participant:  'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.122 ms
+  | 
+  | OUTGOING  this PC -> remote (stream 1, producer mic)
+  |   measured here:  packets 1738 (184228 B), muted frames 0, send errors 0, encode errors 0, capture-tap overflow 0 events/0 frames, backlog trimmed 0 frames, max encode 0.318 ms
+  |   remote reports (357 ms ago): received 1100, lost (est.) 602, late 0, duplicates 0, reordered 0, jitter 0.772 ms, buffer 2/3, underruns 20, concealed 20, decode errors 0, invalid 0, listening yes
+  | 
+  | INCOMING  remote -> this PC (stream 2, performer mic)
+  |   arrival:   received 1738 of 1738 expected, lost (est.) 0, duplicates 0, reordered 0, stream restarts 0, end-of-stream 0
+  |   timing:    inter-arrival jitter 0.609 ms, largest gap 13.4 ms, last packet 6 ms ago
+  |   playout:   played 1735, late 0, lost (concealed) 0, underruns 0, concealed total 0, refills 0, drift skips 0, catch-up frames 0, resyncs 0
+  |   buffers:   jitter 3/3 (max 4), packet queue full 0, decode errors 0, max decode+mix 0.218 ms, wrong-rate callbacks 0
+  | 
+  | ENDPOINT  invalid datagrams 0 (source 0, oversized 0, length 0, version 0, type 0, CRC 0, session 0, payload 0, wrong stream 0); peer timeouts 0; reports sent 34/received 35; control link up
+  | 
+  | TERMS: jitter = packet arrival variation, not latency. Loss is estimated from sequence numbers
+  | (loss after the last packet is invisible). Concealment affects listening only, never a recording.
+  | Acoustic (mouth-to-ear) latency is NOT measured by these counters.
+one-page live report written by the performer (rep_r.txt), verbatim:
+  | LIVE AUDIO DIAGNOSTICS (one page, rr.live_report.v1)
+  | Generated 2026-10-11T10:30:07.089Z | Performer (rr_session_probe) | 0.1.0 | session 4fd31715
+  | Security: LAN-only, unencrypted, unauthenticated (ADR-012). Echo cancellation: NOT implemented
+  | (LATER-03); headphones are required on both PCs. Headphones: not applicable (probe)
+  | 
+  | CONDITIONS
+  |   Test set-up:   two processes on one PC (development PC)
+  |   Input:         TEST SOURCE tone @ 48000 Hz
+  |   Output:        TEST PLAYBACK CLOCK @ 48000 Hz
+  |   Media socket:  127.0.0.1:59062 <-> 127.0.0.1:52641 (connected)
+  |   Send codec:    libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, 10.0 ms frames, 64000 bit/s CBR, complexity 5, lookahead 120 samples
+  |   Playout:       jitter target 3 frames, gain -12.0 dB, stall limit 20
+  | 
+  | STATUS (each line is independent)
+  |   Local capture:       TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+  |   Local recording:     audio input: Microphone Array (2- Realtek(R) Audio); session state NotReady; take 1 complete, 540794 frames
+  |   Outgoing stream:     paused: the remote side stopped its live audio
+  |   Incoming stream:     remote stopped sending; buffering
+  |   Remote participant:  'Probe producer' at 127.0.0.1, control link Disconnected, control RTT 0.090 ms
+  | 
+  | OUTGOING  this PC -> remote (stream 2, performer mic)
+  |   measured here:  packets 1739 (184334 B), muted frames 0, send errors 0, encode errors 0, capture-tap overflow 0 events/0 frames, backlog trimmed 0 frames, max encode 0.269 ms
+  |   remote reports (48 ms ago): received 1739, lost (est.) 0, late 0, duplicates 0, reordered 0, jitter 0.614 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0, listening yes
+  | 
+  | INCOMING  remote -> this PC (stream 1, producer mic)
+  |   arrival:   received 1137 of 1739 expected, lost (est.) 602, duplicates 0, reordered 0, stream restarts 0, end-of-stream 2
+  |   timing:    inter-arrival jitter 0.655 ms, largest gap 6032.3 ms, last packet 50 ms ago
+  |   playout:   played 1134, late 0, lost (concealed) 0, underruns 20, concealed total 20, refills 1, drift skips 0, catch-up frames 0, resyncs 0
+  |   buffers:   jitter 0/3 (max 3), packet queue full 0, decode errors 0, max decode+mix 0.243 ms, wrong-rate callbacks 0
+  | 
+  | ENDPOINT  invalid datagrams 0 (source 0, oversized 0, length 0, version 0, type 0, CRC 0, session 0, payload 0, wrong stream 0); peer timeouts 1; reports sent 35/received 24; control link down
+  |   TEST receive blackhole dropped 614 datagrams
+  | 
+  | TERMS: jitter = packet arrival variation, not latency. Loss is estimated from sequence numbers
+  | (loss after the last packet is invisible). Concealment affects listening only, never a recording.
+  | Acoustic (mouth-to-ear) latency is NOT measured by these counters.
+
+### D4b: as D4 with the performer's control-link hint OFF (--no-control-hint)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --audio --out takes_p --live-source tone --live-sink wav:sink_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 2; record; wait 14; stop; wait-state Ready 15; wait 1; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --audio --out takes_r --live-source tone --no-control-hint --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 4; blackhole on; wait 6; live-stats; blackhole off; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:56640; remote is listening | packets 1940, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1302, lost est 601, late 0, dup 0, reordered 0, jitter 1.032 ms, buffer 1/3, underruns 20, concealed 20
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1637, lost est 0, dup 0, reordered 0, late 0, jitter 0.846 ms, max gap 3030.8 ms, buffer 2/3 (max 3), underruns 20, concealed 20, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[producer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready; take 1 complete, 637190 frames
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.058 ms
+  last take 1: local started (complete, 637190 frames, takes_p\20261011-103012_5782d7b8\take01_producer_5782d7b8.wav)
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+[performer] > live-stats
+[performer] OUT stream 2: paused: no datagram from the remote side for 3 s and no control link | packets 900, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 600, lost est 0, late 0, dup 0, reordered 0, jitter 0.900 ms, buffer 2/3, underruns 0, concealed 0
+[performer] IN  stream 1: NO PACKETS for 6.0 s (remote not sending, or the network/firewall blocks this direction); buffering | received 601, lost est 0, dup 0, reordered 0, late 0, jitter 0.931 ms, max gap 13.7 ms, buffer 0/3 (max 3), underruns 20, concealed 20, catch-up 0, queue-full 0, resyncs 0
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 613
+[performer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream); input device open for recording
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Recording; take 1 RECORDING
+  last take 1: local started (complete, 637188 frames, takes_r\20261011-103012_5782d7b8\take01_performer_5782d7b8.wav)
+analyse_live_duplex.py producer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D4b\sink_p.wav, 18.41 s analysed (first 1.0 s skipped)
+  sink RMS -35.76 dBFS
+  energy share at remote tone 660 Hz: 0.834
+  energy share at OWN tone 440 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+analyse_live_duplex.py performer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D4b\sink_r.wav, 18.46 s analysed (first 1.0 s skipped)
+  sink RMS -36.74 dBFS
+  energy share at remote tone 440 Hz: 0.672
+  energy share at OWN tone 660 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+master take takes_p/20261011-103012_5782d7b8/take01_producer_5782d7b8.wav:
+  sink RMS -169.94 dBFS
+master take takes_r/20261011-103012_5782d7b8/take01_performer_5782d7b8.wav:
+  sink RMS -169.94 dBFS
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1941","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1638","lost_estimate":"0","late":"0","underruns":"20","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1638","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1340","lost_estimate":"601","late":"0","underruns":"20","queue_full_drops":"0","invalid":"0"}}
+
+### D5: device change on REAL devices (muted microphone, speakers at -60 dB): performer re-opens input, then output, while both directions run
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --audio --out takes_p --live-sink device --live-gain-db -60 --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 14; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --audio --out takes_r --live-sink device --live-gain-db -60 --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 3; live-stats; reopen-input; wait 3; live-stats; reopen-output; wait 3; live-stats; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:56641; remote is listening | packets 1603, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[producer]   remote reports on it: received 1601, lost est 0, late 0, dup 0, reordered 0, jitter 0.559 ms, buffer 3/3, underruns 0, concealed 0
+[producer] IN  stream 2: receiving; playing (peak -200.0 dBFS) | received 1600, lost est 0, dup 0, reordered 0, late 3, jitter 0.502 ms, max gap 58.3 ms, buffer 2/3 (max 4), underruns 4, concealed 4, catch-up 0, queue-full 0, resyncs 1
+[producer] STATUS local capture: running: Microphone Array (2- Realtek(R) Audio), 48000 Hz, 2 ch, record-ring overruns 0
+[producer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.041 ms
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52661; remote is listening | packets 502, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 501, lost est 0, late 0, dup 0, reordered 0, jitter 0.463 ms, buffer 2/3, underruns 0, concealed 0
+[performer] IN  stream 1: receiving; playing (peak -200.0 dBFS) | received 500, lost est 0, dup 0, reordered 0, late 0, jitter 0.459 ms, max gap 12.7 ms, buffer 2/3 (max 4), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: running: Microphone Array (2- Realtek(R) Audio), 48000 Hz, 2 ch, record-ring overruns 0
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.043 ms
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52661; remote is listening | packets 806, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 797, lost est 0, late 3, dup 0, reordered 0, jitter 0.553 ms, buffer 2/3, underruns 4, concealed 4
+[performer] IN  stream 1: receiving; playing (peak -200.0 dBFS) | received 808, lost est 0, dup 0, reordered 0, late 0, jitter 0.569 ms, max gap 12.7 ms, buffer 4/3 (max 8), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: running: Microphone Array (2- Realtek(R) Audio), 48000 Hz, 2 ch, record-ring overruns 0
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.074 ms
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52661; remote is listening | packets 1109, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 0/0/0
+[performer]   remote reports on it: received 1097, lost est 0, late 3, dup 0, reordered 0, jitter 0.581 ms, buffer 2/3, underruns 4, concealed 4
+[performer] IN  stream 1: receiving; playing (peak -200.0 dBFS) | received 1111, lost est 0, dup 0, reordered 0, late 0, jitter 0.629 ms, max gap 12.7 ms, buffer 3/3 (max 8), underruns 0, concealed 0, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: running: Microphone Array (2- Realtek(R) Audio), 48000 Hz, 2 ch, record-ring overruns 0
+[performer] STATUS local recording: audio input: Microphone Array (2- Realtek(R) Audio); session state Ready
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.045 ms
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1603","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1600","lost_estimate":"0","late":"3","underruns":"4","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1601","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1603","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+
+### D6: different TEST impairments per direction: producer out 5 % loss; performer out 3 % duplicates + 20-packet burst every 150 packets
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --live --sim-loss 5 --sim-seed 3 --live-sink wav:sink_p.wav --report rep_p.txt --log p.jsonl --script "wait-ready 30; wait 12; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --live --sim-dup 3 --sim-burst 150:20 --sim-seed 4 --live-sink wav:sink_r.wav --report rep_r.txt --log r.jsonl --script "wait-ready 30; wait 11; live-stats; wait-closed"
+exit codes: producer 0, performer 0
+[producer] > live-stats
+[producer] OUT stream 1: SENDING to 127.0.0.1:56642; remote is listening | packets 1342, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 61/0/0
+[producer]   remote reports on it: received 1341, lost est 61, late 0, dup 0, reordered 0, jitter 1.224 ms, buffer 2/3, underruns 0, concealed 61
+[producer] IN  stream 2: receiving; playing (peak -32.0 dBFS) | received 1203, lost est 180, dup 35, reordered 0, late 0, jitter 0.961 ms, max gap 211.6 ms, buffer 2/3 (max 3), underruns 162, concealed 180, catch-up 0, queue-full 0, resyncs 0
+[producer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream)
+[producer] STATUS local recording: TEST RECORDER (no audio, nothing is written); session state Ready
+[producer] STATUS remote participant: 'Probe performer' at 127.0.0.1, control link Connected, control RTT 0.069 ms
+[performer] > live-stats
+[performer] OUT stream 2: SENDING to 127.0.0.1:52671; remote is listening | packets 1151, muted frames 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim drop/dup/reorder 179/31/0
+[performer]   remote reports on it: received 1071, lost est 160, late 0, dup 29, reordered 0, jitter 0.627 ms, buffer 2/3, underruns 144, concealed 160
+[performer] IN  stream 1: receiving; playing (peak -31.8 dBFS) | received 1247, lost est 52, dup 0, reordered 0, late 0, jitter 0.852 ms, max gap 29.9 ms, buffer 2/3 (max 3), underruns 0, concealed 52, catch-up 0, queue-full 0, resyncs 0
+[performer] STATUS local capture: TEST SOURCE 'tone' (no capture device for the live stream)
+[performer] STATUS local recording: TEST RECORDER (no audio, nothing is written); session state Ready
+[performer] STATUS remote participant: 'Probe producer' at 127.0.0.1, control link Connected, control RTT 0.136 ms
+analyse_live_duplex.py producer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D6\sink_p.wav, 13.05 s analysed (first 1.0 s skipped)
+  sink RMS -35.54 dBFS
+  energy share at remote tone 660 Hz: 0.879
+  energy share at OWN tone 440 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+analyse_live_duplex.py performer sink:
+  sink: C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\stage8\final\D6\sink_r.wav, 13.08 s analysed (first 1.0 s skipped)
+  sink RMS -35.10 dBFS
+  energy share at remote tone 440 Hz: 0.996
+  energy share at OWN tone 660 Hz: 0.000  (> 0.05 = own audio coming back: feedback/duplicate)
+pairing code occurrences in p.jsonl + r.jsonl: 0
+  endpoint_stopped {"out_stream":"1","packets_sent":"1343","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"1204","lost_estimate":"180","late":"0","underruns":"162","queue_full_drops":"0","invalid":"0"}}
+  endpoint_stopped {"out_stream":"2","packets_sent":"1239","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"1343","lost_estimate":"61","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+
+PART C. Notes
+----------------------------------------------------------------------
+Results of the final runs (one PC, loopback, test clocks unless stated). Final counts are taken from the endpoint_stopped log events.
+- D1, both directions at once:
+  - 1405 sent and 1405 received each way; 0 lost, 0 late, 0 underruns, 0 invalid.
+  - The producer heard the 660 Hz tone (share 1.000) and 0.000 of its own 440 Hz; the performer heard the 440 Hz tone (0.998) and 0.000 of its own.
+- D2, real input recording plus send and receive mute:
+  - The producer sent 300 muted frames during the take; the performer showed "remote MUTED" and the producer showed "remote has hearing switched off".
+  - Both master takes completed (396 833 and 396 834 frames); the performer confirmed TAKE_FINALISED.
+  - Both masters are silent (muted microphone) and contain none of the live test tones that were played on the other side, so received live audio was not written to a master.
+- D3a / D3b, feedback simulation (the performer sends back what it hears):
+  - The producer found its own bursts in what it heard (own-tone share 0.100 / 0.101; 24 of 25 bursts matched, the last one cut off by the stop).
+  - Software round trip: 55 ms with 3-frame buffers and 165 ms with 8-frame buffers, both sides.
+  - Returned level: 23.4 dB below the sent level, which matches the two -12 dB playback gains.
+  - This is what "accidental feedback / duplicate audio" looks like. It is detected by analysis, NOT prevented: there is no echo cancellation.
+- D4, producer -> performer blackholed for 6 s during a take, control link up:
+  - The performer lost 602 packets (the blackhole) and had 20 underruns, then recovered.
+  - The other direction was unaffected: the producer received 1739 of 1739 packets with 0 underruns.
+  - Both takes completed (540 794 frames each).
+- D4b, as D4 without the control-link hint:
+  - The performer paused sending after 3 s (no blind sending), and the producer saw 20 underruns.
+  - On recovery: 0 lost and 0 duplicates. The sequence numbers continue (the D-63 fix).
+  - Both takes completed.
+- D5, real devices, input re-open then output re-open on the performer during two-way live audio:
+  - No crash. The producer's incoming stream had 4 underruns, 3 late and 1 resync (the D-65 fix; before it: 20 underruns, 18 late).
+- D6, different impairments per direction:
+  - Stream 1 (5 % loss): 61 lost (estimated), 0 duplicates.
+  - Stream 2 (bursts + 3 % duplicates): 180 lost (estimated) and 162 underruns, with the duplicates detected.
+  - Counted separately per direction; no crash.
+- Repeatability:
+  - The first D3a (part A) showed one disturbed run (13 ms jitter, 86 underruns on stream 2), not reproduced in five later runs (D3a2, D3a3, the final D3a, and the D3b runs).
+  - The 8-frame round trip was 155 ms in an earlier run and 165 ms in the final run.
+- NOT shown here:
+  - two people hearing each other on two PCs (the stage's target set-up);
+  - real network loss and jitter;
+  - clock drift between two devices;
+  - acoustic latency;
+  - audible quality;
+  - the Qt Live audio panel (not compiled);
+  - the effect of real speakers into a real microphone (simulated only).

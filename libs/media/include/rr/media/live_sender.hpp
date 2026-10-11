@@ -2,6 +2,8 @@
 
 // Producer side of the one-way live stream (Stage 7, ADR-017): microphone -> LiveTap (filled by
 // the capture callback) -> this media-send thread -> Opus encode -> UDP -> performer.
+// Since Stage 8 this is a thin wrapper over LiveEndpoint (one outgoing stream 1, no incoming
+// stream); the Stage 7 API and statistics are unchanged, and the Stage 7 tests run against it.
 //
 // The thread owns the UDP socket, bound to the producer's selected interface and media port.
 // It sends audio only to an endpoint it has LEARNED from a valid receiver report whose source
@@ -23,6 +25,7 @@
 
 #include "rr/audio/live_tap.hpp"
 #include "rr/media/jitter_buffer.hpp"
+#include "rr/media/live_endpoint.hpp"
 #include "rr/media/live_settings.hpp"
 #include "rr/media/media_packet.hpp"
 #include "rr/media/net_impairment.hpp"
@@ -89,46 +92,16 @@ public:
     // `tap` must outlive the sender (the engine's tap, or a test source's).
     bool start(const LiveSenderConfig& config, audio::LiveTap& tap, std::string& error);
     void stop();  // sends END_OF_STREAM if streaming
-    bool running() const noexcept { return running_.load(); }
+    bool running() const noexcept { return endpoint_.running(); }
 
-    void set_sending(bool on) noexcept { sending_.store(on); }
+    void set_sending(bool on) noexcept;
     bool sending() const noexcept { return sending_.load(); }
 
     LiveSenderStats stats() const;
 
 private:
-    void thread_main();
-    void receive_reports(std::int64_t now);
-    void send_packet(const std::uint8_t* datagram, std::size_t size, bool audio = true);
-    void send_end_of_stream();
-    void discard_tap(std::size_t samples);
-
-    log::Logger* log_;
-    LiveSenderConfig cfg_;
-    audio::LiveTap* tap_ = nullptr;
-    net::UdpSocket socket_;
-    net::Endpoint expected_peer_;
-    OpusLiveEncoder encoder_;
-    Impairment impairment_;
-    std::thread thread_;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> stop_requested_{false};
+    LiveEndpoint endpoint_;
     std::atomic<bool> sending_{false};
-    std::atomic<bool> streaming_{false};  // written by the thread only
-
-    // thread state
-    std::uint32_t seq_ = 0;
-    std::uint64_t media_index_ = 0;
-    std::uint64_t tap_drop_base_ = 0;
-    std::vector<float> frame_;
-    std::vector<float> scratch_;
-    std::vector<std::uint8_t> held_back_;  // reorder impairment
-
-    mutable std::mutex mutex_;  // guards the fields below (thread <-> stats())
-    bool peer_known_ = false;
-    net::Endpoint peer_;
-    std::int64_t last_report_ns_ = 0;
-    LiveSenderStats counters_;
 };
 
 }  // namespace rr::media

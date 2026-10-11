@@ -1,7 +1,8 @@
 #pragma once
 
 // Performer side of the one-way live stream (Stage 7, ADR-017): producer microphone ->
-// network -> this PC's output. Separate from both master recordings: nothing here reads or
+// network -> this PC's output. Since Stage 8 this is a thin wrapper over LiveEndpoint (one
+// incoming stream 1, no outgoing stream); the Stage 7 API and statistics are unchanged. Separate from both master recordings: nothing here reads or
 // writes a take file, and concealment only ever affects what is heard.
 //
 // Threads:
@@ -22,6 +23,7 @@
 #include "rr/audio/spsc_ring.hpp"
 #include "rr/media/arrival_stats.hpp"
 #include "rr/media/jitter_buffer.hpp"
+#include "rr/media/live_endpoint.hpp"
 #include "rr/media/live_settings.hpp"
 #include "rr/media/media_packet.hpp"
 #include "rr/media/net_impairment.hpp"
@@ -84,12 +86,12 @@ public:
     bool start(const LiveReceiverConfig& config, std::string& error);
     // Sends a closing report and stops the thread. Detach from the audio engine BEFORE this.
     void stop();
-    bool running() const noexcept { return running_.load(); }
+    bool running() const noexcept { return endpoint_.running(); }
 
-    void set_output_enabled(bool on) noexcept { output_enabled_.store(on); }
-    bool output_enabled() const noexcept { return output_enabled_.load(); }
+    void set_output_enabled(bool on) noexcept;
+    bool output_enabled() const noexcept;
     void set_gain_db(float db) noexcept;
-    void set_target_frames(std::uint32_t frames) noexcept { target_frames_.store(frames); }
+    void set_target_frames(std::uint32_t frames) noexcept;
 
     // Playback callback (real-time).
     void render_add(float* out, std::uint32_t frames, std::uint32_t channels, std::uint32_t sample_rate) noexcept override;
@@ -97,70 +99,7 @@ public:
     LiveReceiverStats stats() const;
 
 private:
-    void thread_main();
-    void handle_datagram(const std::uint8_t* data, long size, const net::Endpoint& from, std::int64_t now);
-    void send_report(bool closing);
-    bool next_frame() noexcept;  // callback: fills pcm_; false while filling
-
-    log::Logger* log_;
-    LiveReceiverConfig cfg_;
-    net::UdpSocket socket_;
-    net::Endpoint producer_;
-    std::thread thread_;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> stop_requested_{false};
-
-    // receive thread -> callback
-    audio::SpscRing<JbPacket> queue_{64};
-
-    // receive-thread state (published under stats_mutex_)
-    mutable std::mutex stats_mutex_;
-    ArrivalStats arrival_;
-    InvalidCounts invalid_;
-    std::uint64_t queue_full_drops_ = 0;
-    std::uint64_t eos_ = 0;
-    std::uint64_t reports_sent_ = 0;
-    std::uint64_t report_errors_ = 0;
-    std::uint64_t test_dropped_ = 0;
-    std::int64_t last_packet_ns_ = 0;
-    std::uint32_t report_seq_ = 0;
-    Impairment receive_impairment_;
-    JbPacket rx_packet_;
-
-    // callback state (touched only inside render_add)
-    JitterBuffer jb_;
-    OpusLiveDecoder decoder_;
-    float pcm_[OpusLiveDecoder::kMaxFrameSamples] = {};
-    std::uint32_t pcm_len_ = 0;
-    std::uint32_t pcm_pos_ = 0;
-    std::uint32_t frame_samples_ = 480;
-    JbPacket cb_packet_;
-    bool was_enabled_ = false;
-    float window_peak_ = 0.0f;
-    std::uint64_t window_frames_ = 0;
-
-    // control -> callback
-    std::atomic<bool> output_enabled_{false};
-    std::atomic<float> gain_linear_{0.25f};
-    std::atomic<float> gain_db_{-12.0f};
-    std::atomic<std::uint32_t> target_frames_{3};
-
-    // callback -> stats
-    std::atomic<bool> cb_jb_playing_{false};
-    std::atomic<std::uint32_t> cb_held_{0};
-    std::atomic<std::uint32_t> cb_max_held_{0};
-    std::atomic<std::uint32_t> cb_target_{0};
-    std::atomic<std::uint64_t> cb_accepted_{0}, cb_late_{0}, cb_dups_{0}, cb_too_early_{0}, cb_played_{0}, cb_lost_{0},
-        cb_underruns_{0}, cb_rebuffers_{0}, cb_drift_{0}, cb_resets_{0};
-    std::atomic<std::uint64_t> cb_concealed_{0};
-    std::atomic<std::uint64_t> cb_decode_errors_{0};
-    std::atomic<std::uint64_t> cb_callbacks_{0};
-    std::atomic<std::uint64_t> cb_wrong_rate_{0};
-    std::atomic<std::uint64_t> cb_frames_out_{0};
-    std::atomic<std::int64_t> cb_max_render_ns_{0};
-    std::atomic<std::int64_t> cb_last_render_ns_{0};
-    std::atomic<std::uint32_t> cb_frame_samples_{0};
-    std::atomic<float> cb_peak_{0.0f};
+    LiveEndpoint endpoint_;
 };
 
 }  // namespace rr::media

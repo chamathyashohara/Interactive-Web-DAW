@@ -44,11 +44,10 @@ const char* const kSecurityNotice =
     "network (ADR-012, ADR-016). Not designed or tested for use across the internet.";
 
 const char* const kStageNotice =
-    "Stage 7 build: devices, meters, local monitoring, local recording, producer-controlled sessions "
-    "over a LAN, and ONE-WAY live audio from the producer to the performer (Opus over UDP). The "
-    "performer cannot yet be heard by the producer through this app (two-way talkback is a later "
-    "stage). The live stream is a monitor only: each PC records its own input locally, and the "
-    "recordings never contain the live stream.";
+    "Stage 8 build: devices, meters, local monitoring, local recording, producer-controlled sessions "
+    "over a LAN, and TWO-WAY live talkback (Opus over UDP). The live streams are a monitor only: "
+    "each PC records its own microphone locally, and the recordings never contain received live "
+    "audio. There is no echo cancellation: both people must use headphones.";
 
 }  // namespace
 

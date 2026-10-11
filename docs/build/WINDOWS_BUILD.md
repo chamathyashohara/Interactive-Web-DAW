@@ -18,6 +18,8 @@
 | Stage 7: libopus 1.6.1 fetch (SHA-256 checked) + `rr_media` + live probe + media tests with GCC | **PASS**: 0 warnings in a clean rebuild (libopus included), all tests, 10 repeats. Two-process live runs on one PC. | Stage 7 report, `docs/testing/evidence/2026-10-11_devpc_stage7_live_runs.txt` |
 | Stage 7: libopus and `rr_media` with **MSVC** | **NOT TESTED** (no MSVC). libopus selects `USE_ALLOCA` there; configuration stops if it would fall back to its pseudostack. | — |
 | Stage 7: Qt `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 7 report |
+| Stage 8: two-way `rr_media` (endpoint, streams, report) + duplex tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process duplex runs on one PC. | Stage 8 report, `docs/testing/evidence/2026-10-11_devpc_stage8_duplex_runs.txt` |
+| Stage 8: Qt two-way `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 8 report |
 
 The commands below are the intended reference procedure. Run them on a PC with
 the prerequisites, and record the output in the next stage report.

@@ -14,8 +14,15 @@
 //                                       consecutive underruns -> back to Filling (rebuffer)
 //    Drift: if more than target+2 packets stay held for `drift_pulls` consecutive pulls (the
 //    sender's capture clock runs faster than this playback clock), one frame is skipped (counted).
+//    Catch-up (Stage 8): if more than target + max(8, target) packets are held (a backlog after a
+//    playback stall or a burst after a network stall), the oldest are dropped at once down to the
+//    target (counted in catchup_frames), so live delay never stays inflated for long.
 // Arrivals: seq < next_seq -> Late (dropped); already held -> Duplicate (dropped);
 //           seq >= next_seq + kSlots -> TooEarly: reset to Filling with this packet.
+//           Resync (Stage 8): kResyncLate consecutive Late arrivals mean the SENDER paused
+//           (its sequence numbers stopped while playout kept advancing, e.g. its input device
+//           was re-opened): refill from the arriving packet instead of dropping everything until
+//           the stall limit (found by run D5: a 60 ms sender pause cost 20 underruns + 18 late).
 // Sequence numbers are compared with serial arithmetic int32(a - b), so 2^32 wrap is harmless.
 
 #include <array>
@@ -47,12 +54,15 @@ struct JitterStats {
     std::uint64_t underruns = 0;     // Underrun pulls (concealed)
     std::uint64_t rebuffers = 0;     // Playing -> Filling after the stall limit
     std::uint64_t drift_skips = 0;
+    std::uint64_t catchup_frames = 0; // frames dropped to bring an excessive backlog back to the target
+    std::uint64_t resyncs = 0;        // refills after kResyncLate consecutive late arrivals
     std::uint64_t resets = 0;        // explicit reset() (end of stream, new stream)
 };
 
 class JitterBuffer {
 public:
     static constexpr std::uint32_t kSlots = 64;
+    static constexpr std::uint32_t kResyncLate = 3;
 
     enum class Insert { Accepted, Late, Duplicate, TooEarlyReset };
     enum class Pull { Packet, Lost, Underrun, Filling };
@@ -91,6 +101,7 @@ private:
     std::uint32_t next_seq_ = 0;
     std::uint32_t held_ = 0;
     std::uint32_t consecutive_underruns_ = 0;
+    std::uint32_t consecutive_late_ = 0;
     std::uint32_t over_target_pulls_ = 0;
     JitterStats stats_;
 };

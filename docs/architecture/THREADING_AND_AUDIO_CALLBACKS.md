@@ -150,3 +150,16 @@ replaces or joins this path in the live-talkback stage.
 ## 10. Review checklist (T-16; a copy is in PP1_ACCEPTANCE_MATRIX §4.2)
 Every function reachable from T1 and T2 is listed with file and line, and
 checked against §5.
+
+## 9d. Stage 8 addendum: two-way live audio (ADR-018)
+- **T4 and T5 are one thread per side:** `LiveEndpoint`'s media thread. It receives and checks datagrams (incoming stream and reports), encodes and sends the outgoing stream, and sends reports.
+  - It waits with `select(1 ms)` under `timeBeginPeriod(1)`.
+  - It never touches the record ring or a file.
+- **T1 (capture):** unchanged. It feeds the record ring and the live tap. **Send mute** zeroes frames in T4/T5 *after* the tap, so the record path cannot be affected.
+- **T2 (playback):** `IncomingStream::render_add` via the playback-contributor hook, as in Stage 7. **Receive mute** makes it drain the queue and add nothing.
+- **Bounded queues and their counters** (Stage 8 task 7):
+  - tap ring 32 768 frames (`overflow_events/frames`);
+  - sender backlog ≤ 6 frames (`backlog_trim_frames`);
+  - packet queue 64 (`queue_full_drops`);
+  - jitter buffer 64 slots: catch-up above target + max(8, target) (`catchup_frames`), refill after 20 underruns (`rebuffers`), resync after 3 late (`resyncs`);
+  - underruns, late, lost and concealed per stream.

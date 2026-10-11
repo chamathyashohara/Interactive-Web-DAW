@@ -32,6 +32,7 @@ void JitterBuffer::clear() noexcept {
     held_ = 0;
     playing_ = false;
     consecutive_underruns_ = 0;
+    consecutive_late_ = 0;
     over_target_pulls_ = 0;
     target_ = pending_target_;
 }
@@ -66,8 +67,18 @@ JitterBuffer::Insert JitterBuffer::insert(const JbPacket& p) noexcept {
         const std::int32_t d = diff(p.seq, next_seq_);
         if (d < 0) {
             ++stats_.late;
+            if (++consecutive_late_ >= kResyncLate) {
+                clear();
+                ++stats_.resyncs;
+                store(p);
+                if (held_ >= target_) {
+                    lowest_held(next_seq_);
+                    playing_ = true;
+                }
+            }
             return Insert::Late;
         }
+        consecutive_late_ = 0;
         if (d >= static_cast<std::int32_t>(kSlots)) {
             clear();
             ++stats_.too_early_resets;
@@ -126,6 +137,20 @@ JitterBuffer::Insert JitterBuffer::insert(const JbPacket& p) noexcept {
 JitterBuffer::Pull JitterBuffer::pull(JbPacket& out) noexcept {
     if (!playing_) {
         return Pull::Filling;
+    }
+    // Catch-up: an excessive backlog is dropped down to the target at once.
+    const std::uint32_t excess_limit = target_ + (target_ > 8 ? target_ : 8u);
+    if (held_ > excess_limit) {
+        while (held_ > target_) {
+            Slot& old = slots_[next_seq_ % kSlots];
+            if (old.used && old.packet.seq == next_seq_) {
+                old.used = false;
+                --held_;
+                ++stats_.catchup_frames;
+            }
+            ++next_seq_;
+        }
+        over_target_pulls_ = 0;
     }
     // Drift: persistently more buffered than the target -> drop the oldest frame once.
     if (held_ > target_ + 2) {

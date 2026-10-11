@@ -26,6 +26,7 @@ add_executable(rr_unit_tests
     audio/test_wav_writer.cpp
     control/test_session_controller.cpp
     media/test_jitter_buffer.cpp
+    media/test_live_duplex.cpp
     media/test_live_loopback.cpp
     media/test_live_tap.cpp
     media/test_media_packet.cpp

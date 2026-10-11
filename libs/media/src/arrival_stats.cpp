@@ -28,7 +28,7 @@ ArrivalStats::Result ArrivalStats::on_packet(std::uint32_t seq, std::uint64_t me
         begin(seq);
     } else {
         const auto d = static_cast<std::int32_t>(seq - static_cast<std::uint32_t>(highest_ext_));
-        if (d <= -static_cast<std::int32_t>(kWindow)) {
+        if (d <= -static_cast<std::int32_t>(kRestartBack)) {
             begin(seq);
             ++totals_.stream_restarts;
             result = Result::Restart;

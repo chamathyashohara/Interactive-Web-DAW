@@ -13,8 +13,34 @@ v2 §4.1).
 
 ## Status
 
-**Stage 7 (one-way live audio, producer → performer, Opus over UDP) is implemented.** Version 0.1.0.
-Stages 4–6 (local recording, monitoring, diagnostics, session control) remain as before.
+**Stage 8 (two-way live audio, Opus over UDP) is implemented.** Version 0.1.0.
+Stages 4–7 (local recording, monitoring, diagnostics, session control, one-way live audio) remain as before.
+
+### Stage 8: two-way live audio (talkback)
+- **Implemented:**
+  - each PC sends its microphone live and plays the other's (stream 1 producer → performer, stream 2 performer → producer), on one UDP flow;
+  - per-direction counters, with each side also seeing the other's report on its own stream;
+  - independent controls: send on/off, **send mute** (flagged silence, the stream keeps running), **receive mute** ("hear"), volume and jitter depth. None of them touches local recording;
+  - five separate status rows (local capture, local recording, outgoing stream, incoming stream, remote participant);
+  - one direction may fail while the other continues (control link as the liveness signal);
+  - bounded queues with overflow, underrun, catch-up and resync counters;
+  - one-page live report (app: Export live report; probe: `--report`).
+- **Verified on the development PC** (GCC; two processes on ONE PC; test tones and test clocks, plus real devices at −60 dB with the muted microphone):
+  - both directions at once with 0 loss, each side hearing only the other's tone;
+  - masters complete and free of received audio while sending, muting and receiving;
+  - one direction blackholed for 6 s during a take: the other direction and both takes unaffected;
+  - simulated speaker feedback detected and the software round trip measured (55 ms with 3-frame buffers, 165 ms with 8, final runs);
+  - input and output device re-open while live.
+  - Three defects were found and fixed (restart taken as duplicates, slow recovery after a sender pause, long excess delay after a playback stall).
+  - See `docs/testing/evidence/2026-10-11_devpc_stage8_duplex_runs.txt`.
+- **Not verified:**
+  - **two PCs with two listeners** (the stage's target set-up);
+  - the MSVC build and the Qt GUI, including the two-way Live audio panel (syntax-checked against stubs only);
+  - audible content;
+  - acoustic latency.
+- **Not implemented:** echo cancellation (LATER-03: headphones required), push-to-talk (not required), UDP clock probes, take transfer, encryption.
+
+See [LIVE_AUDIO_TEST_PROTOCOL §4–§6](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §13](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-018](docs/architecture/adr/ADR-018-two-way-live-audio.md).
 
 ### Stage 7: one-way live audio
 - **Implemented:**
