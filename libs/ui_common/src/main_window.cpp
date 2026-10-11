@@ -5,6 +5,12 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileDialog>
+#include <QPushButton>
+#include <QStandardPaths>
 #include <QFont>
 #include <QFontDatabase>
 #include <QFormLayout>
@@ -36,9 +42,9 @@ const char* const kSecurityNotice =
     "network (ADR-012).";
 
 const char* const kStageNotice =
-    "Stage 4 build: the input device, meters and LOCAL recording work. Networking, live "
-    "talkback and producer-controlled sessions are not implemented yet: nothing is sent or "
-    "received, and the connection/session status above stays 'Not connected / Not ready'.";
+    "Stage 5 build: input/output devices, meters, local monitoring and LOCAL recording work. "
+    "Networking, live talkback and producer-controlled sessions are not implemented yet: nothing is "
+    "sent or received, and the connection/session status above stays 'Not connected / Not ready'.";
 
 }  // namespace
 
@@ -125,6 +131,9 @@ QWidget* MainWindow::build_session_tab() {
 QWidget* MainWindow::build_diagnostics_tab() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
+    auto* export_button = new QPushButton(tr("Export diagnostic report (JSON)..."));
+    connect(export_button, &QPushButton::clicked, this, &MainWindow::export_report);
+    layout->addWidget(export_button, 0, Qt::AlignLeft);
     diagnostics_view_ = new QPlainTextEdit;
     diagnostics_view_->setReadOnly(true);
     diagnostics_view_->setLineWrapMode(QPlainTextEdit::NoWrap);
@@ -153,10 +162,35 @@ void MainWindow::render_snapshot() {
 void MainWindow::refresh_diagnostics() {
     QScrollBar* bar = diagnostics_view_->verticalScrollBar();
     const int position = bar->value();
-    diagnostics_view_->setPlainText(diagnostics_text(sources_) + QLatin1Char('
-') +
+    diagnostics_view_->setPlainText(diagnostics_text(sources_) + QLatin1Char('\n') +
                                     (audio_panel_ ? audio_panel_->diagnostics_text() : QString()));
     bar->setValue(position);
+}
+
+void MainWindow::export_report() {
+    const QString suggested =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+            .filePath(QStringLiteral("rr_diagnostics_%1_%2.json")
+                          .arg(qs(rr::role_id(sources_.role)),
+                               QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss"))));
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export diagnostic report"), suggested,
+                                                      tr("JSON (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const std::string audio = audio_panel_ ? audio_panel_->report_json() : std::string();
+    const QByteArray data = diagnostics_report_json(sources_, audio).toUtf8();
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size()) {
+        QMessageBox::warning(this, tr("Export failed"), tr("Could not write %1: %2").arg(path, file.errorString()));
+        logger_.log(rr::log::Level::Error, "ui", "report_export_failed", file.errorString().toStdString(),
+                    {{"path", path.toStdString()}});
+        return;
+    }
+    file.close();
+    logger_.log(rr::log::Level::Info, "ui", "report_exported", "diagnostic report written",
+                {{"path", path.toStdString()}, {"bytes", std::to_string(data.size())}});
+    QMessageBox::information(this, tr("Report exported"), tr("Diagnostic report written to\n%1").arg(path));
 }
 
 void MainWindow::show_about() {

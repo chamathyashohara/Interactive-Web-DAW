@@ -39,6 +39,7 @@ private:
     void build_menus();
     void render_snapshot();
     void refresh_diagnostics();
+    void export_report();
     void show_about();
 
     DiagnosticsSources sources_;

@@ -5,6 +5,7 @@
 
 #include "rr/shared/build_info.hpp"
 #include "rr/shared/clock.hpp"
+#include "rr/shared/json_escape.hpp"
 
 namespace rr::ui {
 namespace {
@@ -22,6 +23,41 @@ QString qs(std::string_view text) {
 QString platform_description() {
     return QSysInfo::prettyProductName() + QStringLiteral(" (") +
            QSysInfo::currentCpuArchitecture() + QStringLiteral(")");
+}
+
+QString diagnostics_report_json(const DiagnosticsSources& s, const std::string& audio_json) {
+    const rr::BuildInfo build = rr::build_info();
+    auto q = [](const std::string& text) { return "\"" + rr::json_escape(text) + "\""; };
+    std::string out = "{\n";
+    out += "  \"schema\": \"rr.diagnostics.v1\",\n";
+    out += "  \"generated_utc\": " + q(rr::time::format_utc_iso8601_ms(rr::time::utc_now_ms())) + ",\n";
+    out += "  \"role\": " + q(std::string(rr::role_id(s.role))) + ",\n";
+    out += "  \"build\": {\"version\": " + q(build.version) + ", \"commit\": " + q(build.git_commit) +
+           ", \"protocol\": " + q(build.protocol_version) + ", \"compiler\": " + q(build.compiler) +
+           ", \"config\": " + q(build.build_config) + ", \"toolchain_deviation\": " + q(build.toolchain_deviation) +
+           ", \"qt_compiled\": " + q(QT_VERSION_STR) + ", \"qt_runtime\": " + q(qVersion()) + "},\n";
+    out += "  \"platform\": " + q(platform_description().toStdString()) + ",\n";
+    out += "  \"configuration\": " + q(s.config ? rr::describe(*s.config) : std::string()) + ",\n";
+    if (s.logger) {
+        const rr::log::LoggerStats st = s.logger->stats();
+        out += "  \"logger\": {\"accepted\": " + std::to_string(st.accepted) + ", \"written\": " +
+               std::to_string(st.written) + ", \"dropped_queue_full\": " + std::to_string(st.dropped_queue_full) +
+               ", \"rejected_realtime\": " + std::to_string(st.rejected_realtime) +
+               ", \"sink_errors\": " + std::to_string(st.sink_errors) + ", \"log_file\": " +
+               q(s.log_file_path.toStdString()) + "},\n";
+    }
+    out += "  \"audio\": " + (audio_json.empty() ? std::string("null") : audio_json) + ",\n";
+    out += "  \"recent_log\": [";
+    if (s.recent) {
+        bool first = true;
+        for (const rr::log::Record& r : s.recent->snapshot()) {
+            out += first ? "\n    " : ",\n    ";
+            out += rr::log::to_json_line(r);
+            first = false;
+        }
+    }
+    out += "\n  ]\n}\n";
+    return QString::fromStdString(out);
 }
 
 QString diagnostics_text(const DiagnosticsSources& s) {

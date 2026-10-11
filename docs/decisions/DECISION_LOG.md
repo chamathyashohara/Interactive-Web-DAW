@@ -56,3 +56,14 @@ until the architecture review.
 | D-29 | 2026-10-11 | A device that is stopped, rerouted, or silent for 500 ms (no callbacks) while recording ends the take as `incomplete_device`. The audio captured so far is finalised. | ERR-06. Never present a truncated take as complete. Rerouting is disabled (ADR-003), so any reroute is treated as a fault. | Implemented, tested (test signal) |
 | D-30 | 2026-10-11 | WAV writing is in-house (`WavWriter`), not `ma_encoder`. The `.partial` file is created exclusively (`wbx`), the header refreshed every 5 s, then flush + `MoveFileExW` without replace. | ADR-007 requirements: crash-recoverable, no overwrite, explicit failure states | Implemented, tested |
 | D-31 | 2026-10-11 | miniaudio 0.11.25 vendored unmodified (`third_party/miniaudio`, SHA-256 recorded). Only device I/O compiled (`MA_NO_DECODING`, `MA_NO_ENCODING`, …), WASAPI only on Windows. | ADR-003. Smallest build surface. | Implemented |
+
+## Stage 5 (11 Oct 2026): local playback, monitoring and diagnostics
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-32 | 2026-10-11 | A separate `MonitorBus` (stereo SPSC ring) between the capture and playback callbacks, separate from the record ring. Monitor-only gain and channel maps. | Monitor processing must never reach the master (brief rule 6). One fixed ring format avoids lifetime problems when devices change. | Implemented, tested, run on real devices |
+| D-33 | 2026-10-11 | The output renders at the capture rate. If the output device differs, miniaudio resamples the **monitor only**, and this is stated. | No sample-rate conversion anywhere near the master | Implemented |
+| D-34 | 2026-10-11 | Monitoring is **off by default**, an explicit checkbox, with a permanent feedback warning and a "processing differences" line in the UI | Brief rule 5 | Implemented (Qt not compiled) |
+| D-35 | 2026-10-11 | Start trim: at each monitor (re)start the backlog above the target is dropped and counted | A real-device run showed monitor delay stuck at 40 ms after an input reopen. After the fix it returns to 10 ms. | Implemented, verified on real devices |
+| D-36 | 2026-10-11 | Diagnostic report: JSON (`rr.diagnostics.v1`) exported from the Diagnostics tab. The same audio snapshot is printed by `rr_audio_probe`. | Brief rule 7. Machine-readable for later analysis. | Implemented (GUI export not compiled; probe JSON validated) |
+| D-37 | 2026-10-11 | `tools/check_sources.py` lexical check added as a test | It found two broken string literals in the committed Stage 4 Qt code, which cannot be compiled here | Implemented |

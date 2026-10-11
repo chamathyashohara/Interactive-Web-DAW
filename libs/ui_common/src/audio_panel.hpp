@@ -11,7 +11,9 @@
 #include "rr/shared/config.hpp"
 #include "rr/shared/log.hpp"
 
+class QCheckBox;
 class QComboBox;
+class QSlider;
 class QLabel;
 class QListWidget;
 class QProgressBar;
@@ -36,11 +38,19 @@ public:
     // Finalises an active take (status complete_shutdown) and closes the device.
     void shut_down_audio();
     QString diagnostics_text() const;
+    // Structured engine snapshot (rr::audio::engine_report_json) for the diagnostic report.
+    std::string report_json() const;
 
 private:
     void build_ui();
     void refresh_devices();
     void toggle_input();
+    void toggle_output();
+    bool open_selected_output();
+    void close_output(const QString& reason);
+    void set_monitoring(bool enabled);
+    void update_monitor_description();
+    void log_problem_deltas();
     bool open_selected_input();
     void close_input(const QString& reason);
     void choose_folder();
@@ -71,6 +81,16 @@ private:
     QPushButton* refresh_button_ = nullptr;
     QPushButton* input_button_ = nullptr;
     QLabel* format_label_ = nullptr;
+    QPushButton* output_button_ = nullptr;
+    QLabel* output_format_label_ = nullptr;
+    QCheckBox* monitor_check_ = nullptr;
+    QSlider* monitor_gain_ = nullptr;
+    QLabel* monitor_gain_label_ = nullptr;
+    QPushButton* tone_button_ = nullptr;
+    QLabel* processing_label_ = nullptr;
+    QLabel* buffers_label_ = nullptr;
+    std::vector<QLabel*> clip_labels_;
+    std::vector<std::int64_t> clip_until_ns_;
     std::vector<QProgressBar*> meters_;
     std::vector<QLabel*> meter_labels_;
     QLabel* signal_warning_ = nullptr;
@@ -89,6 +109,15 @@ private:
     std::vector<float> peak_hold_;
     std::int64_t input_opened_ns_ = 0;
     std::int64_t last_signal_ns_ = 0;
+    // Last logged values, so problems are logged once per change (at most once per second).
+    std::int64_t last_problem_log_ns_ = 0;
+    std::uint64_t logged_rec_overruns_ = 0;
+    std::uint64_t logged_timing_anomalies_ = 0;
+    std::uint64_t logged_mon_underruns_ = 0;
+    std::uint64_t logged_mon_overflows_ = 0;
+    std::uint64_t logged_mon_trims_ = 0;
+    std::uint64_t logged_capture_faults_ = 0;
+    std::uint64_t logged_playback_faults_ = 0;
 };
 
 }  // namespace rr::ui

@@ -15,6 +15,8 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(rr_unit_tests
+    audio/test_capture_levels.cpp
+    audio/test_monitor_bus.cpp
     audio/test_recorder_pipeline.cpp
     audio/test_spsc_ring.cpp
     audio/test_take_naming.cpp
@@ -37,6 +39,16 @@ rr_set_compiler_options(rr_unit_tests)
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 catch_discover_tests(rr_unit_tests DISCOVERY_MODE PRE_TEST)
+
+# Lexical check of all sources for literals broken across lines (guards the Qt code, which
+# cannot be compiled where Qt is missing). Needs Python 3; skipped otherwise.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sources_have_no_broken_literals
+        COMMAND Python3::Interpreter -I "${PROJECT_SOURCE_DIR}/tools/check_sources.py"
+                "${PROJECT_SOURCE_DIR}/libs" "${PROJECT_SOURCE_DIR}/apps"
+                "${PROJECT_SOURCE_DIR}/tools" "${PROJECT_SOURCE_DIR}/tests")
+endif()
 
 # ADR-001 boundary check: the Qt-free libraries must not include Qt headers.
 add_test(NAME core_has_no_qt_includes

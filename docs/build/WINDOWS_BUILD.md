@@ -93,7 +93,8 @@ ctest --preset core-check-gcc
 
 ## 4b. Device check without the GUI
 `rr_audio_probe.exe` is built with every preset into `bin\<Config>\`. It lists devices and records a test take through the
-same library code as the apps. See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md` §1.
+same library code as the apps. See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md` §1. Since Stage 5 it can also monitor input to output
+(`--monitor`, `--reopen-input-at`) and play a test tone (`--tone`). See `docs/testing/MONITOR_LOOPBACK_TEST_PROTOCOL.md` §1.
 
 ## 5. Dependencies and how they are acquired
 See `third_party/README.md`.

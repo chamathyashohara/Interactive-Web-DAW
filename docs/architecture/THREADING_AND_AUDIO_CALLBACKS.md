@@ -131,6 +131,12 @@ A forced kill leaves a `.partial`, which is detected at the next start (ERR-05b)
 - T6, once a second: copy the counters (relaxed loads), compute per-second differences, append a CSV row (TEL-02). Also check the watchdog.
 - T7 forwards a snapshot at about 10 Hz (prov.) to the UI. The UI never reads engine memory directly.
 
+## 9b. Stage 5 addendum: local monitoring
+The playback callback (T2) currently renders the local monitor bus and the test tone instead of a
+jitter buffer. The capture callback (T1) also writes to the monitor ring when monitoring is on.
+Both use only preallocated memory and atomics. See `MONITOR_PATH.md` §4–§6. The jitter buffer
+replaces or joins this path in the live-talkback stage.
+
 ## 10. Review checklist (T-16; a copy is in PP1_ACCEPTANCE_MATRIX §4.2)
 Every function reachable from T1 and T2 is listed with file and line, and
 checked against §5.

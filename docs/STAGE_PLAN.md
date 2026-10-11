@@ -10,7 +10,8 @@ and **stops for review**. Nothing starts automatically.
 | 2 | System architecture and ADRs | Drafted (11 Oct 2026). The researcher issued Stage 3, but the ADRs still read "Proposed" until they are explicitly accepted. |
 | 3 | Buildable two-application foundation | Done (11 Oct 2026). The core is verified with GCC. **MSVC and the Qt apps are not verified** (toolchain not installed). See `docs/build/WINDOWS_BUILD.md`. |
 | 4 | Real local audio capture and WAV recording | Done (11 Oct 2026). The core and the real WASAPI capture path are verified with GCC and the CLI probe. The endpoint was muted, so no signal content was verified. **The Qt apps and MSVC are not verified.** See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md`. |
-| 5+ | To be issued by the researcher | — |
+| 5 | Local playback and audio-engine diagnostics | Done (11 Oct 2026). Monitor path and diagnostics verified with GCC, unit tests and real WASAPI devices (mic muted: silent input). **The Qt GUI and MSVC are not verified.** See `docs/architecture/MONITOR_PATH.md`. |
+| 6+ | To be issued by the researcher | — |
 
 ## Proposed implementation increments (input for later stages, not a commitment)
 

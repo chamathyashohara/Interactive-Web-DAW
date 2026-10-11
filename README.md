@@ -13,25 +13,24 @@ v2 §4.1).
 
 ## Status
 
-**Stage 4 (real local audio capture and WAV recording) is implemented.** Version 0.1.0.
+**Stage 5 (local playback, monitoring and audio-engine diagnostics) is implemented.** Version 0.1.0.
 
 - **Implemented:**
-  - audio engine (miniaudio 0.11.25, WASAPI, explicit device IDs, native rate and channels);
-  - a lock-free capture path;
-  - a recorder worker that writes float32 WAV `.partial` files, finalises them and never overwrites;
-  - gap, device-loss and disk-error handling;
-  - crash recovery;
-  - JSON take metadata;
-  - an audio panel in both apps;
-  - the `rr_audio_probe` CLI.
-- **Verified on the development PC** (GCC 16.2 build):
-  - 52/52 tests pass, 0 warnings, stable over 15 repeats;
-  - a real WASAPI capture of 4.07 s gives a finalised WAV whose header matches the file, and Windows' media pipeline opens it.
+  - Stage 4 local recording;
+  - output device selection;
+  - explicit local monitoring (off by default) with a feedback warning, monitor-only gain and channel map, and a test tone;
+  - peak/RMS/CLIP meters;
+  - record and monitor buffer counters, underruns, overflows, latency trims, device open and fault counters;
+  - rate-limited problem logging;
+  - JSON diagnostic report export.
+- **Verified on the development PC** (GCC build):
+  - 64/64 tests pass, 0 warnings;
+  - real WASAPI capture → monitor → speakers for 30 s, 60 s and 120 s with 0 overflows, including an input reopen while the output ran (after a fix that this run made necessary).
 - **Not verified:**
-  - **audible signal content**: the PC's microphone endpoint is muted in Windows, so all samples were 0;
-  - the MSVC build and the Qt apps, because MSVC v143 and Qt are not installed.
+  - audible quality: the input endpoint is muted in Windows, and the runs used −60 dB monitor gain;
+  - the MSVC build and the Qt GUI (toolchain not installed).
 
-See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md`, [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md) and [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
+See [docs/architecture/MONITOR_PATH.md](docs/architecture/MONITOR_PATH.md), `docs/testing/MONITOR_LOOPBACK_TEST_PROTOCOL.md`, [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md).
 
 ## Build (Windows, MSVC 2022, Qt 6.11.3)
 

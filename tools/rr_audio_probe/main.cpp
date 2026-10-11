@@ -3,6 +3,9 @@
 //
 //   rr_audio_probe --list
 //   rr_audio_probe --record <seconds> --out <folder> [--device <index>] [--any-rate] [--role producer|performer]
+//   rr_audio_probe --monitor <seconds> [--device <in>] [--output <out>] [--gain-db <g>] [--any-rate]
+//                  [--reopen-input-at <second>]   (re-opens the input while the output runs)
+//   rr_audio_probe --tone <seconds> [--output <out>] [--level-dbfs <l>]   (plays a test tone)
 //   rr_audio_probe --inspect <file.wav | file.wav.partial>
 //   rr_audio_probe --recover <file.wav.partial>
 //
@@ -35,6 +38,8 @@ int usage() {
                  "  rr_audio_probe --list\n"
                  "  rr_audio_probe --record <seconds> --out <folder> [--device <index>] [--any-rate]"
                  " [--role producer|performer]\n"
+                 "  rr_audio_probe --monitor <seconds> [--device <in>] [--output <out>] [--gain-db <g>] [--any-rate]\n"
+                 "  rr_audio_probe --tone <seconds> [--output <out>] [--level-dbfs <l>]\n"
                  "  rr_audio_probe --inspect <file>\n"
                  "  rr_audio_probe --recover <file.wav.partial>\n");
     return 2;
@@ -151,7 +156,7 @@ int record(double seconds, const std::filesystem::path& out_root, long device_in
     while (true) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         for (std::uint32_t c = 0; c < desc.channels; ++c) {
-            const float p = engine.ingest()->take_peak(c);
+            const float p = engine.ingest()->take_levels(c).peak;
             if (p > peaks[c]) {
                 peaks[c] = p;
             }
@@ -207,6 +212,93 @@ int record(double seconds, const std::filesystem::path& out_root, long device_in
     return (m.status == rr::TakeStatus::Complete && info.is_complete_float_wav() && frames_match) ? 0 : 1;
 }
 
+std::size_t default_index(const std::vector<DeviceInfo>& devices) {
+    for (const auto& d : devices) {
+        if (d.is_default) {
+            return d.index;
+        }
+    }
+    return 0;
+}
+
+// Capture -> monitor bus -> output for `seconds`, or (tone_only) just a test tone. Prints one
+// line of buffer/level counters per second and the engine report at the end.
+int monitor(double seconds, long input, long output, float gain_db, bool any_rate, bool tone_only, float tone_dbfs,
+            int reopen_input_at) {
+    AudioEngine engine;
+    std::string error;
+    if (!engine.initialise(error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    const auto inputs = engine.capture_devices(error);
+    const auto outputs = engine.playback_devices(error);
+    if (outputs.empty() || (!tone_only && inputs.empty())) {
+        std::fprintf(stderr, "missing devices %s\n", error.c_str());
+        return 1;
+    }
+    const std::size_t in_index = input >= 0 ? static_cast<std::size_t>(input) : default_index(inputs);
+    const std::size_t out_index = output >= 0 ? static_cast<std::size_t>(output) : default_index(outputs);
+    if (!tone_only) {
+        CaptureOptions options;
+        options.required_sample_rate = any_rate ? 0 : 48000;
+        if (!engine.open_capture(in_index, options, RecorderOptions{}, error)) {
+            std::fprintf(stderr, "input: %s\n", error.c_str());
+            return 1;
+        }
+    }
+    if (!engine.open_playback(out_index, PlaybackOptions{}, error)) {
+        std::fprintf(stderr, "output: %s\n", error.c_str());
+        return 1;
+    }
+    const PlaybackDescription& pd = engine.playback_description();
+    std::printf("input:  %s\noutput: %s (renders %u Hz, %u ch; device stream %s, %u Hz, %u ch)\n",
+                tone_only ? "(none: tone only)" : engine.capture_description().device_name.c_str(),
+                pd.device_name.c_str(), pd.sample_rate, pd.channels, pd.device_internal_format.c_str(),
+                pd.device_internal_rate, pd.device_internal_channels);
+    for (const auto& n : pd.notes) {
+        std::printf("monitor note: %s\n", n.c_str());
+    }
+    engine.monitor().set_gain_db(gain_db);
+    if (tone_only) {
+        engine.monitor().start_test_tone(440.0f, tone_dbfs, static_cast<float>(seconds));
+    } else {
+        engine.monitor().set_enabled(true);
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const int whole_seconds = static_cast<int>(std::ceil(seconds));
+    for (int second = 1; second <= whole_seconds; ++second) {
+        std::this_thread::sleep_until(start + std::chrono::seconds(second));
+        if (second == reopen_input_at && !tone_only) {
+            CaptureOptions options;
+            options.required_sample_rate = any_rate ? 0 : 48000;
+            const bool ok = engine.open_capture(in_index, options, RecorderOptions{}, error);
+            std::printf("t=%2ds RE-OPENED INPUT while output running: %s %s (output open: %s)\n", second,
+                        ok ? "ok" : "FAILED", error.c_str(), engine.playback_open() ? "yes" : "NO");
+            error.clear();
+        }
+        const MonitorStats m = engine.monitor().stats();
+        const double rate = engine.monitor().sample_rate();
+        std::printf("t=%2ds monitor fill %.1f ms (max %.1f) underruns %llu overflows %llu trims %llu played %llu",
+                    second, 1000.0 * m.fill_frames / rate, 1000.0 * m.max_fill_frames / rate,
+                    static_cast<unsigned long long>(m.underrun_events), static_cast<unsigned long long>(m.overflow_events),
+                    static_cast<unsigned long long>(m.drift_trim_events), static_cast<unsigned long long>(m.played_frames));
+        if (CaptureIngest* ingest = engine.ingest()) {
+            const ChannelLevels l = ingest->take_levels(0);
+            std::printf(" | in ch1 peak %.1f rms %.1f dBFS clip %llu", to_dbfs(l.peak), to_dbfs(l.rms),
+                        static_cast<unsigned long long>(l.clipped));
+        }
+        std::printf("\n");
+    }
+    std::printf("\nengine report:\n%s\n", engine_report_json(engine).c_str());
+    engine.monitor().set_enabled(false);
+    const MonitorStats final_stats = engine.monitor().stats();
+    const bool faults = engine.playback_fault() != DeviceFault::None || engine.capture_fault() != DeviceFault::None;
+    engine.close_playback();
+    engine.close_capture();
+    return (!faults && final_stats.render_callbacks > 0) ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -232,6 +324,39 @@ int main(int argc, char* argv[]) {
                     static_cast<unsigned long long>(r.frames), path_to_utf8(r.recovered_path).c_str(),
                     static_cast<unsigned long long>(r.trailing_bytes_dropped));
         return 0;
+    }
+    if (cmd == "--monitor" || cmd == "--tone") {
+        double seconds = 0;
+        long input = -1;
+        long output = -1;
+        float gain_db = 0.0f;
+        float level_dbfs = -20.0f;
+        bool any_rate = false;
+        int reopen_at = -1;
+        for (int i = 1; i < argc; ++i) {
+            const std::string a = argv[i];
+            if (a == "--reopen-input-at" && i + 1 < argc) {
+                reopen_at = std::atoi(argv[++i]);
+            } else if ((a == "--monitor" || a == "--tone") && i + 1 < argc) {
+                seconds = std::atof(argv[++i]);
+            } else if (a == "--device" && i + 1 < argc) {
+                input = std::atol(argv[++i]);
+            } else if (a == "--output" && i + 1 < argc) {
+                output = std::atol(argv[++i]);
+            } else if (a == "--gain-db" && i + 1 < argc) {
+                gain_db = static_cast<float>(std::atof(argv[++i]));
+            } else if (a == "--level-dbfs" && i + 1 < argc) {
+                level_dbfs = static_cast<float>(std::atof(argv[++i]));
+            } else if (a == "--any-rate") {
+                any_rate = true;
+            } else {
+                return usage();
+            }
+        }
+        if (seconds <= 0) {
+            return usage();
+        }
+        return monitor(seconds, input, output, gain_db, any_rate, cmd == "--tone", level_dbfs, reopen_at);
     }
     if (cmd == "--record") {
         double seconds = 0;

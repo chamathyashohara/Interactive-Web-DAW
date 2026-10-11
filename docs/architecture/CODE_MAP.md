@@ -44,12 +44,17 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Safe WAV writer and inspector/recovery (ADR-007) | `libs/audio/.../wav_format.hpp`, `wav_writer.hpp`, `wav_inspect.hpp`, `file_io.hpp` | Implemented, tested |
 | Take/session naming, JSON metadata (REC-03/04, VER-02) | `libs/audio/.../take_naming.hpp`, `take_metadata.hpp` | Implemented, tested |
 | Audio panel: devices, meters, record/stop, results, recovery (DEV-01..05, REC-01..10, ERR-05/06) | `libs/ui_common/src/audio_panel.*` | Implemented, unverified (no Qt) |
-| Device/recording CLI check | `tools/rr_audio_probe/` | Implemented. Run on this PC. |
+| Monitor bus: capture to output monitoring, test tone, buffer policy, counters (MONITOR_PATH) | `libs/audio/.../monitor_bus.hpp` | Implemented, tested, run on real devices |
+| Output device, reopen logic, device event counters | `libs/audio/src/audio_engine.cpp` | Implemented, run on real devices |
+| Engine diagnostic snapshot (JSON) | `libs/audio/src/engine_report.cpp` | Implemented, output validated as JSON |
+| Diagnostic report export (rr.diagnostics.v1) | `libs/ui_common/src/diagnostics.*`, `main_window.cpp` | Implemented, unverified (no Qt) |
+| Device/recording/monitor CLI check | `tools/rr_audio_probe/` | Implemented. Run on this PC. |
+| Lexical check for broken literals | `tools/check_sources.py` | Implemented, a ctest test |
 | Media header, control TLV, UDP threads, jitter buffer (ADR-005, 008, 009, 011) | `libs/network/` (README only) | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |
 | Presets: debug/release, core-only, GCC check | `CMakePresets.json` | GCC preset run. MSVC presets not run. |
-| Unit tests (ADR-015) | `tests/` | Implemented, 52/52 pass (GCC), stable over 15 repeats |
+| Unit tests (ADR-015) | `tests/` | Implemented, 64/64 pass (GCC), stable over 10 repeats |
 
 ## Deviations from the Stage 2 documents (recorded in DECISION_LOG D-22, D-23)
 - **Generator:** ADR-002 said Ninja. The presets use **"Visual Studio 17 2022" with `toolset v143` pinned**. That generator selects the toolset itself and needs no Developer Command Prompt, which makes the build easier to reproduce from a plain terminal.

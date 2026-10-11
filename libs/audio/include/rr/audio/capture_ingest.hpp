@@ -23,6 +23,14 @@ enum class DeviceFault : std::uint32_t {
     Rerouted = 2,             // stream moved to another device (should not happen: routing disabled)
 };
 
+// Levels for one channel accumulated since the previous take_levels() call.
+struct ChannelLevels {
+    float peak = 0.0f;          // max |sample|
+    float rms = 0.0f;           // sqrt(mean of squares) over the interval (approximate: see take_levels)
+    std::uint64_t clipped = 0;  // samples with |x| >= 0.999 in the interval
+    std::uint64_t samples = 0;  // samples measured in the interval
+};
+
 struct IngestStats {
     std::uint64_t frames_captured = 0;
     std::uint64_t callbacks = 0;
@@ -33,6 +41,9 @@ struct IngestStats {
     std::uint64_t clipped_samples = 0;     // |x| >= 0.999
     std::int64_t max_callback_ns = 0;
     std::int64_t last_callback_ns = 0;     // monotonic time of the latest callback, 0 = none yet
+    std::uint64_t ring_fill_frames = 0;    // record ring fill after the latest callback
+    std::uint64_t ring_max_fill_frames = 0;
+    std::uint64_t ring_capacity_frames = 0;
 };
 
 // The capture-callback side of the recording path (THREADING_AND_AUDIO_CALLBACKS.md §3).
@@ -66,7 +77,10 @@ public:
     SpscRing<GapEvent>& gaps() noexcept { return gaps_; }
 
     // ---- any thread ----
-    float take_peak(std::uint32_t channel) noexcept;  // max |sample| since the last call
+    // Peak, RMS and clip count since the previous call (then reset). The three values are
+    // read with separate atomic exchanges, so a block may straddle two intervals: fine for
+    // meters, not a measurement instrument.
+    ChannelLevels take_levels(std::uint32_t channel) noexcept;
     IngestStats stats() const noexcept;
     std::uint32_t channels() const noexcept { return channels_; }
     std::uint32_t sample_rate() const noexcept { return sample_rate_; }
@@ -78,6 +92,11 @@ private:
     SpscRing<float> samples_;
     SpscRing<GapEvent> gaps_;
     std::array<std::atomic<float>, kMaxChannels> peaks_{};
+    std::array<std::atomic<double>, kMaxChannels> sum_squares_{};
+    std::array<std::atomic<std::uint64_t>, kMaxChannels> level_samples_{};
+    std::array<std::atomic<std::uint64_t>, kMaxChannels> clipped_per_channel_{};
+    std::atomic<std::uint64_t> ring_fill_frames_{0};
+    std::atomic<std::uint64_t> ring_max_fill_frames_{0};
 
     std::atomic<std::uint64_t> frames_captured_{0};
     std::atomic<std::uint64_t> callbacks_{0};

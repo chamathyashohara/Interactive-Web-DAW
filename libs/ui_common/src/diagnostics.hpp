@@ -26,4 +26,8 @@ QString diagnostics_text(const DiagnosticsSources& sources);
 // Short platform description for the startup log ("Windows 11 Version 24H2 (x86_64)").
 QString platform_description();
 
+// Exportable diagnostic report (schema "rr.diagnostics.v1"): build, platform, configuration,
+// logger statistics, the audio engine snapshot (`audio_json`, an object) and recent log records.
+QString diagnostics_report_json(const DiagnosticsSources& sources, const std::string& audio_json);
+
 }  // namespace rr::ui

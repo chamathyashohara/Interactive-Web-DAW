@@ -12,6 +12,7 @@ static_assert(std::atomic<float>::is_always_lock_free, "atomic<float> must be lo
 static_assert(std::atomic<std::uint64_t>::is_always_lock_free, "atomic<uint64_t> must be lock-free");
 static_assert(std::atomic<std::int64_t>::is_always_lock_free, "atomic<int64_t> must be lock-free");
 static_assert(std::atomic<std::size_t>::is_always_lock_free, "atomic<size_t> must be lock-free");
+static_assert(std::atomic<double>::is_always_lock_free, "atomic<double> must be lock-free");
 
 CaptureIngest::CaptureIngest(std::uint32_t channels, std::uint32_t sample_rate, std::uint32_t ring_seconds,
                              std::size_t gap_event_capacity)
@@ -20,8 +21,11 @@ CaptureIngest::CaptureIngest(std::uint32_t channels, std::uint32_t sample_rate, 
       samples_(static_cast<std::size_t>(sample_rate) * (ring_seconds == 0 ? 1 : ring_seconds) *
                (channels == 0 ? 1 : (channels > kMaxChannels ? kMaxChannels : channels))),
       gaps_(gap_event_capacity) {
-    for (auto& p : peaks_) {
-        p.store(0.0f, std::memory_order_relaxed);
+    for (std::size_t c = 0; c < kMaxChannels; ++c) {
+        peaks_[c].store(0.0f, std::memory_order_relaxed);
+        sum_squares_[c].store(0.0, std::memory_order_relaxed);
+        level_samples_[c].store(0, std::memory_order_relaxed);
+        clipped_per_channel_[c].store(0, std::memory_order_relaxed);
     }
 }
 
@@ -33,27 +37,40 @@ void CaptureIngest::on_block(const float* interleaved, std::uint32_t frames, std
     const std::uint64_t start_frame = frames_captured_.load(std::memory_order_relaxed);
     const std::size_t samples = static_cast<std::size_t>(frames) * channels_;
 
-    // Meters: per-channel block peak, merged into the shared max with one CAS per channel.
+    // Meters: per-channel block peak, sum of squares and clip count, merged into the shared
+    // values with a bounded number of atomic operations per channel (no locks).
     std::array<float, kMaxChannels> block_peak{};
-    std::uint64_t clipped = 0;
+    std::array<double, kMaxChannels> block_sumsq{};
+    std::array<std::uint64_t, kMaxChannels> block_clipped{};
     for (std::size_t i = 0; i < samples; ++i) {
-        const float a = std::fabs(interleaved[i]);
-        float& peak = block_peak[i % channels_];
-        if (a > peak) {
-            peak = a;
+        const std::size_t c = i % channels_;
+        const float x = interleaved[i];
+        const float a = std::fabs(x);
+        if (a > block_peak[c]) {
+            block_peak[c] = a;
         }
+        block_sumsq[c] += static_cast<double>(x) * static_cast<double>(x);
         if (a >= 0.999f) {
-            ++clipped;
+            ++block_clipped[c];
         }
     }
+    std::uint64_t clipped_total = 0;
     for (std::uint32_t c = 0; c < channels_; ++c) {
         float current = peaks_[c].load(std::memory_order_relaxed);
         while (block_peak[c] > current &&
                !peaks_[c].compare_exchange_weak(current, block_peak[c], std::memory_order_relaxed)) {
         }
+        double sum = sum_squares_[c].load(std::memory_order_relaxed);
+        while (!sum_squares_[c].compare_exchange_weak(sum, sum + block_sumsq[c], std::memory_order_relaxed)) {
+        }
+        level_samples_[c].fetch_add(frames, std::memory_order_relaxed);
+        if (block_clipped[c] != 0) {
+            clipped_per_channel_[c].fetch_add(block_clipped[c], std::memory_order_relaxed);
+            clipped_total += block_clipped[c];
+        }
     }
-    if (clipped != 0) {
-        clipped_samples_.fetch_add(clipped, std::memory_order_relaxed);
+    if (clipped_total != 0) {
+        clipped_samples_.fetch_add(clipped_total, std::memory_order_relaxed);
     }
 
     // Store the block whole or not at all. A dropped block becomes a gap event whose
@@ -65,6 +82,11 @@ void CaptureIngest::on_block(const float* interleaved, std::uint32_t frames, std
         if (!gaps_.try_write_all(&gap, 1)) {
             gap_events_lost_.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+    const std::uint64_t fill = (samples_.capacity() - samples_.write_available()) / channels_;
+    ring_fill_frames_.store(fill, std::memory_order_relaxed);
+    if (fill > ring_max_fill_frames_.load(std::memory_order_relaxed)) {
+        ring_max_fill_frames_.store(fill, std::memory_order_relaxed);
     }
 
     // Timing note: a callback much later than its own duration suggests the device or the
@@ -89,11 +111,17 @@ void CaptureIngest::on_block(const float* interleaved, std::uint32_t frames, std
     }
 }
 
-float CaptureIngest::take_peak(std::uint32_t channel) noexcept {
+ChannelLevels CaptureIngest::take_levels(std::uint32_t channel) noexcept {
+    ChannelLevels levels;
     if (channel >= channels_) {
-        return 0.0f;
+        return levels;
     }
-    return peaks_[channel].exchange(0.0f, std::memory_order_relaxed);
+    levels.peak = peaks_[channel].exchange(0.0f, std::memory_order_relaxed);
+    const double sum = sum_squares_[channel].exchange(0.0, std::memory_order_relaxed);
+    levels.samples = level_samples_[channel].exchange(0, std::memory_order_relaxed);
+    levels.clipped = clipped_per_channel_[channel].exchange(0, std::memory_order_relaxed);
+    levels.rms = levels.samples ? static_cast<float>(std::sqrt(sum / static_cast<double>(levels.samples))) : 0.0f;
+    return levels;
 }
 
 IngestStats CaptureIngest::stats() const noexcept {
@@ -107,6 +135,9 @@ IngestStats CaptureIngest::stats() const noexcept {
     s.clipped_samples = clipped_samples_.load(std::memory_order_relaxed);
     s.max_callback_ns = max_callback_ns_.load(std::memory_order_relaxed);
     s.last_callback_ns = last_callback_ns_.load(std::memory_order_relaxed);
+    s.ring_fill_frames = ring_fill_frames_.load(std::memory_order_relaxed);
+    s.ring_max_fill_frames = ring_max_fill_frames_.load(std::memory_order_relaxed);
+    s.ring_capacity_frames = ring_capacity_frames();
     return s;
 }
 
