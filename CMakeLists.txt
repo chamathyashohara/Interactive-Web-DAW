@@ -49,7 +49,8 @@ endif()
 add_subdirectory(libs/shared)
 add_subdirectory(libs/session)
 add_subdirectory(libs/audio)
-# libs/network is a module boundary only at this stage (see its README).
+add_subdirectory(libs/network)
+# libs/network: control transport (Stage 6, in progress).
 
 add_subdirectory(tools/rr_audio_probe)
 
