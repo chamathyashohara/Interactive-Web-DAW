@@ -1,0 +1,8 @@
+build/
+out/
+.vs/
+CMakeUserPresets.json
+*.user
+# recorded takes and logs produced when running the apps
+takes/
+*.wav.partial
