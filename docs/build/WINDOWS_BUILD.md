@@ -13,6 +13,8 @@
 | Configure fails with a clear message: no VS, non-MSVC compiler, non-MSVC with apps, Qt missing | **PASS** (messages captured) | Stage 3 report |
 | Build with **MSVC v143** | **NOT TESTED**: the MSVC toolset is not installed on the development PC | — |
 | Build of the two **Qt apps** and their smoke tests | **NOT TESTED**: Qt is not installed on the development PC | — |
+| Stage 6: `rr_network`, `rr_control`, `rr_session_probe` + session tests with GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process session runs on one PC. | Stage 6 report, `docs/testing/evidence/2026-10-11_devpc_stage6_session_runs.txt` |
+| Stage 6: Qt `SessionPanel` | **NOT COMPILED** (no Qt). Only a `g++ -fsyntax-only` check against hand-written stub headers, which checks the non-Qt logic only. | Stage 6 report |
 
 The commands below are the intended reference procedure. Run them on a PC with
 the prerequisites, and record the output in the next stage report.
@@ -95,6 +97,11 @@ ctest --preset core-check-gcc
 `rr_audio_probe.exe` is built with every preset into `bin\<Config>\`. It lists devices and records a test take through the
 same library code as the apps. See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md` §1. Since Stage 5 it can also monitor input to output
 (`--monitor`, `--reopen-input-at`) and play a test tone (`--tone`). See `docs/testing/MONITOR_LOOPBACK_TEST_PROTOCOL.md` §1.
+
+## 4c. Session check without the GUI (Stage 6)
+`rr_session_probe.exe` runs a scripted producer or performer through the same session controller as the apps,
+with a test recorder (no audio) or `--audio`. Run two instances (two terminals, or two PCs). See
+`docs/testing/SESSION_TEST_PROTOCOL.md`. Windows Firewall: see §3 of that document. The tool never changes firewall settings.
 
 ## 5. Dependencies and how they are acquired
 See `third_party/README.md`.

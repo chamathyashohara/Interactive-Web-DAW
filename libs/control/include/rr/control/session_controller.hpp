@@ -141,6 +141,7 @@ private:
     void maybe_complete();
     void compute_start_offset();
     bool send_stop_schedule(std::int64_t stop_at);
+    void release_finished_link();
 
     ControllerConfig cfg_;
     RecorderPort& port_;

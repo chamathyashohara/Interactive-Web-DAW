@@ -60,10 +60,8 @@ SessionSnapshot initial_snapshot(Role role) {
     s.role = role;
     s.link = LinkState::Disconnected;
     s.session = SessionState::NotReady;
-    s.not_ready_reasons = {
-        "networking is not implemented in this build",
-        "producer-controlled session control is not implemented in this build",
-    };
+    // Stage 6: session control exists; live talkback (Stage 7) does not.
+    s.not_ready_reasons = {role == Role::Producer ? "no session created yet" : "not joined to a session"};
     return s;
 }
 

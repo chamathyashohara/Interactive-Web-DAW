@@ -11,7 +11,8 @@ and **stops for review**. Nothing starts automatically.
 | 3 | Buildable two-application foundation | Done (11 Oct 2026). The core is verified with GCC. **MSVC and the Qt apps are not verified** (toolchain not installed). See `docs/build/WINDOWS_BUILD.md`. |
 | 4 | Real local audio capture and WAV recording | Done (11 Oct 2026). The core and the real WASAPI capture path are verified with GCC and the CLI probe. The endpoint was muted, so no signal content was verified. **The Qt apps and MSVC are not verified.** See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md`. |
 | 5 | Local playback and audio-engine diagnostics | Done (11 Oct 2026). Monitor path and diagnostics verified with GCC, unit tests and real WASAPI devices (mic muted: silent input). **The Qt GUI and MSVC are not verified.** See `docs/architecture/MONITOR_PATH.md`. |
-| 6+ | To be issued by the researcher | — |
+| 6 | Producer/performer session control over a controlled LAN | Implemented (11 Oct 2026). Core, link and controller verified with GCC, unit tests and two-process runs on **one** PC. **Two PCs not run; the Qt Session panel and MSVC are not compiled.** LAN-only, unencrypted. See `docs/testing/SESSION_TEST_PROTOCOL.md`, ADR-016. |
+| 7+ | To be issued by the researcher | — |
 
 ## Proposed implementation increments (input for later stages, not a commitment)
 

@@ -1,6 +1,6 @@
 # Architecture-to-Code Map
 
-**As of Stage 3 (version 0.1.0).**
+**As of Stage 6 (version 0.1.0).** (Created in Stage 3; rows are updated as stages land.)
 
 **Status labels:**
 - **Implemented**: code and tests exist and pass in the core check.
@@ -10,7 +10,7 @@
 ## Layering (ADR-001), with names used in code
 | ADR-001 name | Code | CMake target | Qt? | Status |
 |---|---|---|---|---|
-| `rr_core` (Qt-free) | `libs/shared`, `libs/session`, `libs/audio`, later `libs/network` | `rr_shared`, `rr_session`, `rr_audio` (+ `rr_miniaudio`) | No (checked by the `core_has_no_qt_includes` test) | shared, session, audio: Implemented. network: Planned. |
+| `rr_core` (Qt-free) | `libs/shared`, `libs/session`, `libs/audio`, `libs/network`, `libs/control` | `rr_shared`, `rr_session`, `rr_audio` (+ `rr_miniaudio`), `rr_network`, `rr_control` | No (checked by the `core_has_no_qt_includes` test) | Implemented. network: control path only (UDP media planned). |
 | `rr_app` (Qt shared layer) | `libs/ui_common` | `rr_ui` | Yes | Implemented, unverified |
 | ProducerStudio.exe | `apps/producer` | `ProducerStudio` | Yes | Implemented, unverified |
 | PerformerClient.exe | `apps/performer` | `PerformerClient` | Yes | Implemented, unverified |
@@ -34,7 +34,7 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Structured, non-blocking logging | `libs/shared/.../log.hpp`, `log_sinks.hpp`, `src/logger.cpp`, `src/log_record.cpp` | Implemented |
 | Qt messages → structured log | `libs/ui_common/src/qt_log_bridge.*` | Implemented, unverified |
 | Link and session state names, initial snapshot (SESSION_STATE_MACHINE §2, §3, §5) | `libs/session/.../states.hpp` | Implemented (definitions only) |
-| State transition tables | — | **Planned** (I-3) |
+| State transition tables (SESSION_STATE_MACHINE §3, §7) | `libs/session/.../session_machine.hpp`, `src/session_machine.cpp` | Implemented, tested exhaustively (every state × event) |
 | App start-up/shutdown, command line, smoke test | `libs/ui_common/src/app_runner.cpp` | Implemented, unverified |
 | Main window, status display, diagnostics, About/LGPL/security notices | `libs/ui_common/src/main_window.*`, `diagnostics.*` | Implemented, unverified |
 | Audio engine: miniaudio context, enumeration, explicit-ID capture, notifications (ADR-003) | `libs/audio/.../audio_engine.hpp`, `src/audio_engine.cpp` | Implemented. Real WASAPI capture run via `rr_audio_probe` (GCC build). |
@@ -50,11 +50,20 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Diagnostic report export (rr.diagnostics.v1) | `libs/ui_common/src/diagnostics.*`, `main_window.cpp` | Implemented, unverified (no Qt) |
 | Device/recording/monitor CLI check | `tools/rr_audio_probe/` | Implemented. Run on this PC. |
 | Lexical check for broken literals | `tools/check_sources.py` | Implemented, a ctest test |
-| Media header, control TLV, UDP threads, jitter buffer (ADR-005, 008, 009, 011) | `libs/network/` (README only) | Planned |
+| Control protocol 1.0 codec: frames, TLV, validation, bounded decoder (PROTOCOL §11, ADR-009) | `libs/network/.../control_protocol.hpp`, `src/control_protocol.cpp` | Implemented, tested (malformed, oversize, duplicate tags, split reads) |
+| Sockets: interface listing, explicit-interface listen, non-blocking connect (ADR-016) | `libs/network/.../socket.hpp`, `src/socket.cpp` | Implemented, run on loopback and the Wi-Fi address |
+| Control link: HELLO/JOIN, pairing code, resume token, heartbeats, link loss, reconnect, session-full, graceful close | `libs/network/.../control_link.hpp`, `src/control_link.cpp` | Implemented, tested (loopback) |
+| Clock offset from heartbeat timestamps (min-δ, u = δmin/2) (ADR-010) | `libs/network/.../clock_offset.hpp` | Implemented, tested |
+| Session controller: readiness, consent, two-step start, stop, reports, duplicates, timeouts | `libs/control/.../session_controller.hpp` | Implemented, tested (test recorder), two-process runs |
+| Recorder ports: real (AudioEngine) and test recorder | `libs/control/.../recorder_port.hpp` | Implemented. Real port run with `--audio`. |
+| Scheduled start/stop in the recorder (capture stamps, pre-roll, late-start report) | `libs/audio/.../take_recorder.hpp`, `capture_ingest.hpp` | Implemented, tested (test signal) |
+| Session panel (producer/performer UI) | `libs/ui_common/src/session_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
+| Session CLI | `tools/rr_session_probe/` | Implemented. Run on this PC. |
+| Media header, UDP threads, jitter buffer (ADR-005, 008, 011) | — | Planned (live-audio stage) |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |
 | Presets: debug/release, core-only, GCC check | `CMakePresets.json` | GCC preset run. MSVC presets not run. |
-| Unit tests (ADR-015) | `tests/` | Implemented, 64/64 pass (GCC), stable over 10 repeats |
+| Unit tests (ADR-015) | `tests/` | Implemented. All pass (GCC), stable over 10 repeats; see the Stage 6 report for the count. |
 
 ## Deviations from the Stage 2 documents (recorded in DECISION_LOG D-22, D-23)
 - **Generator:** ADR-002 said Ninja. The presets use **"Visual Studio 17 2022" with `toolset v143` pinned**. That generator selects the toolset itself and needs no Developer Command Prompt, which makes the build easier to reproduce from a plain terminal.

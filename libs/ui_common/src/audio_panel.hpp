@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -41,6 +42,14 @@ public:
     // Structured engine snapshot (rr::audio::engine_report_json) for the diagnostic report.
     std::string report_json() const;
 
+    // Stage 6: while a session is active the session controller owns the recorder's take
+    // reports. The panel then never collects them itself; where it would, it calls `flush`
+    // (which polls the controller) so nothing is lost before the input is closed. The local
+    // Record button is disabled (SES-08: session takes are started only by the producer).
+    void set_session_control(bool active, std::function<void()> flush);
+    rr::audio::AudioEngine& engine() { return *engine_; }
+    std::filesystem::path recordings_root() const;
+
 private:
     void build_ui();
     void refresh_devices();
@@ -64,7 +73,7 @@ private:
     void show_error(const QString& text);
     void show_info(const QString& text);
     void update_controls();
-    std::filesystem::path recordings_root() const;
+    void collect_take_reports();
 
     Role role_;
     AppConfig config_;
@@ -105,6 +114,8 @@ private:
     QListWidget* incomplete_list_ = nullptr;
     QPushButton* recover_button_ = nullptr;
     QTimer* timer_ = nullptr;
+    bool session_controlled_ = false;
+    std::function<void()> session_flush_;
 
     std::vector<float> peak_hold_;
     std::int64_t input_opened_ns_ = 0;

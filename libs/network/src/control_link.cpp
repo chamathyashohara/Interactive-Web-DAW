@@ -70,6 +70,11 @@ bool ControlLink::start(std::string& error) {
         return false;
     }
     if (is_server_) {
+        // ADR-016: listen on one explicitly chosen interface, never on all of them.
+        if (sp_.bind_address == "0.0.0.0") {
+            error = "listening on all interfaces (0.0.0.0) is not allowed; choose one network interface";
+            return false;
+        }
         if (!listener_.listen_on(sp_.bind_address, sp_.port, error)) {
             return false;
         }

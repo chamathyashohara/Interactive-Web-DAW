@@ -7,7 +7,7 @@
 #include "rr/session/states.hpp"
 
 class QLabel;
-namespace rr::ui { class AudioPanel; }
+namespace rr::ui { class AudioPanel; class SessionPanel; }
 class QPlainTextEdit;
 class QTabWidget;
 class QTimer;
@@ -15,8 +15,9 @@ class QTimer;
 namespace rr::ui {
 
 // Main window used by both apps. It renders a SessionSnapshot and never keeps its own
-// state flags (SESSION_STATE_MACHINE.md §1). In Stage 3 the snapshot is the honest
-// initial one: not connected, not ready, nothing recording.
+// state flags (SESSION_STATE_MACHINE.md §1). Until a session is created/joined the snapshot is
+// the honest initial one (not connected, not ready); from Stage 6 it comes from the session
+// controller through the SessionPanel.
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -53,6 +54,7 @@ private:
     QPlainTextEdit* diagnostics_view_ = nullptr;
     QTimer* diagnostics_timer_ = nullptr;
     AudioPanel* audio_panel_ = nullptr;
+    SessionPanel* session_panel_ = nullptr;
 };
 
 }  // namespace rr::ui

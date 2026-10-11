@@ -167,3 +167,50 @@ sequenceDiagram
     R-->>S: TAKE_FINALISED(complete, frames, …)
     S->>UIS: "Take N: producer saved / performer saved"
 ```
+
+## 7. Stage 6 implementation notes (authoritative where §3/§6 differ)
+
+Code: `libs/session/session_machine.*` (the `producer_transition` / `performer_transition`
+tables over 23 `SessionEvent`s, tested exhaustively: every state × every event) and
+`libs/control/session_controller.*`, which drives them. Protocol details are in PROTOCOL_OVERVIEW §11.
+
+### 7.1 Two-step start (replaces the single ARM(T) in §6)
+```mermaid
+sequenceDiagram
+    participant UIS as Producer UI
+    participant S as Producer controller
+    participant R as Performer controller
+    UIS->>S: Record (only in Ready: both ready + both consented)
+    S->>R: ARM(take N)
+    R-->>S: ARM_ACK(accepted)   [else refused → S back to Ready]
+    S->>R: SCHEDULE_START(N, T_S = now + 1000 ms)
+    R->>R: T_R = T_S − θ ; schedule the local recorder
+    R-->>S: START_ACK(T_R)      [S schedules its own recorder only now]
+    Note over S,R: each recorder maps T to a sample index from capture stamps
+    R-->>S: TAKE_STARTED(first frame, first-sample time, late frames)
+    UIS->>S: Stop
+    S->>R: STOP_SCHEDULE(N, now + 300 ms)
+    R-->>S: STOP_ACK
+    R-->>S: TAKE_FINALISED(status, frames)
+```
+Producer timeouts: no ARM_ACK in 2 s, or no START_ACK by T − 100 ms → CANCEL, and the take is refused on both sides.
+Performer: no SCHEDULE_START within 5 s of ARM → disarm.
+
+### 7.2 Readiness
+- **Producer Ready** = local recorder ready (input open, no fault, disk space, no local take active) + local consent + link Connected + performer READY_STATUS ready + performer consent.
+- **Performer Ready** = local recorder ready + consent + link Connected + at least 3 clock-offset samples.
+- The reasons are shown in the UI ("Not ready: …").
+
+### 7.3 Link loss and session end (rules added in Stage 6)
+| Situation | Behaviour |
+|---|---|
+| Link lost in Armed / Scheduled | The take is cancelled (an empty `.partial` is removed). No recording starts without a live link at T. |
+| Link lost in Recording | Both keep recording (ERR-03). The state stays Recording, and the performer reconnects with its resume token. |
+| Producer presses Stop while the link is down | The producer stops at its stop time. STOP_SCHEDULE is **owed** and re-sent with a new stop time when the performer reconnects, so the performer's take ends later. If the link never returns, the performer's status is shown as UNKNOWN after 10 s. |
+| Performer receives SESSION_CLOSED, or gives up reconnecting, while recording | The performer stops and saves its own take (nobody can send STOP any more). The report is queued. |
+| App closed during a take | Asks first, then SESSION_CLOSED; the local take is finalised as `complete_shutdown` (ERR-05a). |
+| Join refused / session closed | The link ends in Disconnected. A new Join/Create releases it (never while a take runs). |
+
+### 7.4 UI mapping in Stage 6
+- The main window's status box now comes from the controller snapshot (`SessionPanel::status_snapshot`).
+- The Stage 4 "Record (local test)" button, and the producer's local Record, are **disabled while a session is active** (SES-08). Session takes are started only with the producer's "Record (both)".

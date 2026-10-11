@@ -261,6 +261,9 @@ void AudioPanel::build_ui() {
     connect(folder_button_, &QPushButton::clicked, this, &AudioPanel::choose_folder);
     connect(open_folder_button_, &QPushButton::clicked, this, &AudioPanel::open_folder);
     connect(record_button_, &QPushButton::clicked, this, [this] {
+        if (session_controlled_) {
+            return;  // a session take is controlled by the session panel (SES-08)
+        }
         if (recording_active()) {
             stop_take();
         } else {
@@ -633,9 +636,7 @@ void AudioPanel::shut_down_audio() {
     rr::audio::TakeRecorder* recorder = engine_->recorder();
     if (recorder != nullptr) {
         recorder->stop();  // finalises an active take as complete_shutdown (ERR-05a)
-        for (const auto& meta : recorder->take_finished()) {
-            handle_result(meta);
-        }
+        collect_take_reports();
     }
     close_input(QStringLiteral("shutdown"));
     close_output(QStringLiteral("shutdown"));
@@ -716,11 +717,7 @@ void AudioPanel::tick() {
     buffers_label_->setText(buffers);
 
     // Collect finished takes first: closing the input below destroys the recorder.
-    if (auto* recorder = engine_->recorder()) {
-        for (const auto& meta : recorder->take_finished()) {
-            handle_result(meta);
-        }
-    }
+    collect_take_reports();
     if (ingest->device_fault() != rr::audio::DeviceFault::None && !recording_active()) {
         const QString previous = result_label_->text();
         close_input(QStringLiteral("device_fault"));
@@ -841,6 +838,32 @@ void AudioPanel::show_info(const QString& text) {
     result_label_->setText(text);
 }
 
+void AudioPanel::set_session_control(bool active, std::function<void()> flush) {
+    if (!active) {
+        collect_take_reports();  // last reports go to the session before control is released
+    }
+    session_controlled_ = active;
+    session_flush_ = active ? std::move(flush) : std::function<void()>();
+    logger_.log(rr::log::Level::Info, "audio", "session_control", active ? "recorder controlled by the session"
+                                                                          : "recorder back under local control");
+    update_controls();
+}
+
+void AudioPanel::collect_take_reports() {
+    if (session_controlled_) {
+        if (session_flush_) {
+            session_flush_();  // the session controller collects them through its recorder port
+        }
+        return;
+    }
+    if (auto* recorder = engine_->recorder()) {
+        for (const auto& meta : recorder->take_finished()) {
+            handle_result(meta);
+        }
+        recorder->take_started();  // start reports matter only to session takes; discard
+    }
+}
+
 void AudioPanel::update_controls() {
     const bool open = engine_->capture_open();
     const bool out_open = engine_->playback_open();
@@ -854,9 +877,12 @@ void AudioPanel::update_controls() {
     refresh_button_->setEnabled(!open && !out_open);
     tone_button_->setEnabled(out_open && !engine_->monitor().test_tone_active());
     folder_button_->setEnabled(!recording);
-    record_button_->setEnabled(open);
+    record_button_->setEnabled(open && !session_controlled_);
+    record_button_->setToolTip(session_controlled_
+                                   ? tr("A session is active: takes are started and stopped in the Session panel.")
+                                   : QString());
     const QString start_text = role_ == Role::Producer ? tr("Record") : tr("Record (local test)");
-    record_button_->setText(recording ? tr("Stop") : start_text);
+    record_button_->setText(recording && !session_controlled_ ? tr("Stop") : start_text);
     recover_button_->setEnabled(incomplete_list_->count() > 0);
 }
 

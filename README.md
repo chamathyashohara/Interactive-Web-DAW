@@ -13,24 +13,36 @@ v2 §4.1).
 
 ## Status
 
-**Stage 5 (local playback, monitoring and audio-engine diagnostics) is implemented.** Version 0.1.0.
+**Stage 6 (producer/performer session control over a controlled LAN) is implemented.** Version 0.1.0.
+Stages 4–5 (local recording, monitoring, diagnostics) remain as before.
 
 - **Implemented:**
-  - Stage 4 local recording;
-  - output device selection;
-  - explicit local monitoring (off by default) with a feedback warning, monitor-only gain and channel map, and a test tone;
-  - peak/RMS/CLIP meters;
-  - record and monitor buffer counters, underruns, overflows, latency trims, device open and fault counters;
-  - rate-limited problem logging;
-  - JSON diagnostic report export.
-- **Verified on the development PC** (GCC build):
-  - 64/64 tests pass, 0 warnings;
-  - real WASAPI capture → monitor → speakers for 30 s, 60 s and 120 s with 0 overflows, including an input reopen while the output ran (after a fix that this run made necessary).
+  - the producer creates a session on an explicitly selected network interface, with a session ID and a single-use 6-digit pairing code (10-minute TTL, locked after 5 wrong attempts);
+  - the performer joins with the host address and code;
+  - versioned control protocol 1.0: HELLO/JOIN, heartbeats, readiness and consent, ARM → SCHEDULE_START two-step start, STOP_SCHEDULE, acknowledgements, final reports, SESSION_CLOSED;
+  - link-loss detection and automatic reconnect;
+  - session state machine with invalid-transition refusal;
+  - duplicate/stale message protection;
+  - scheduled sample-accurate start/stop in each local recorder;
+  - Session panel in both apps;
+  - `rr_session_probe` CLI.
+- **Verified on the development PC** (GCC build, two processes on ONE PC, loopback and Wi-Fi-bound address):
+  - all unit tests pass, stable over 10 repeats, 0 warnings;
+  - full takes;
+  - wrong code;
+  - version mismatch;
+  - link drop and reconnect during recording;
+  - Stop pressed while the link was down;
+  - producer closing mid-take;
+  - real-audio takes on both "sides" (microphone muted, so silent).
+  - These runs found three defects, all fixed. See `docs/testing/evidence/2026-10-11_devpc_stage6_session_runs.txt`.
 - **Not verified:**
-  - audible quality: the input endpoint is muted in Windows, and the runs used −60 dB monitor gain;
-  - the MSVC build and the Qt GUI (toolchain not installed).
+  - **two separate PCs** (not run yet);
+  - the MSVC build and the Qt GUI, including the new Session panel (toolchain not installed; the panel was only syntax-checked against stub headers);
+  - audible content.
+- **Not implemented:** live talkback audio between the PCs (next stage), take transfer, encryption.
 
-See [docs/architecture/MONITOR_PATH.md](docs/architecture/MONITOR_PATH.md), `docs/testing/MONITOR_LOOPBACK_TEST_PROTOCOL.md`, [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md).
+See [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §11](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-016](docs/architecture/adr/ADR-016-control-transport-qt-free-sockets.md).
 
 ## Build (Windows, MSVC 2022, Qt 6.11.3)
 
@@ -48,11 +60,13 @@ Prerequisites, offline use and troubleshooting: [docs/build/WINDOWS_BUILD.md](do
 |---|---|
 | `apps/producer`, `apps/performer` | The two executables (role wiring only) |
 | `libs/shared` | Qt-free: roles, version/build info, error codes, configuration, clock, logging |
-| `libs/session` | Qt-free: link/session state definitions and the initial snapshot |
-| `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics |
+| `libs/session` | Qt-free: link/session state definitions, transition tables |
+| `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics, audio panel, session panel |
 | `libs/audio` | Qt-free: capture engine, ring, recorder worker, WAV writer/inspector, take naming/metadata |
-| `libs/network` | Module boundary only (README) |
+| `libs/network` | Qt-free: control protocol codec, sockets, control link (pairing, heartbeats, reconnect), clock offset |
+| `libs/control` | Qt-free: session controller (state machine + link + local recorder), recorder ports |
 | `tools/rr_audio_probe` | CLI device and recording check (no Qt) |
+| `tools/rr_session_probe` | CLI producer/performer session runs (no Qt) |
 | `tests/` | Catch2 unit tests and the no-Qt-in-core boundary check |
 | `cmake/` | Toolchain/Qt checks, version generation, compiler options |
 | `scripts/build-windows.ps1` | Configure + build + test with the presets |
@@ -79,7 +93,8 @@ Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE
 | [docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md](docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md) | Threads, bounded queues, callback rules, shutdown order |
 | [docs/architecture/SESSION_STATE_MACHINE.md](docs/architecture/SESSION_STATE_MACHINE.md) | Link and session/take state machines with transition tables |
 | [docs/architecture/PROTOCOL_OVERVIEW.md](docs/architecture/PROTOCOL_OVERVIEW.md) | Media header, jitter policy, probes, control messages, codes, timeouts |
-| [docs/architecture/adr/](docs/architecture/adr/README.md) | ADR-001…015 |
+| [docs/architecture/adr/](docs/architecture/adr/README.md) | ADR-001…016 |
+| [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md) | Two-instance and two-PC session tests, Windows Firewall guidance |
 | [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | Stage 0 draft (superseded, kept) |
 | [docs/architecture/DEPENDENCIES.md](docs/architecture/DEPENDENCIES.md) | Proposed dependencies with pinned versions and licences |
 | [docs/decisions/DECISION_LOG.md](docs/decisions/DECISION_LOG.md) | Decisions, continuing proposal Appendix B |
@@ -93,5 +108,8 @@ Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE
 
 ## Security note
 
-The planned PP1 build is **LAN-only and unencrypted**. Use it only on a trusted
-private network. See ADR-012.
+This build is **LAN-only and unencrypted**: the control connection has no TLS and
+is protected only by a short-lived pairing code, which is not a security control.
+Use it only on a trusted private network. It is not designed or tested for use
+across the internet. The apps never change Windows Firewall settings
+(see SESSION_TEST_PROTOCOL §3). See ADR-012 and ADR-016.

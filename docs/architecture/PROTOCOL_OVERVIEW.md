@@ -104,6 +104,8 @@ All counters are cumulative per session and per take.
 
 ## 4. Control framing (TCP, ADR-009)
 
+> **Stage 6:** the control protocol as built is in **§11**. Where §4–§5 and §7–§8 differ from §11 (message names, the HELLO/JOIN split, the 16 KiB frame limit, the ARM → SCHEDULE_START two-step), **§11 is authoritative**. §4–§5 are kept unchanged as the Stage 2 draft.
+
 ```
 u32 length        bytes that follow this field, 12 … 65 536
 u16 type          message type (§5)
@@ -216,3 +218,76 @@ raw stream of `size` bytes → producer recomputes SHA-256 →
 - No confidentiality, integrity protection or authentication against an attacker. CRC and the pairing code protect against **accidents**, not adversaries.
 - Use only on a trusted private LAN, and never expose the ports to the internet.
 - Encryption and authentication come in a separate stage, using established libraries (Qt TLS, DTLS or an established AEAD). Never custom cryptography.
+
+## 11. Control protocol 1.0 as implemented (Stage 6, authoritative)
+
+Code: `libs/network` (`control_protocol.*`, `control_link.*`, `clock_offset.*`) and
+`libs/control` (`session_controller.*`). Transport decision: ADR-016.
+**LAN-only, unencrypted.** No TLS, and the pairing code is not a security control (ADR-012).
+
+### 11.1 Framing
+```
+u32 length     bytes after this field, 12 … 16 384 (kMaxFrameBytes)
+u16 type       §11.2
+u16 reserved   0
+u32 msg_id     strictly increasing per connection, starts at 1
+u32 ref_id     msg_id being answered (ACK / ERROR), else 0
+…   TLV        u16 tag | u16 len | bytes   (big-endian integers, UTF-8 strings ≤ 256 bytes)
+```
+- Every frame carries `SentNs` (tag 1, the sender's monotonic ns).
+- **Errors that close the connection:** an unknown type, a duplicate tag, a missing required tag, a fixed-width tag of the wrong size, a TLV running past the frame, or `length` outside 12…16 384. The decoder stays failed afterwards. Unknown **tags** are ignored, so a minor version can add fields.
+- **Stale frames:** a `msg_id` that is not greater than the last one received is dropped and counted (`stale_frames_dropped`), and never acted upon.
+
+### 11.2 Messages (S = producer, R = performer)
+| Code | Name | Dir | Required tags (besides SentNs) | Purpose / rule |
+|---|---|---|---|---|
+| 0x0001 | HELLO | R→S | ProtoMajor, ProtoMinor, Role, AppVersion | Version offer. Another major → ERROR `E_VERSION_UNSUPPORTED` + close. |
+| 0x0002 | HELLO_ACK | S→R | ProtoMajor, ProtoMinor, AppVersion | |
+| 0x0003 | JOIN | R→S | ClientId, DisplayName (+ PairingCode **or** ResumeToken) | First join with the 6-digit code; reconnect with the 32-hex token |
+| 0x0004 | JOIN_ACK | S→R | SessionId, ResumeToken, DisplayName, MaxTakeSeconds | The code is used up |
+| 0x000F | ERROR | both | ErrorCode (+ ErrorText, ref_id) | Refusals and protocol errors |
+| 0x0010 | HEARTBEAT | both | — | Every 1 s. Clock-offset sample t1. |
+| 0x0011 | HEARTBEAT_ACK | both | EchoSentNs, RecvNs | t2/t3 → θ, δ (four-timestamp method) |
+| 0x0020 | READY_STATUS | both | Ready, Consent, State (+ Reasons) | On change and at least every 2 s |
+| 0x0030 | ARM | S→R | TakeId, MaxTakeSeconds | Step 1: "prepare take N". No start time yet. |
+| 0x0031 | ARM_ACK | R→S | TakeId, Accepted (+ ErrorCode/Text) | Refused if not ready, no consent, busy, or take id not new |
+| 0x0032 | SCHEDULE_START | S→R | TakeId, StartAtNs (producer clock) | Step 2: sent only after ARM_ACK. The start is 1000 ms ahead. |
+| 0x0033 | START_ACK | R→S | TakeId, Accepted (+ PlannedLocalNs) | The producer schedules its own recorder **only after** this |
+| 0x0034 | TAKE_STARTED | R→S | TakeId, FirstFrame, FirstSampleNs (+ LateFrames) | Sent when the performer's file really started |
+| 0x0035 | CANCEL | S→R | TakeId, ErrorCode | Before the start (timeouts, local failure). An empty `.partial` is removed. |
+| 0x0040 | STOP_SCHEDULE | S→R | TakeId, StopAtNs (producer clock) | Stop lead 300 ms. Re-sent after a reconnect if it could not be sent. |
+| 0x0041 | STOP_ACK | R→S | TakeId, Accepted | |
+| 0x0042 | LOCAL_STOP | R→S | TakeId, StopReason | Performer Stop & save, a device fault or the safety limit |
+| 0x0043 | TAKE_FINALISED | R→S | TakeId, Status, Frames | Final status. The producer waits 10 s, then shows **UNKNOWN**. |
+| 0x0050 | SESSION_CLOSED | both | ErrorCode | Deliberate end. No reconnect follows. Sent, then half-close and drain (≤ 500 ms). |
+
+Renamed from the §5 draft: HELLO_REJECT → ERROR; STOP → STOP_SCHEDULE; BYE → SESSION_CLOSED; STATUS → READY_STATUS.
+CONSENT is a field of READY_STATUS. The draft's single ARM(start_at) is split into **ARM → ARM_ACK → SCHEDULE_START → START_ACK**, so the start time is only chosen once the performer has said it can record.
+
+### 11.3 Rules that make duplicates and delays harmless
+- **Take ids only increase** within a session. The performer refuses an ARM whose id is ≤ the last accepted one (`E_TAKE_ID_CONFLICT`). A duplicate SCHEDULE_START or STOP_SCHEDULE for the current take is answered idempotently (same ACK) and changes nothing. A STOP for an unknown take is refused (`E_UNKNOWN_TAKE`).
+- Every state change goes through the transition tables (`libs/session/session_machine.*`). An event that is invalid in the current state changes nothing, is counted and logged, and the message that caused it is refused.
+- The producer shows a performer step (ARM_ACK, START_ACK, TAKE_STARTED, STOP_ACK, TAKE_FINALISED) **only after the performer's own message**, never because a command was sent.
+- A start time must lie within −1 s … +30 s of "now" on the receiving recorder. Otherwise it is refused.
+- Pairing codes and resume tokens are never logged: the JSONL logs carry `<redacted>`.
+
+### 11.4 Link behaviour
+| Item | Value (prov.) |
+|---|---|
+| Heartbeat / link lost | 1 s / no frame for 3 s |
+| Connect / handshake timeout | 5 s / 3 s |
+| Reconnect interval / give up | 2 s / 120 s (the performer reconnects automatically with its resume token) |
+| Pairing code | 6 digits, single use, 10 min TTL, locked after 5 wrong attempts (`E_BAD_PAIRING_CODE`). Generated with `std::random_device`. |
+| Second performer | ERROR `E_SESSION_FULL`, then half-close, drain ≤ 1 s |
+| Listening address | one explicitly selected IPv4 interface. `0.0.0.0` is refused. `SO_EXCLUSIVEADDRUSE`, `TCP_NODELAY`. |
+
+What a lost link does:
+- **Before the start (Armed/Scheduled):** the take is cancelled on both sides. No recording starts without a live link at T.
+- **While recording:** both recordings **continue** (ERR-03). STOP_SCHEDULE is delivered after the reconnect. If Stop was pressed during the outage, the stop is re-sent with a new stop time, and the performer's take is then longer; its report shows this.
+- **Session ended for good** (SESSION_CLOSED received, or reconnecting gave up) while the performer is recording: the performer stops and saves its own take.
+
+### 11.5 Measurement terms (kept distinct)
+- **Control RTT:** the latest HEARTBEAT round trip over TCP, including thread scheduling. It is not audio latency.
+- **Clock offset θ ± u:** θ from the minimum-δ sample of the last 16 heartbeats, u = δmin/2. It describes the two PCs' monotonic clocks only.
+- **Estimated start difference:** (performer first-sample time − θ) − producer first-sample time, ± u. It does **not** include device input latency or the converter, so it is **not** an acoustic alignment measurement.
+- **UI/poll delay:** about 60–80 ms per command/answer through both apps' 20 ms select and 50 ms (GUI) / 10 ms (probe) poll loops. It is absorbed by the 1000 ms start lead. This value was observed on one PC and not measured systematically.

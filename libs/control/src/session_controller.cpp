@@ -82,6 +82,7 @@ bool SessionController::create_session(const std::string& bind_address, std::uin
         error = "only Producer Studio creates sessions";
         return false;
     }
+    release_finished_link();
     if (link_) {
         error = "a session already exists";
         return false;
@@ -107,6 +108,7 @@ bool SessionController::create_session(const std::string& bind_address, std::uin
     }
     bind_address_ = bind_address;
     port_number_ = port;
+    link_state_ = LinkState::Listening;  // until the link's own events arrive in poll()
     log_.log(log::Level::Info, "session", "created", "session created",
              {{"session", session_id_}, {"bind", bind_address}, {"port", std::to_string(port)},
               {"pairing_code", "<redacted>"}});
@@ -129,6 +131,7 @@ bool SessionController::join(const std::string& host, std::uint16_t port, const 
         error = "only Performer Client joins sessions";
         return false;
     }
+    release_finished_link();
     if (link_) {
         error = "already in a session";
         return false;
@@ -150,10 +153,28 @@ bool SessionController::join(const std::string& host, std::uint16_t port, const 
     }
     bind_address_ = host;
     port_number_ = port;
+    link_state_ = LinkState::Connecting;  // until the link's own events arrive in poll()
+    last_error_.clear();
     log_.log(log::Level::Info, "session", "join_started", "joining",
              {{"host", host}, {"port", std::to_string(port)}, {"pairing_code", "<redacted>"}});
     history("joining " + host + ":" + std::to_string(port));
     return true;
+}
+
+// A link that has ended for good (refused join, closed session, gave up reconnecting) is released
+// so that the user can join or create again. Never while a local take is still running.
+void SessionController::release_finished_link() {
+    if (!link_ || link_state_ != LinkState::Disconnected || link_->state() != LinkState::Disconnected ||
+        take_running(state_) ||
+        state_ == SessionState::Scheduled) {
+        return;
+    }
+    link_->stop(ErrorCode::UserStop);
+    link_.reset();
+    peer_ready_ = false;
+    peer_consent_ = false;
+    session_id_.clear();
+    report_queue_.clear();
 }
 
 void SessionController::set_consent(bool given) {

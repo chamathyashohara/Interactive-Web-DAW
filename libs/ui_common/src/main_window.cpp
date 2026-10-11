@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include "audio_panel.hpp"
+#include "session_panel.hpp"
 #include "rr/shared/build_info.hpp"
 
 namespace rr::ui {
@@ -38,13 +39,14 @@ QString qs(std::string_view text) {
 }
 
 const char* const kSecurityNotice =
-    "LAN prototype: audio and control are not encrypted. Use only on a trusted private "
-    "network (ADR-012).";
+    "LAN-only prototype: audio and control are not encrypted. Use only on a trusted private "
+    "network (ADR-012, ADR-016). Not designed or tested for use across the internet.";
 
 const char* const kStageNotice =
-    "Stage 5 build: input/output devices, meters, local monitoring and LOCAL recording work. "
-    "Networking, live talkback and producer-controlled sessions are not implemented yet: nothing is "
-    "sent or received, and the connection/session status above stays 'Not connected / Not ready'.";
+    "Stage 6 build: devices, meters, local monitoring, local recording and producer-controlled "
+    "sessions over a LAN (control messages only). Live talkback audio between the two PCs is NOT "
+    "implemented yet (Stage 7): during a session each PC records only its own input, and the people "
+    "cannot hear each other through this app.";
 
 }  // namespace
 
@@ -113,6 +115,12 @@ QWidget* MainWindow::build_session_tab() {
     layout->addWidget(status_box);
 
     audio_panel_ = new AudioPanel(sources_.role, *sources_.config, logger_);
+    session_panel_ = new SessionPanel(sources_.role, *sources_.config, *audio_panel_, logger_);
+    connect(session_panel_, &SessionPanel::statusChanged, this, [this] {
+        snapshot_ = session_panel_->status_snapshot();
+        render_snapshot();
+    });
+    layout->addWidget(session_panel_);
     layout->addWidget(audio_panel_);
 
     auto* stage = new QLabel(QString::fromUtf8(kStageNotice));
@@ -163,6 +171,7 @@ void MainWindow::refresh_diagnostics() {
     QScrollBar* bar = diagnostics_view_->verticalScrollBar();
     const int position = bar->value();
     diagnostics_view_->setPlainText(diagnostics_text(sources_) + QLatin1Char('\n') +
+                                    (session_panel_ ? session_panel_->diagnostics_text() + QLatin1Char('\n') : QString()) +
                                     (audio_panel_ ? audio_panel_->diagnostics_text() : QString()));
     bar->setValue(position);
 }
@@ -240,7 +249,7 @@ MainWindow::SelfCheck MainWindow::run_self_check() const {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     // ERR-05a: closing during a take asks first; confirming finalises the take properly.
-    if (audio_panel_ && audio_panel_->recording_active()) {
+    if ((audio_panel_ && audio_panel_->recording_active()) || (session_panel_ && session_panel_->take_active())) {
         const auto answer = QMessageBox::question(
             this, tr("Recording in progress"),
             tr("A take is being recorded. Stop the recording, save it and quit?"),
@@ -249,6 +258,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
             event->ignore();
             return;
         }
+    }
+    if (session_panel_) {
+        session_panel_->shut_down();  // SESSION_CLOSED to the other side; recorder back to the audio panel
     }
     if (audio_panel_) {
         audio_panel_->shut_down_audio();

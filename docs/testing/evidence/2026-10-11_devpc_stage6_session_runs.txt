@@ -530,3 +530,15 @@ Run C take files (scratchpad only, not committed; microphone muted -> silent):
 ----- run F: performer, nothing listening on 127.0.0.1:52099 -----
 [performer] link Connecting: connecting to 127.0.0.1:52099
 [performer] link Disconnected: could not connect: connection refused or unreachable: No connection could be made because the target machine actively refused it (WSA 10061)
+
+----- final re-runs with the committed binary (after the graceful-close fix, 08:04 UTC) -----
+A' Wi-Fi bound (192.168.1.222:52010), default scripts, test recorder:
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+  performer: link Disconnected: the other side closed the session (E_SHUTDOWN)
+G' producer quits mid-take (127.0.0.1:52011):
+  [performer] link Disconnected: the other side closed the session (E_SHUTDOWN)
+  [performer] state Recording -> Stopping (session ended while recording)
+  [performer] take 1: session ended while recording; local take stopped and saved
+  [performer] take 1: LOCAL take complete (finalised), 95870 frames
+Pairing code occurrences in the JSONL logs of these runs: 0
+Unit tests at this point: 100/100 (ctest, GCC core-check), --repeat until-fail:10 all passed, 0 warnings on a clean rebuild.

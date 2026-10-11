@@ -307,3 +307,23 @@ TEST_CASE("the performer stops and saves its take when the producer closes the s
     CHECK(p.performer.snapshot().session != SessionState::Recording);
     CHECK(p.performer.snapshot().take.local_status == rr::TakeStatus::Complete);
 }
+
+TEST_CASE("after a refused join the performer can join again with the right code", "[control]") {
+    Pair p;
+    std::string error;
+    REQUIRE(p.producer.create_session("127.0.0.1", p.port, error));
+    const std::string right = p.producer.snapshot().pairing_code;
+    const std::string wrong = right == "000000" ? "111111" : "000000";
+    REQUIRE(p.performer.join("127.0.0.1", p.port, wrong, error));
+    CHECK(p.performer.snapshot().link == LinkState::Connecting);  // never "Disconnected" right after join()
+    CHECK_FALSE(p.performer.join("127.0.0.1", p.port, right, error));  // the first attempt is still running
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().link == LinkState::Disconnected; }));
+    INFO("last_error: " << p.performer.snapshot().last_error);
+    CHECK(p.performer.snapshot().last_error.find("pairing") != std::string::npos);
+    REQUIRE(p.performer.join("127.0.0.1", p.port, right, error));
+    p.producer.set_consent(true);
+    p.performer.set_consent(true);
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Ready && p.performer.snapshot().session == SessionState::Ready;
+    }));
+}

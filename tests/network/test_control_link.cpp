@@ -241,3 +241,12 @@ TEST_CASE("binding to an address that is not on this PC fails with a clear messa
     CHECK_FALSE(server->start(error));
     CHECK(error.find("cannot listen on 203.0.113.7") != std::string::npos);
 }
+
+TEST_CASE("listening on all interfaces (0.0.0.0) is refused", "[network][link]") {
+    auto p = server_params(g_port++);
+    p.bind_address = "0.0.0.0";
+    auto server = ControlLink::server(p);
+    std::string error;
+    CHECK_FALSE(server->start(error));
+    CHECK(error.find("choose one network interface") != std::string::npos);
+}

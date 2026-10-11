@@ -1,6 +1,7 @@
 # ADR-005: Network split: UDP media and clock probes on Winsock threads, TCP control on Qt Network
 
 - **Status:** Proposed. **Revises D-07.** · **Traces:** COM-*, SES-*, TEL-01/03
+- **Stage 6 note:** the **Control** row below is superseded by [ADR-016](ADR-016-control-transport-qt-free-sockets.md) (Qt-free sockets in the core). The other rows stand.
 
 ## Decision
 | Traffic | Transport | Implementation | Thread |
