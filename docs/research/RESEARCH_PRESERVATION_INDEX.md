@@ -166,7 +166,7 @@ plus the researcher's 11 Oct 2026 decision. That means two native Windows apps,
 | Proposal v2 §4.5 | "imported into the shared Web DAW project" as a session manifest | **Project-level** integration only (export files). No runtime dependency. Deferred (FR9). |
 | Proposal v2 §4.6 | JUCE 7, standalone Asio, libsamplerate, SQLite | Stays a proposal-era stack. See `docs/architecture/DEPENDENCIES.md` for the current minimal set. |
 | Proposal v2 §4.3 | "fixed 24-byte header" | Correct value is **26 bytes** (Table 2 fields add up to 26). Still uncorrected in v2. |
-| Proposal v2 Table 3 / text | "80 ms" segment | Opus has no 80 ms frame. Use **60 ms**. Still uncorrected in v2. |
+| Proposal v2 Table 3 / text | "80 ms" segment | The Opus *encoder* frame sizes are 2.5–60 ms, so there is no 80 ms frame. Use **60 ms**. (The decoder accepts *packets* of up to 120 ms, so say "frame" precisely; see ADR-006.) Still uncorrected in v2. |
 | Proposal v2 NFR7 (encryption), NFR8 (4 participants), NFR10 (macOS) | — | Not part of the PP1 target. Later, separately documented stages. |
 
 ## 7. Backup recommendation (not done by the agent)

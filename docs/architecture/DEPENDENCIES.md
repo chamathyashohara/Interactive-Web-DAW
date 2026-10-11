@@ -1,5 +1,15 @@
 # Dependency Review (Stage 0 proposal: nothing added yet)
 
+> **Stage 2 update (11 Oct 2026).** The current decisions are in
+> [SYSTEM_ARCHITECTURE.md §8](SYSTEM_ARCHITECTURE.md) and the ADRs. Changes from the Stage 0 text below:
+> - **Catch2 is pinned to v3.16.0.** v3.16.1 is only 3 days old.
+> - **Qt Network is now used for TCP control** (ADR-005). Winsock is kept for UDP media.
+> - **Opus checks:** frame sizes, PLC and the CMake/VS 2022 build were confirmed in the official docs.
+> - **Qt checks:** platforms (Windows 10 support ends after 6.12), LGPL obligations, and TLS backends (Schannel/OpenSSL) were confirmed.
+> - **SHA-256 via Windows CNG** stays (ADR-014).
+>
+> The Stage 0 text is otherwise kept as it was.
+
 Rule: use the smallest set that meets the requirements. Every dependency here is
 **proposed**. None of them is in the repository yet. Each one is pinned and
 vendored or fetched by hash in the stage that first needs it.

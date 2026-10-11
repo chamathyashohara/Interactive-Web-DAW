@@ -1,0 +1,218 @@
+# Protocol Overview (v1.0, draft for review)
+
+**Stage 2 · 11 October 2026.** Decisions: ADR-005, 006, 008, 009, 010, 011, 012, 014.
+Values marked **(prov.)** are configurable starting settings, not tuned or
+proven-optimal values. Each value in use is written into the session metadata.
+
+All multi-byte integers are **big-endian**, except PCM16 audio samples, which
+are little-endian.
+
+---
+
+## 1. Endpoints
+
+| Channel | Transport | Listener | Default port (prov.) | Peer filtering |
+|---|---|---|---|---|
+| Control | TCP | Producer | 52000 | One performer per session. Its address becomes "the peer". |
+| Media and clock probes | UDP | Both | 52001 | Datagrams from any address other than the paired peer's are dropped and counted (`src_rejected`) |
+| Take transfer (COULD) | TCP | Producer | 52002 | Only from the paired performer's address |
+
+All ports are configurable (APP-03). The defaults avoid 50000 and 50001,
+because AnyDesk was observed holding UDP 50001 on the development PC
+(duplexrec README).
+
+## 2. Media packet header v1 (26 bytes, ADR-008)
+
+| Offset | Size | Field | Meaning |
+|---|---|---|---|
+| 0 | 4 | `seq` | Per-stream sequence number. Starts at 0 when the stream starts and wraps at 2³². Compared with `int32(a − b)`. |
+| 4 | 8 | `capture_index` | Sender's capture-device frame index of the first sample in this packet. Counts device frames since the capture device started. **It is a sample counter, not a clock time.** |
+| 12 | 4 | `session_id` | Random, set by the producer, shared in HELLO_ACK |
+| 16 | 2 | `stream_id` | 1 = producer microphone, 2 = performer microphone. Matches Table 2's "layer". |
+| 18 | 2 | `payload_len` | Number of payload bytes. Must equal datagram length − 26. |
+| 20 | 1 | `ver_type` | High nibble: header version = **1**. Low nibble: type (§3.1). |
+| 21 | 1 | `flags` | Bits 0–1: codec (0 = PCM16LE, 1 = Opus). Bit 2: talkback muted (payload is codec silence). Bits 3–7: reserved, must be 0. |
+| 22 | 4 | `crc32` | CRC-32/IEEE over bytes 0–21 **and** the payload. Detects corruption only, not tampering. |
+
+**Maximum datagram:** 26 + payload ≤ **1472 bytes** (1500 MTU − 20 IPv4 − 8 UDP),
+so the payload is at most 1446 bytes. That gives one IP packet with no
+fragmentation, and a PCM16 frame size of at most 15 ms.
+
+### 2.1 Receive validation order (every step counted on failure, ERR-07)
+1. Source address is the paired peer, else `src_rejected`.
+2. Length is at least 26, else `bad_len`.
+3. Version is 1, else `bad_version`.
+4. Type is known, else `bad_type`.
+5. `payload_len` equals datagram length − 26, else `bad_len`.
+6. CRC matches, else `bad_crc`.
+7. `session_id` matches, else `bad_session`.
+8. Type-specific payload checks: codec equals the negotiated one, payload size fits the frame, reserved bits are 0. Else `bad_payload`.
+
+A packet goes on to the jitter buffer only after all eight checks pass.
+
+## 3. Media stream
+
+### 3.1 Packet types
+| Type | Name | Payload |
+|---|---|---|
+| 0 | AUDIO | One encoded frame. PCM16: `frame_samples × 2` bytes. Opus: one Opus packet, at most 1446 bytes. |
+| 1 | PROBE_REQ | `u32 probe_id, i64 t1_ns` |
+| 2 | PROBE_RESP | `u32 probe_id, i64 t1_ns, i64 t2_ns, i64 t3_ns` |
+| 3 | END_OF_STREAM | Empty. The sender is stopping on purpose (BYE or shutdown), so the receiver returns to filling without counting loss. |
+
+### 3.2 Frame duration and audio format on the live path
+- **Live format:** mono, 48 kHz. Multi-channel capture is downmixed to mono on the live path only (ADR-007).
+- **Frame duration:** default **10 ms = 480 samples** (prov.). Allowed: 2.5, 5, 10, 20 ms; with Opus also 40 and 60 ms. PCM16 is refused above 15 ms (§2).
+  - Reasoning: 10 ms is the value both prototypes ran with on loopback (REPOSITORY_AUDIT §3). It is a common VoIP and NMP granularity, and with PCM16 it fits the MTU. **It is not claimed to be optimal.** Segment size is the RQ1 research variable.
+- The frame duration is fixed for a session and announced in HELLO_ACK.
+
+### 3.3 Jitter buffer policy (receiver, owned by the playback callback, ADR-011)
+
+| Parameter | Default (prov.) | Range |
+|---|---|---|
+| Target depth D | 3 frames (30 ms at 10 ms frames) | 1–16 frames |
+| Packet queue (receive thread → callback) | 64 packets | fixed at build time |
+| Stall limit (go back to filling) | 20 consecutive missing frames | 5–200 |
+| Drift-skip threshold | fill > D+2 frames for more than 1 s | — |
+
+**States:**
+- `FILLING`: wait until D consecutive-or-later frames are queued, then set `next_seq` to the lowest one.
+- `PLAYING`, for each frame due:
+  - slot `next_seq` present → decode and play;
+  - else, if a higher seq is present → **lost**: conceal, `lost++`;
+  - else → **underrun**: conceal, `underrun++`;
+  - after the stall limit is reached → back to `FILLING` (`rebuffer++`).
+
+**Arrival rules:**
+- `seq < next_seq` → `late++`, drop.
+- Already held → `duplicate++`, drop.
+- `seq ≥ next_seq + 64` → `too_early++`, reset to `FILLING`.
+
+All counters are cumulative per session and per take.
+
+### 3.4 Clock probes (ADR-010)
+- Each side sends PROBE_REQ at 4 Hz (prov.).
+  - `t1` = local monotonic time just before `sendto`.
+  - The responder sets `t2` right after `recvfrom` and `t3` right before `sendto`.
+  - The requester sets `t4` right after `recvfrom`.
+- Then **δ = (t4 − t1) − (t3 − t2)** and **θ = ((t2 − t1) + (t3 − t4)) / 2**, which estimates *responder clock − requester clock*.
+- **Reported:**
+  - θ̂ = θ of the probe with the smallest δ among the last 16;
+  - **uncertainty u = δmin / 2**. The true offset lies within θ̂ ± u if the timestamps are exact; an asymmetric path cannot push it outside that bound.
+  - **probe RTT** = δ of the latest probe.
+- Probes with δ > 100 ms (prov.) or a missing response within 1 s are discarded and counted.
+
+## 4. Control framing (TCP, ADR-009)
+
+```
+u32 length        bytes that follow this field, 12 … 65 536
+u16 type          message type (§5)
+u16 reserved      0
+u32 msg_id        sender's increasing counter, starts at 1
+u32 ref_id        msg_id being answered (ACK/NACK/RESP), else 0
+…   TLV fields    repeated: u16 tag | u16 len | len bytes
+```
+
+- **Rejected:** `length` > 65 536, a TLV running past the frame, or a duplicate tag. These close the connection with `E_PROTOCOL_MALFORMED`.
+- **Unknown tags are ignored** (forward compatibility).
+- **Field types:** integers are big-endian at their stated width. Strings are UTF-8, at most 256 bytes. Times are `i64` nanoseconds of the **sender's** monotonic clock unless the name says otherwise.
+
+## 5. Control messages
+
+S = producer (Studio), R = performer. "Req." lists the required fields.
+
+| Code | Message | Dir | Req. fields | Reply / timeout (prov.) |
+|---|---|---|---|---|
+| 0x0001 | HELLO | R→S | `proto_major, proto_minor, role=performer, app_version, pairing_code, codecs_supported (bitmask), media_port, display_name` | HELLO_ACK or HELLO_REJECT within 3 s, else R shows "No response" |
+| 0x0002 | HELLO_ACK | S→R | `proto_major, proto_minor, session_id, codec, frame_samples, sample_rate, media_port, display_name, max_take_s` | — |
+| 0x0003 | HELLO_REJECT | S→R | `error_code, proto_major, proto_minor` | S closes after sending |
+| 0x0010 | HEARTBEAT | both | `sent_ns` | HEARTBEAT_ACK. Sent every 1 s. Link counted **lost after 3 s** without any frame. |
+| 0x0011 | HEARTBEAT_ACK | both | `echo_sent_ns` | Gives **control RTT** |
+| 0x0020 | STATUS | both | `state, device_ok, sample_rate, channels, disk_free_bytes, consent, media_path_ok, error_code` | Sent on every change and at least every 2 s |
+| 0x0021 | CONSENT | both | `given (u8), at_utc (string), notice_version` | — |
+| 0x0030 | ARM | S→R | `take_id, start_at_ns (producer clock), max_take_s` | ARM_ACK / ARM_NACK, required **before start_at − 100 ms**, else S sends CANCEL |
+| 0x0031 | ARM_ACK | R→S | `take_id, planned_start_local_ns, theta_ns, uncertainty_ns` | — |
+| 0x0032 | ARM_NACK | R→S | `take_id, error_code` | S cancels the take |
+| 0x0033 | CANCEL | S→R | `take_id, error_code` | No files are kept as Saved. A `.partial` that was already opened is finalised as `cancelled`. |
+| 0x0034 | TAKE_STARTED | both | `take_id, first_capture_index, first_sample_est_ns, stamp_residual_ns` | Information only. Feeds the start-offset estimate. |
+| 0x0040 | STOP | S→R | `take_id, stop_at_ns (producer clock, lead 300 ms prov.)` | STOP_ACK within 2 s |
+| 0x0041 | STOP_ACK | R→S | `take_id` | — |
+| 0x0042 | LOCAL_STOP | R→S | `take_id, reason (error_code)` | Performer pressed Stop & save, or hit the safety limit or a device/disk error |
+| 0x0043 | TAKE_FINALISED | both | `take_id, status (§6.2), has_gaps, frames, bytes, sha256 (optional), file_name` | The producer waits up to **10 s** after STOP_ACK, then shows the performer take as **UNKNOWN** |
+| 0x0050 | BYE | both | `reason` | The sender closes. The peer sends END_OF_STREAM on media. |
+
+## 6. Codes
+
+### 6.1 Error codes (u16)
+| Code | Name | Typical use |
+|---|---|---|
+| 0 | OK | — |
+| 1 | E_PROTOCOL_MALFORMED | Bad frame or TLV, or missing required field |
+| 2 | E_VERSION_UNSUPPORTED | Major version differs. APP-02, T-05e. |
+| 3 | E_BAD_PAIRING_CODE | SES-03, T-05b |
+| 4 | E_SESSION_FULL | Second performer |
+| 5 | E_WRONG_ROLE | A producer tried to join a producer |
+| 6 | E_NOT_READY | ARM while not READY |
+| 7 | E_NO_CONSENT | ARM before consent |
+| 8 | E_ARM_TOO_LATE | Converted start time is already past or less than 100 ms away |
+| 9 | E_TAKE_ID_CONFLICT | Take ID already used in this session |
+| 10 | E_BUSY | ARM while already recording or finalising |
+| 11 | E_DEVICE | Device missing, failed to open, stalled or lost |
+| 12 | E_DISK_SPACE | Below what REC-09 requires |
+| 13 | E_DISK_WRITE | Write or flush failed (includes disk full) |
+| 14 | E_TIMEOUT | Expected reply not received |
+| 15 | E_CANCELLED | Take cancelled |
+| 16 | E_UNKNOWN_TAKE | STOP or report for a take that isn't known |
+| 17 | E_USER_STOP | Performer pressed Stop & save |
+| 18 | E_SAFETY_LIMIT | `max_take_s` reached |
+| 19 | E_SHUTDOWN | App closing |
+| 20 | E_TRANSFER_HASH_MISMATCH | XFER |
+| 21 | E_TRANSFER_REFUSED | XFER (no consent, name rejected) |
+| 22 | E_INTERNAL | Bug or invariant violation (always logged) |
+
+### 6.2 Take status (metadata, TAKE_FINALISED, verification report)
+| Status | Meaning |
+|---|---|
+| `complete` | Finalised normally, header correct, renamed to `.wav` |
+| `complete_shutdown` | Finalised normally because the app was closing (ERR-05a) |
+| `incomplete_disk` | Disk full or write error. `.partial` kept (ERR-02). |
+| `incomplete_device` | Device lost or stalled. The audio up to that point is finalised (ERR-06). |
+| `incomplete_crash` | A `.partial` found on startup (ERR-05b) |
+| `cancelled` | ARM cancelled before or right at the start |
+
+`has_gaps` is a separate flag: true if any record-buffer overrun happened
+(REC-05), with the positions listed in the metadata.
+
+## 7. Version negotiation
+- The protocol is **1.0** (major 1, minor 0). The major changes when a message, field meaning or header layout changes incompatibly. The minor changes for added optional TLVs or messages.
+- HELLO carries the performer's version. If the majors differ → HELLO_REJECT `E_VERSION_UNSUPPORTED` with the producer's version, and both apps show both versions (APP-02).
+- If the minors differ → accept, and use only features known to both. The codec is chosen from the intersection of `codecs_supported`: the producer's preference if both have it, otherwise PCM16.
+- The media header has its own version nibble (§2). Header v1 belongs to protocol 1.x.
+
+## 8. Timeouts and limits (all prov., configurable, logged)
+| Item | Value | Why this value |
+|---|---|---|
+| TCP connect | 5 s | Long enough for a LAN with a slow firewall prompt. Short enough for useful feedback. |
+| HELLO reply | 3 s | — |
+| Heartbeat interval / link-lost threshold | 1 s / 3 s | Three missed beats. A short outage is visible within seconds (SES-10). |
+| Start lead | 1000 ms | Far above LAN RTT (about 1 ms in the 9 Oct prototype data, unverified), leaving room for UI and thread scheduling |
+| ARM_ACK deadline | start_at − 100 ms | The performer needs ≥ 100 ms of margin to set up its start mapping |
+| Stop lead / STOP_ACK | 300 ms / 2 s | — |
+| Finalisation report wait | 10 s | Header patch plus flush plus rename are fast, and this allows for a slow disk |
+| Safety limit `max_take_s` | 1800 s | Matches the REC-09 disk check (OQ-13) |
+| Failed pairing attempts | 5, then a new code is needed | Prevents casual guessing on the LAN. **Not a security control.** |
+
+## 9. Take transfer protocol (COULD, ADR-014)
+This runs on its own TCP connection, using the same framing as §4 with codes
+0x0100 and up:
+`XFER_OFFER(take_id, size, sha256, suggested_name)` → `XFER_ACCEPT(take_id)` / `XFER_REJECT(error)` →
+raw stream of `size` bytes → producer recomputes SHA-256 →
+`XFER_RESULT(take_id, VERIFIED | E_TRANSFER_HASH_MISMATCH)`.
+
+- The producer **ignores `suggested_name` for the path**. It builds the name as `takeNN_performer_<session8>.wav` and never overwrites an existing file.
+- The performer opens its original read-only.
+
+## 10. Security limits (ADR-012)
+- No confidentiality, integrity protection or authentication against an attacker. CRC and the pairing code protect against **accidents**, not adversaries.
+- Use only on a trusted private LAN, and never expose the ports to the internet.
+- Encryption and authentication come in a separate stage, using established libraries (Qt TLS, DTLS or an established AEAD). Never custom cryptography.

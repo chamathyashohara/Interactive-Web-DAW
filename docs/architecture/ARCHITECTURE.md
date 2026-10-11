@@ -1,5 +1,12 @@
 # Architecture: Producer Studio and Performer Client (C++17)
 
+> **SUPERSEDED (Stage 2, 11 Oct 2026)** by [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) and the ADRs in [adr/](adr/README.md).
+> It is kept unchanged below as the Stage 0 record. Where the two differ, the Stage 2 documents apply. Main changes:
+> - separate capture and playback devices (ADR-003);
+> - TCP control on Qt Network (ADR-005);
+> - CRC now covers the header (ADR-008);
+> - two state machines instead of one (SESSION_STATE_MACHINE).
+
 **Status:** Stage 0 proposal for review, 11 October 2026. Nothing here is implemented yet.
 **Builds on:** proposal v2 §4 (dual-path capture), the Rust prototype `duplexrec-rs`,
 and the 9 Oct C++ prototype (see `docs/research/RESEARCH_PRESERVATION_INDEX.md`).

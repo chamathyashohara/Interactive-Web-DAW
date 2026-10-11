@@ -20,3 +20,19 @@ Status: **Proposed** = waiting for the researcher's or supervisor's review. **Ac
 | D-11 | 2026-10-11 | Performer **keeps recording** if the control link drops mid-take | Auto-stop on disconnect | Protects the master take, which is the core claim | **Needs the researcher's decision** |
 | D-12 | 2026-10-11 | **Toolchain: MSVC v143 (VS 2022 Build Tools)** side by side with VS 2026 | v145 from VS 2026 | Brief says "MSVC 2022". v145 would also compile C++17. | **Needs the researcher's decision** (see TOOLCHAIN_AUDIT.md) |
 | D-13 | 2026-10-11 | PP1 prototype is **LAN-only and unencrypted**, and this is stated openly | TLS from day one | Scope and time. NFR7 deferred to a separate security stage. | Proposed |
+
+## Stage 2 (11 Oct 2026): architecture decisions
+
+The detailed records are in `docs/architecture/adr/`. All are **Proposed**
+until the architecture review.
+
+| # | Date | Decision | Record | Status |
+|---|---|---|---|---|
+| D-14 | 2026-10-11 | Layering: `rr_core` (no Qt) / `rr_app` (Qt) / two exes / `rr_verify` | ADR-001 | Proposed |
+| D-15 | 2026-10-11 | Separate capture and playback devices, explicit device IDs, `noAutoStreamRouting`, native 48 kHz, device watchdog | ADR-003 | Proposed |
+| D-16 | 2026-10-11 | **Revises D-07:** TCP control on Qt Network in a control thread. UDP media and probes stay on Winsock. | ADR-005 | Proposed |
+| D-17 | 2026-10-11 | Media header v1: version nibble, CRC over header and payload (not compatible with the prototypes) | ADR-008 | Proposed |
+| D-18 | 2026-10-11 | Control protocol: TLV frames, major/minor versions, explicit ACK/NACK with error codes | ADR-009 | Proposed |
+| D-19 | 2026-10-11 | Fixed-depth jitter buffer owned by the playback callback, decoding in the callback (measured) | ADR-011 | Proposed |
+| D-20 | 2026-10-11 | Catch2 v3.16.0, test-only | ADR-015 | Proposed |
+| D-21 | 2026-10-11 | Proposed requirement amendments A-1…A-4 (SYSTEM_ARCHITECTURE §10) | — | **Needs the researcher's decision** |

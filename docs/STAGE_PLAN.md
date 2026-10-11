@@ -7,7 +7,8 @@ and **stops for review**. Nothing starts automatically.
 |---|---|---|
 | 0 | Repository, prototype and research audit | ✔ Done (11 Oct 2026). See `docs/project/REPOSITORY_AUDIT.md`. |
 | 1 | Requirements and acceptance baseline | ✔ Done (11 Oct 2026). See `docs/requirements/`. |
-| 2+ | To be issued by the researcher | — |
+| 2 | System architecture and ADRs | Drafted (11 Oct 2026). **Awaiting architecture review.** See `docs/architecture/`. |
+| 3+ | To be issued by the researcher | — |
 
 ## Proposed implementation increments (input for later stages, not a commitment)
 

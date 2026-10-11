@@ -13,7 +13,7 @@ v2 §4.1).
 
 ## Status
 
-**Stage 1 (requirements and acceptance baseline) is complete. No application code exists yet.**
+**Stage 2 (system architecture and ADRs) is drafted and awaiting review. No application code exists yet.**
 See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 
 ## Documents
@@ -27,7 +27,13 @@ See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 | [docs/requirements/PP1_ACCEPTANCE_MATRIX.md](docs/requirements/PP1_ACCEPTANCE_MATRIX.md) | PP1 completion criteria, reproducible tests, MUST→test traceability |
 | [docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md](docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md) | Assumptions, open questions, provisional defaults |
 | [docs/environment/TOOLCHAIN_AUDIT.md](docs/environment/TOOLCHAIN_AUDIT.md) | What is installed, what is missing, setup commands |
-| [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | Threads, queues, protocols, timing terms, state machines, security assumptions |
+| [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md) | **Current architecture**: structure, audio policies, measurement definitions, dependencies, risks |
+| [docs/architecture/COMPONENT_DIAGRAM.md](docs/architecture/COMPONENT_DIAGRAM.md) | Mermaid component, data-path and deployment diagrams |
+| [docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md](docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md) | Threads, bounded queues, callback rules, shutdown order |
+| [docs/architecture/SESSION_STATE_MACHINE.md](docs/architecture/SESSION_STATE_MACHINE.md) | Link and session/take state machines with transition tables |
+| [docs/architecture/PROTOCOL_OVERVIEW.md](docs/architecture/PROTOCOL_OVERVIEW.md) | Media header, jitter policy, probes, control messages, codes, timeouts |
+| [docs/architecture/adr/](docs/architecture/adr/README.md) | ADR-001…015 |
+| [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | Stage 0 draft (superseded, kept) |
 | [docs/architecture/DEPENDENCIES.md](docs/architecture/DEPENDENCIES.md) | Proposed dependencies with pinned versions and licences |
 | [docs/decisions/DECISION_LOG.md](docs/decisions/DECISION_LOG.md) | Decisions, continuing proposal Appendix B |
 | [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md) | Stages and acceptance criteria |
