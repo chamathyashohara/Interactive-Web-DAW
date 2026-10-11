@@ -10,7 +10,7 @@
 ## Layering (ADR-001), with names used in code
 | ADR-001 name | Code | CMake target | Qt? | Status |
 |---|---|---|---|---|
-| `rr_core` (Qt-free) | `libs/shared`, `libs/session`, `libs/audio`, `libs/network`, `libs/control` | `rr_shared`, `rr_session`, `rr_audio` (+ `rr_miniaudio`), `rr_network`, `rr_control` | No (checked by the `core_has_no_qt_includes` test) | Implemented. network: control path only (UDP media planned). |
+| `rr_core` (Qt-free) | `libs/shared`, `libs/session`, `libs/audio`, `libs/network`, `libs/transfer`, `libs/control` | `rr_shared`, `rr_session`, `rr_audio` (+ `rr_miniaudio`), `rr_network`, `rr_transfer` (Stage 11), `rr_control` | No (checked by the `core_has_no_qt_includes` test) | Implemented. network: control path only (UDP media planned). |
 | `rr_app` (Qt shared layer) | `libs/ui_common` | `rr_ui` | Yes | Implemented, unverified |
 | ProducerStudio.exe | `apps/producer` | `ProducerStudio` | Yes | Implemented, unverified |
 | PerformerClient.exe | `apps/performer` | `PerformerClient` | Yes | Implemented, unverified |
@@ -76,6 +76,12 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Readiness checklist items, encoding (ADR-019) | `libs/control/.../readiness.hpp` | Implemented, tested |
 | Coordinated take hardening: session id check, start-lead minimum, stop-before-start, timing record | `libs/control/src/session_controller.cpp` | Implemented, tested, real-device runs on one PC |
 | Take timing analysis; WAV verification (independent reader; Windows MCI open check) | `tools/audit/analyse_take_timing.py`, `verify_take_wav.py`, `mci_open_check.c` | Implemented, used for the Stage 9 evidence |
+| SHA-256 via Windows CNG (ADR-014/020) | `libs/transfer/.../sha256.hpp` | Implemented, tested (FIPS 180-2 vectors) |
+| RRXF transfer wire format (PROTOCOL §15) | `libs/transfer/.../transfer_protocol.hpp` | Implemented, tested (round trip, malformed input) |
+| Read-only original, partial file, producer-chosen names, path containment, resume journal | `libs/transfer/.../transfer_files.hpp` | Implemented, tested |
+| Producer transfer receiver (listener, checks, resume, VERIFIED) / performer sender (read-only, retry, resume) | `libs/transfer/.../take_receiver.hpp`, `take_sender.hpp` | Implemented, tested (loopback), real-device runs on one PC |
+| Transfer request/answer, delivery consent, readiness gate, automatic copies | `libs/control/src/session_controller.cpp` (Stage 11 section) | Implemented, tested (test recorder + real WAV) |
+| Transfer table and buttons in the Session panel | `libs/ui_common/src/session_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
 | UDP clock probes (ADR-010) | - | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |

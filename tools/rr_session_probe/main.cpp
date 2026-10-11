@@ -24,6 +24,15 @@
 //   reopen-output         re-open the output device (device-change test; needs --live-sink device)
 //   live-stats            print the live counters now
 //   live-report <file>    write the one-page live diagnostics report now
+//   transfer <take>       producer: request a verified copy of the performer's take (Stage 11)
+//   wait-transfer <take> [s] [VERIFIED|FAILED]   until it ends; the step fails on another outcome
+//   transfers             print every transfer (state, bytes, chunks, resumes, rejects, SHA-256)
+//   cancel-transfer <take>  producer: end a queued/paused transfer as FAILED
+//   delivery on|off       performer: allow/withdraw sending copies of its takes (XFER-05)
+// Transfer options (Stage 11): --allow-delivery (performer), --auto-transfer (producer),
+//   --xfer-chunk-bytes <n> (performer). TEST ONLY: --xfer-drop-after <n> (cuts the transfer
+//   connection once, on the side that gives it), --xfer-corrupt-chunk <i>, --xfer-corrupt-whole <i>,
+//   --xfer-wrong-session (performer).
 // Default scripts: producer "wait-ready; record; wait 3; stop; wait-state Ready 10; wait 1; quit",
 //                  performer "wait-ready 30; wait-closed".
 // Without --audio the TEST RECORDER (no audio, nothing written) is used and labelled as such.
@@ -64,6 +73,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -78,6 +88,7 @@
 #include "rr/shared/build_info.hpp"
 #include "rr/shared/clock.hpp"
 #include "rr/shared/log_sinks.hpp"
+#include "rr/transfer/transfer_types.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -107,6 +118,9 @@ int usage() {
                  "    [--live-source tone|bursts|silence|echo|mic] [--live-sink null|wav:<file>|device] [--source-wav <file>]\n"
                  "    [--live-gain-db <dB>] [--jitter-frames <n>] [--frame-ms <ms>] [--bitrate <bit/s>]\n"
                  "    [--application lowdelay|audio] [--no-control-hint] [--report <file>] [--conditions \"<text>\"]\n"
+                 "  take transfer (Stage 11): --allow-delivery (performer) --auto-transfer (producer) --xfer-chunk-bytes <n>\n"
+                 "    script: transfer <take>; wait-transfer <take> [s] [VERIFIED|FAILED]; transfers; cancel-transfer <take>\n"
+                 "  test only: --xfer-drop-after <n> --xfer-corrupt-chunk <i> --xfer-corrupt-whole <i> --xfer-wrong-session\n"
                  "  test only: --test-protocol-major <n> announces a different protocol major version in HELLO\n"
                  "  test only: --sim-loss <pct> --sim-dup <pct> --sim-reorder <pct> --sim-burst <every>:<len> --sim-seed <n>\n");
     return 2;
@@ -390,6 +404,32 @@ void print_live(const char* who, const media::LiveEndpoint& ep) {
     std::fflush(stdout);
 }
 
+void print_transfers(const control::ControllerSnapshot& s, const char* who) {
+    if (s.transfers.empty()) {
+        std::printf("[%s] transfers: none\n", who);
+    }
+    for (const auto& v : s.transfers) {
+        std::printf("[%s] TRANSFER take %u: %s | %llu/%llu bytes, %u/%u chunks of %u, connections %u, resumes %u "
+                    "(last from chunk %u), chunk rejects %u, hash failures %u%s\n",
+                    who, v.take_id, xfer::transfer_state_name(v.state), static_cast<unsigned long long>(v.bytes_done),
+                    static_cast<unsigned long long>(v.bytes_total), v.chunks_done, v.chunks_total, v.chunk_bytes,
+                    v.connections, v.resumes, v.resumed_from_chunk, v.chunk_rejects, v.hash_failures,
+                    v.already_verified ? ", already verified (nothing rewritten)" : "");
+        std::printf("[%s]   SHA-256 %s\n[%s]   file %s\n", who, v.sha256_hex.c_str(), who, v.file.c_str());
+        if (s.role == Role::Producer && v.state == xfer::TransferState::Verified) {
+            std::printf("[%s]   checked copy: %u Hz, %u ch, %u-bit float, %llu frames = %.3f s; frames vs TAKE_FINALISED: %s\n",
+                        who, v.sample_rate, v.channels, v.bits, static_cast<unsigned long long>(v.frames), v.duration_s,
+                        v.frames_vs_report.c_str());
+        }
+        if (s.role == Role::Performer && !v.source_sha_after_hex.empty()) {
+            std::printf("[%s]   original after sending: SHA-256 %s -> %s\n", who, v.source_sha_after_hex.c_str(),
+                        v.source_unchanged ? "UNCHANGED" : "CHANGED");
+        }
+        std::printf("[%s]   %s\n", who, v.detail.c_str());
+    }
+    std::fflush(stdout);
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -421,6 +461,13 @@ int main(int argc, char* argv[]) {
     std::string log_path;
     std::uint16_t test_major = 0;
     std::uint32_t start_lead_ms = 0;
+    bool allow_delivery = false;     // performer: allow take copies to be sent (XFER-05)
+    bool auto_transfer = false;      // producer: request each finalised performer take
+    std::uint32_t xfer_chunk = 0;    // performer: transfer chunk size (0 = default 32768)
+    std::uint32_t xfer_drop = 0;     // TEST: cut the transfer connection after N chunks (once)
+    int xfer_corrupt = -1;           // TEST performer: damage chunk N after hashing (once)
+    int xfer_corrupt_whole = -1;     // TEST performer: alter chunk N before hashing (once)
+    bool xfer_wrong_session = false; // TEST performer: HELLO with another session id
     LiveOptions live;
     std::string script = producer ? "wait-ready; record; wait 3; stop; wait-state Ready 10; wait 1; quit"
                                   : "wait-ready 30; wait-closed";
@@ -439,6 +486,13 @@ int main(int argc, char* argv[]) {
         else if (a == "--script") script = next();
         else if (a == "--test-protocol-major") test_major = static_cast<std::uint16_t>(std::atoi(next().c_str()));
         else if (a == "--start-lead-ms") start_lead_ms = static_cast<std::uint32_t>(std::atoi(next().c_str()));
+        else if (a == "--allow-delivery") allow_delivery = true;
+        else if (a == "--auto-transfer") auto_transfer = true;
+        else if (a == "--xfer-chunk-bytes") xfer_chunk = static_cast<std::uint32_t>(std::atoi(next().c_str()));
+        else if (a == "--xfer-drop-after") xfer_drop = static_cast<std::uint32_t>(std::atoi(next().c_str()));
+        else if (a == "--xfer-corrupt-chunk") xfer_corrupt = std::atoi(next().c_str());
+        else if (a == "--xfer-corrupt-whole") xfer_corrupt_whole = std::atoi(next().c_str());
+        else if (a == "--xfer-wrong-session") xfer_wrong_session = true;
         else if (a == "--live") live.enabled = true;
         else if (a == "--one-way") live.one_way = true;
         else if (a == "--no-control-hint") live.control_hint = false;
@@ -512,6 +566,10 @@ int main(int argc, char* argv[]) {
     cfg.app_version = build_info().version + " (rr_session_probe)";
     cfg.display_name = producer ? "Probe producer" : "Probe performer";
     cfg.test_protocol_major = test_major;
+    cfg.auto_transfer = auto_transfer;
+    if (xfer_chunk != 0) {
+        cfg.transfer_sender.chunk_bytes = xfer_chunk;
+    }
     const char* who = producer ? "producer" : "performer";
 
     std::unique_ptr<audio::AudioEngine> engine;
@@ -788,6 +846,13 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "[performer] %s\n", error.c_str());
             return 1;
         }
+        controller.set_delivery_consent(allow_delivery);
+        if (xfer::TakeSender* tx = controller.transfer_sender()) {
+            if (xfer_drop != 0) tx->test_drop_after_chunks(xfer_drop);
+            if (xfer_corrupt >= 0) tx->test_corrupt_chunk(static_cast<std::uint32_t>(xfer_corrupt));
+            if (xfer_corrupt_whole >= 0) tx->test_corrupt_consistent(static_cast<std::uint32_t>(xfer_corrupt_whole), false);
+            if (xfer_wrong_session) tx->test_override_hello("deadbeef", "");
+        }
     }
     controller.set_consent(true);
 
@@ -879,6 +944,46 @@ int main(int argc, char* argv[]) {
             std::string path;
             in >> path;
             write_report(path);
+        } else if (cmd == "transfer") {
+            unsigned take = 0;
+            in >> take;
+            ok = controller.request_transfer(take, error);
+            if (ok && xfer_drop != 0 && controller.transfer_receiver()) {
+                controller.transfer_receiver()->test_drop_after_chunks(xfer_drop);  // TEST (producer side)
+                xfer_drop = 0;
+            }
+        } else if (cmd == "cancel-transfer") {
+            unsigned take = 0;
+            in >> take;
+            controller.cancel_transfer(take);
+        } else if (cmd == "wait-transfer") {
+            // wait-transfer <take> <seconds> [VERIFIED|FAILED]: fails unless it ends in the expected state.
+            unsigned take = 0;
+            double s = 60;
+            std::string expect = "VERIFIED";
+            in >> take >> s >> expect;
+            auto find_view = [&]() -> std::optional<xfer::TransferView> {
+                for (const auto& v : controller.snapshot().transfers) {
+                    if (v.take_id == take) return v;
+                }
+                return std::nullopt;
+            };
+            ok = probe.until([&] {
+                const auto v = find_view();
+                return v && xfer::transfer_state_final(v->state);
+            }, s);
+            const auto v = find_view();
+            if (ok && v && std::string(xfer::transfer_state_name(v->state)) != expect) {
+                ok = false;
+                error = std::string("ended ") + xfer::transfer_state_name(v->state) + ", expected " + expect;
+            }
+            print_transfers(controller.snapshot(), who);
+        } else if (cmd == "transfers") {
+            print_transfers(controller.snapshot(), who);
+        } else if (cmd == "delivery") {
+            std::string v;
+            in >> v;
+            controller.set_delivery_consent(v == "on");
         } else if (cmd == "leave") {
             controller.leave();
         } else if (cmd == "quit") {
@@ -895,6 +1000,9 @@ int main(int argc, char* argv[]) {
     }
     probe.pump();
     print_summary(controller.snapshot(), who);
+    if (!controller.snapshot().transfers.empty()) {
+        print_transfers(controller.snapshot(), who);  // Stage 11
+    }
     if (live.enabled) {
         std::printf("\n[%s] LIVE SUMMARY (live monitor streams only; the master recordings are separate files)\n", who);
         print_live(who, endpoint);

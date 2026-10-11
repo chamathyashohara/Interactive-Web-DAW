@@ -1,6 +1,7 @@
 # ADR-014: Take transfer and verification uses its own TCP connection, SHA-256 via Windows CNG, and never touches the original
 
 - **Status:** Proposed. **XFER is a COULD.** · **Traces:** XFER-01…05, VER-01, ERR-08, BRIEF
+- **Stage 11 (11 Oct 2026):** implemented as ADR-020, which keeps every point below except step 5: an interrupted transfer now **resumes from the last verified chunk** (XFER-04). The port is control port + 2 (52002 by default).
 
 ## Decision
 - **Hashing:** SHA-256 through Windows CNG (`BCryptOpenAlgorithmProvider` with `BCRYPT_SHA256_ALGORITHM`). It is part of Windows, so there is no extra dependency and no custom crypto. Used by `rr_verify.exe` (VER-01) and by the transfer.

@@ -105,6 +105,48 @@ SessionPanel::SessionPanel(Role role, const AppConfig& config, AudioPanel& audio
     pcs_label_->setTextFormat(Qt::RichText);
     pcs_label_->setWordWrap(true);
     layout->addWidget(pcs_label_);
+
+    // Stage 11: verified copies of the performer's takes (the originals never leave the performer's PC).
+    auto* copies_box = new QGroupBox(tr("Take copies: performer's original WAV -> verified copy on the producer's PC"));
+    auto* copies_layout = new QVBoxLayout(copies_box);
+    if (role_ == Role::Producer) {
+        auto* copy_row = new QHBoxLayout;
+        copy_button_ = new QPushButton(tr("Get verified copy of the performer's last take"));
+        copy_button_->setToolTip(tr("Asks the performer's app to send a copy of its finalised take. The copy is "
+                                    "marked VERIFIED only after its SHA-256 matches and the WAV checks pass. "
+                                    "Record is unavailable while a copy is being received."));
+        cancel_copy_button_ = new QPushButton(tr("Cancel copy"));
+        auto_copy_check_ = new QCheckBox(tr("Automatically after each take"));
+        auto_copy_check_->setChecked(QSettings().value(QStringLiteral("session/auto_copy"), false).toBool());
+        copy_row->addWidget(copy_button_);
+        copy_row->addWidget(cancel_copy_button_);
+        copy_row->addWidget(auto_copy_check_);
+        copy_row->addStretch(1);
+        copies_layout->addLayout(copy_row);
+        connect(copy_button_, &QPushButton::clicked, this, &SessionPanel::request_copy);
+        connect(cancel_copy_button_, &QPushButton::clicked, this, &SessionPanel::cancel_copy);
+        connect(auto_copy_check_, &QCheckBox::toggled, this, [this](bool on) {
+            QSettings().setValue(QStringLiteral("session/auto_copy"), on);
+            if (controller_) {
+                controller_->set_auto_transfer(on);
+            }
+        });
+    } else {
+        delivery_check_ = new QCheckBox(tr("Allow the producer to receive a verified copy of my takes "
+                                           "(my original files stay on this PC and are never changed)"));
+        copies_layout->addWidget(delivery_check_);
+        connect(delivery_check_, &QCheckBox::toggled, this, [this](bool on) {
+            if (controller_) {
+                controller_->set_delivery_consent(on);
+            }
+        });
+    }
+    transfers_label_ = new QLabel;
+    transfers_label_->setTextFormat(Qt::RichText);
+    transfers_label_->setWordWrap(true);
+    transfers_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    copies_layout->addWidget(transfers_label_);
+    layout->addWidget(copies_box);
     error_label_ = new QLabel;
     error_label_->setWordWrap(true);
     error_label_->setStyleSheet(QStringLiteral("color: #b00020;"));
@@ -333,6 +375,12 @@ void SessionPanel::ensure_controller() {
     if (lead_spin_ != nullptr) {
         controller_->set_start_lead_ms(static_cast<std::uint32_t>(lead_spin_->value()));
     }
+    if (auto_copy_check_ != nullptr) {
+        controller_->set_auto_transfer(auto_copy_check_->isChecked());
+    }
+    if (delivery_check_ != nullptr) {
+        controller_->set_delivery_consent(delivery_check_->isChecked());
+    }
     shown_history_ = 0;
     shown_history_last_.clear();
     history_view_->clear();
@@ -437,6 +485,36 @@ void SessionPanel::stop_and_save() {
     }
 }
 
+void SessionPanel::request_copy() {
+    if (!controller_) {
+        return;
+    }
+    const auto s = controller_->snapshot();
+    std::string error;
+    if (!controller_->request_transfer(s.take.take_id, error)) {
+        show_error(tr("Copy not requested: %1").arg(qs(error)));
+    }
+}
+
+void SessionPanel::cancel_copy() {
+    if (!controller_) {
+        return;
+    }
+    for (const auto& v : controller_->snapshot().transfers) {
+        if (!rr::xfer::transfer_state_final(v.state)) {
+            const auto answer = QMessageBox::question(
+                this, tr("Cancel copy"),
+                tr("Stop receiving the copy of take %1? What has arrived is kept and a new request continues from "
+                   "there. The performer's original is not affected.").arg(v.take_id),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer == QMessageBox::Yes) {
+                controller_->cancel_transfer(v.take_id);
+            }
+            return;
+        }
+    }
+}
+
 void SessionPanel::show_error(const QString& text) {
     error_label_->setText(text);
 }
@@ -489,6 +567,31 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
     reasons_label_->setText(reasons);
     checks_label_->setText(live ? checks_html(s) : QString());
     pcs_label_->setText(live && s.take.take_id != 0 ? pcs_text(s) : QString());
+    transfers_label_->setText(transfers_html(s));
+    if (copy_button_ != nullptr) {
+        bool any_active = false;
+        for (const auto& v : s.transfers) {
+            any_active = any_active || !rr::xfer::transfer_state_final(v.state);
+        }
+        QString why;
+        if (!live || s.link != LinkState::Connected) {
+            why = tr("the performer is not connected");
+        } else if (s.protocol_minor < 2) {
+            why = tr("the performer's app does not support take copies (control protocol 1.%1)").arg(s.protocol_minor);
+        } else if (!s.peer_delivery_consent) {
+            why = tr("the performer has not allowed copies of its takes");
+        } else if (s.take.take_id == 0 || !s.take.peer_finalised) {
+            why = tr("no finalised performer take yet");
+        } else if (take_running) {
+            why = tr("a take is being recorded");
+        } else if (any_active) {
+            why = tr("a copy is already being received");
+        }
+        copy_button_->setEnabled(why.isEmpty());
+        copy_button_->setToolTip(why.isEmpty() ? tr("Request a verified copy of take %1").arg(s.take.take_id)
+                                               : tr("Not available: %1").arg(why));
+        cancel_copy_button_->setEnabled(any_active);
+    }
     if (!s.last_error.empty()) {
         error_label_->setText(qs(s.last_error));
     }
@@ -661,6 +764,57 @@ QString SessionPanel::pcs_text(const rr::control::ControllerSnapshot& s) const {
         }
     }
     return out;
+}
+
+QString SessionPanel::transfers_html(const rr::control::ControllerSnapshot& s) const {
+    // State as words plus a symbol (never colour alone). VERIFIED comes only from the producer's
+    // own SHA-256 and WAV checks (ADR-020).
+    if (s.transfers.empty()) {
+        return role_ == Role::Producer ? tr("No copies requested in this session.")
+                                       : tr("No copies sent in this session.");
+    }
+    using rr::xfer::TransferState;
+    QString html = QStringLiteral("<table cellspacing='4'><tr><th align='left'>%1</th><th align='left'>%2</th>"
+                                  "<th align='left'>%3</th><th align='left'>%4</th></tr>")
+                       .arg(tr("Take"), tr("State"), tr("Progress"), tr("Details"));
+    for (const auto& v : s.transfers) {
+        QString state;
+        switch (v.state) {
+            case TransferState::Queued: state = tr("[ ] QUEUED"); break;
+            case TransferState::Transferring: state = tr("[>] TRANSFERRING"); break;
+            case TransferState::Retrying: state = tr("[||] PAUSED / RETRYING"); break;
+            case TransferState::Verifying: state = tr("[?] VERIFYING"); break;
+            case TransferState::Verified: state = tr("[OK] VERIFIED COPY"); break;
+            case TransferState::Failed: state = tr("[X] FAILED"); break;
+        }
+        const double pct = v.bytes_total ? 100.0 * static_cast<double>(v.bytes_done) / static_cast<double>(v.bytes_total) : 0.0;
+        QString progress = tr("%1 % of %2 MB").arg(pct, 0, 'f', 0).arg(static_cast<double>(v.bytes_total) / 1e6, 0, 'f', 1);
+        if (v.resumes > 0) {
+            progress += tr(", resumed %1x").arg(v.resumes);
+        }
+        QString details = qs(v.detail).toHtmlEscaped();
+        if (role_ == Role::Producer && v.state == TransferState::Verified) {
+            details = tr("%1 s, %2 Hz, %3 ch, %4 frames (matches the performer's report: %5)<br>SHA-256 %6<br>%7")
+                          .arg(v.duration_s, 0, 'f', 3)
+                          .arg(v.sample_rate)
+                          .arg(v.channels)
+                          .arg(static_cast<qulonglong>(v.frames))
+                          .arg(qs(v.frames_vs_report))
+                          .arg(qs(v.sha256_hex))
+                          .arg(qs(v.file).toHtmlEscaped());
+        }
+        if (v.state == TransferState::Failed) {
+            details += tr("<br>The original is still on the performer's PC.");
+        }
+        if (role_ == Role::Performer && !v.source_sha_after_hex.empty()) {
+            details += v.source_unchanged ? tr("<br>Original on this PC: unchanged (SHA-256 checked before and after).")
+                                          : tr("<br><b>Original on this PC: CHANGED during sending</b>");
+        }
+        html += QStringLiteral("<tr><td>%1</td><td><b>%2</b></td><td>%3</td><td>%4</td></tr>")
+                    .arg(v.take_id)
+                    .arg(state, progress, details);
+    }
+    return html + QStringLiteral("</table>");
 }
 
 QString SessionPanel::confirmations_text(const rr::control::ControllerSnapshot& s) const {

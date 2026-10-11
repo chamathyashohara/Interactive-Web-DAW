@@ -91,6 +91,9 @@ private:
     QString confirmations_text(const rr::control::ControllerSnapshot& s) const;
     QString checks_html(const rr::control::ControllerSnapshot& s) const;
     QString pcs_text(const rr::control::ControllerSnapshot& s) const;
+    QString transfers_html(const rr::control::ControllerSnapshot& s) const;  // Stage 11
+    void request_copy();                                                       // Stage 11 (producer)
+    void cancel_copy();                                                        // Stage 11 (producer)
     void show_error(const QString& text);
 
     Role role_;
@@ -114,6 +117,7 @@ private:
     QTimer* timer_ = nullptr;
     QLabel* checks_label_ = nullptr;      // Stage 9: both readiness checklists
     QLabel* pcs_label_ = nullptr;         // Stage 9: per-PC take state
+    QLabel* transfers_label_ = nullptr;   // Stage 11: take copies and their states
     // producer
     QComboBox* interface_combo_ = nullptr;
     QPushButton* interfaces_button_ = nullptr;
@@ -126,6 +130,9 @@ private:
     QPushButton* stop_button_ = nullptr;
     QLabel* confirmations_label_ = nullptr;
     QSpinBox* lead_spin_ = nullptr;       // Stage 9: scheduling lead
+    QPushButton* copy_button_ = nullptr;          // Stage 11: get a verified copy of the last take
+    QPushButton* cancel_copy_button_ = nullptr;   // Stage 11
+    QCheckBox* auto_copy_check_ = nullptr;        // Stage 11: automatically after each take
     // performer
     QLineEdit* host_edit_ = nullptr;
     QLineEdit* code_edit_ = nullptr;
@@ -133,6 +140,7 @@ private:
     QPushButton* stop_save_button_ = nullptr;
     QLabel* take_label_ = nullptr;
     QLabel* controller_label_ = nullptr;  // Stage 9: who controls the session
+    QCheckBox* delivery_check_ = nullptr; // Stage 11: performer allows copies to be sent (XFER-05)
 };
 
 }  // namespace rr::ui

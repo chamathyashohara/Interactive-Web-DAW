@@ -3,10 +3,16 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <optional>
 #include <thread>
+#include <vector>
 
 #include "rr/control/readiness.hpp"
+#include "rr/audio/take_naming.hpp"
+#include "rr/audio/wav_writer.hpp"
 #include "rr/control/session_controller.hpp"
 #include "rr/shared/clock.hpp"
 
@@ -35,6 +41,10 @@ ControllerConfig config(rr::Role role) {
     c.link.handshake_timeout_ms = 1000;
     c.arm_to_schedule_timeout_ms = 1500;
     c.status_interval_ms = 200;
+    c.received_root = std::filesystem::temp_directory_path() / "rr_tests" / "ctrl_received";  // Stage 11
+    c.transfer_resume_wait_ms = 3000;
+    c.transfer_sender.retry_interval_ms = 100;
+    c.transfer_sender.give_up_after_ms = 3000;
     return c;
 }
 
@@ -555,4 +565,148 @@ TEST_CASE("Stage 9: the timing record is complete and ordered on both PCs", "[co
     CHECK(b.start_ack_sent_ns < b.start_at_local_ns);
     CHECK(b.stop_cmd_ns > b.start_at_local_ns);
     CHECK(b.local_finalised_ns >= b.stop_at_local_ns);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage 11: take transfer through the session controllers (control link + transfer connection).
+// The TEST RECORDER writes nothing; test_report_file() writes a real WAV (synthetic, silent-free
+// counter signal) with exactly the frames the test recorder reports, as the performer's "take".
+
+namespace {
+
+std::atomic<std::uint16_t> g_xfer_port{53611};
+
+std::vector<char> bytes_of(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::vector<char>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+struct XferPair : Pair {
+    std::filesystem::path perf_dir = std::filesystem::temp_directory_path() / "rr_tests" /
+                                     ("ctrl_perf_" + rr::audio::make_session_id());
+    std::filesystem::path last_file;
+
+    XferPair() {
+        port = static_cast<std::uint16_t>(g_xfer_port.fetch_add(3));  // control, media, transfer
+        std::filesystem::create_directories(perf_dir);
+        performer_port.test_report_file([this](std::uint32_t take, std::uint64_t frames) {
+            rr::audio::WavWriter w;
+            rr::audio::WavFormat fmt;
+            last_file = perf_dir / ("take" + std::to_string(take) + "_test.wav");
+            if (w.open(last_file, fmt)) {
+                std::vector<float> v(static_cast<std::size_t>(frames));
+                for (std::size_t i = 0; i < v.size(); ++i) {
+                    v[i] = 0.001f + static_cast<float>(i % 997) / 1000.0f;
+                }
+                w.write_frames(v.data(), frames);
+                w.finalise();
+            }
+            return last_file;
+        });
+    }
+
+    void record_one_take() {
+        std::string error;
+        REQUIRE(producer.start_take(error));
+        REQUIRE(run_until([&] { return performer.snapshot().session == SessionState::Recording; }));
+        run_until([] { return false; }, 300ms);
+        REQUIRE(producer.stop_take(error));
+        REQUIRE(run_until([&] {
+            auto a = producer.snapshot();
+            return a.session == SessionState::Ready && a.take.peer_finalised &&
+                   performer.snapshot().session == SessionState::Ready;
+        }));
+    }
+
+    static std::optional<rr::xfer::TransferView> view(const ControllerSnapshot& s, std::uint32_t take) {
+        for (const auto& v : s.transfers) {
+            if (v.take_id == take) {
+                return v;
+            }
+        }
+        return std::nullopt;
+    }
+
+    bool ended(SessionController& c, std::uint32_t take) {
+        const auto v = view(c.snapshot(), take);
+        return v && rr::xfer::transfer_state_final(v->state);
+    }
+};
+
+}  // namespace
+
+TEST_CASE("Stage 11: one producer request gives a VERIFIED copy; the performer's original is unchanged", "[control][stage11]") {
+    XferPair p;
+    p.connect_and_ready();
+    p.performer.set_delivery_consent(true);
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().peer_delivery_consent; }));
+    p.record_one_take();
+    const auto original = bytes_of(p.last_file);
+    REQUIRE(original.size() > 44);
+    std::string error;
+    REQUIRE(p.producer.request_transfer(1, error));
+    CHECK(p.producer.snapshot().protocol_minor == 2);
+    REQUIRE(p.run_until([&] { return p.ended(p.producer, 1) && p.ended(p.performer, 1); }, 10000ms));
+    const auto prod = *XferPair::view(p.producer.snapshot(), 1);
+    const auto perf = *XferPair::view(p.performer.snapshot(), 1);
+    CHECK(prod.state == rr::xfer::TransferState::Verified);
+    CHECK(perf.state == rr::xfer::TransferState::Verified);
+    CHECK(prod.frames == p.producer.snapshot().take.peer_frames);
+    CHECK(prod.frames_vs_report == "match");
+    CHECK(perf.source_unchanged);
+    CHECK(bytes_of(std::filesystem::u8path(prod.file)) == original);
+    CHECK(bytes_of(p.last_file) == original);
+    // Record works again once the transfer has ended.
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().session == SessionState::Ready; }));
+}
+
+TEST_CASE("Stage 11: without the performer's delivery consent the request is refused", "[control][stage11]") {
+    XferPair p;
+    p.connect_and_ready();
+    p.record_one_take();
+    std::string error;
+    REQUIRE(p.producer.request_transfer(1, error));
+    REQUIRE(p.run_until([&] { return p.ended(p.producer, 1); }));
+    const auto prod = *XferPair::view(p.producer.snapshot(), 1);
+    CHECK(prod.state == rr::xfer::TransferState::Failed);
+    CHECK(prod.detail.find("performer refused") != std::string::npos);
+    CHECK(p.performer.snapshot().transfers.empty());
+}
+
+TEST_CASE("Stage 11: requests are refused before TAKE_FINALISED and while recording; a transfer blocks Record", "[control][stage11]") {
+    XferPair p;
+    p.connect_and_ready();
+    p.performer.set_delivery_consent(true);
+    std::string error;
+    CHECK_FALSE(p.producer.request_transfer(1, error));  // no take yet
+    CHECK(error.find("not been reported finalised") != std::string::npos);
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().session == SessionState::Recording; }));
+    CHECK_FALSE(p.producer.request_transfer(1, error));
+    CHECK(error.find("being recorded") != std::string::npos);
+    REQUIRE(p.producer.stop_take(error));
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Ready && p.producer.snapshot().take.peer_finalised;
+    }));
+    REQUIRE(p.producer.request_transfer(1, error));
+    CHECK_FALSE(p.producer.request_transfer(1, error));  // duplicate while queued
+    p.producer.poll();  // the performer has not seen the request yet: the transfer is QUEUED
+    CHECK(p.producer.snapshot().session == SessionState::NotReady);
+    CHECK_FALSE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.ended(p.producer, 1); }, 10000ms));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().session == SessionState::Ready; }));
+}
+
+TEST_CASE("Stage 11: automatic transfer after each take", "[control][stage11]") {
+    XferPair p;
+    p.producer.set_auto_transfer(true);
+    p.connect_and_ready();
+    p.performer.set_delivery_consent(true);
+    p.record_one_take();
+    REQUIRE(p.run_until([&] { return p.ended(p.producer, 1); }, 10000ms));
+    CHECK(XferPair::view(p.producer.snapshot(), 1)->state == rr::xfer::TransferState::Verified);
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().session == SessionState::Ready; }));
+    p.record_one_take();
+    REQUIRE(p.run_until([&] { return p.ended(p.producer, 2); }, 10000ms));
+    CHECK(XferPair::view(p.producer.snapshot(), 2)->state == rr::xfer::TransferState::Verified);
 }

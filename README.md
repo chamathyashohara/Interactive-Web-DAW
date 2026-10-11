@@ -13,8 +13,24 @@ v2 §4.1).
 
 ## Status
 
-**Stage 9 (coordinated recording state and scheduled start/stop) is implemented.** Version 0.1.0, control protocol 1.1.
-Stages 4–8 (local recording, monitoring, diagnostics, session control, live audio) remain as before.
+**Stage 11 (verified post-session take transfer) is implemented.** Version 0.1.0, control protocol 1.2.
+Stage 10 (studio interfaces) has **not** been started: its precondition, a tested two-PC workflow, is not met. Stages 4–9 remain as before.
+
+### Stage 11: verified take transfer
+- **Implemented:**
+  - after a take, the producer asks for a **copy** of the performer's original WAV, which is never moved or changed: opened read-only, with writers refused, and hashed before and after;
+  - the copy travels on its own TCP connection (control port + 2) in 32 KiB chunks, each with a SHA-256, then the whole file's SHA-256 is recomputed from the producer's disk (Windows CNG, no custom crypto);
+  - **VERIFIED** only when the hash matches **and** the WAV parses with the offered format and the frame count from the performer's TAKE_FINALISED;
+  - resume after a break from a journal; wrong session/take/token refused; the producer names the file itself and never overwrites; duplicates answered "already verified";
+  - states queued / transferring / paused-retrying / verifying / VERIFIED / FAILED on both PCs; performer delivery consent; Record unavailable while a copy is moving.
+- **Verified on the development PC** (GCC; two processes over loopback; real input device; 8 scenarios: normal, cut by either side, duplicate, damaged chunk, whole-file mismatch, wrong session, no consent):
+  - all 6 copies byte-identical to their originals (Python `hashlib`), structurally valid, opened by Windows MCI with the right length;
+  - every original unchanged; nothing written in the refused cases; no token or pairing code in the logs.
+  - See `docs/testing/evidence/2026-10-11_devpc_stage11_transfer_runs.txt`.
+- **Not verified:** two PCs (real network, Wi-Fi, firewall), the Qt transfer table and MSVC, audible playback (the input is muted).
+- **Security:** still a LAN-only, unencrypted prototype (ADR-012). The transfer token prevents accidents, not attacks.
+
+See [SESSION_TEST_PROTOCOL §5](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §15](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-020](docs/architecture/adr/ADR-020-verified-take-transfer.md).
 
 ### Stage 9: coordinated recording
 - **Implemented:**

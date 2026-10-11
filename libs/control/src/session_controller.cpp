@@ -35,6 +35,7 @@ bool carries_session(MsgType t) {
         case MsgType::Arm: case MsgType::ArmAck: case MsgType::ScheduleStart: case MsgType::StartAck:
         case MsgType::TakeStarted: case MsgType::Cancel: case MsgType::StopSchedule: case MsgType::StopAck:
         case MsgType::LocalStop: case MsgType::TakeFinalised:
+        case MsgType::TransferRequest: case MsgType::TransferAck:
             return true;
         default:
             return false;
@@ -185,6 +186,9 @@ bool SessionController::join(const std::string& host, std::uint16_t port, const 
     }
     bind_address_ = host;
     port_number_ = port;
+    if (!sender_) {
+        sender_ = std::make_unique<xfer::TakeSender>(cfg_.transfer_sender, log_);  // idle until a request
+    }
     link_state_ = LinkState::Connecting;  // until the link's own events arrive in poll()
     last_error_.clear();
     log_.log(log::Level::Info, "session", "join_started", "joining",
@@ -207,6 +211,7 @@ void SessionController::release_finished_link() {
     peer_consent_ = false;
     session_id_.clear();
     report_queue_.clear();
+    stop_transfers();
 }
 
 void SessionController::set_consent(bool given) {
@@ -230,6 +235,7 @@ void SessionController::leave() {
     }
     link_->stop(ErrorCode::UserStop);
     link_.reset();
+    stop_transfers();
     link_state_ = LinkState::Disconnected;
     apply(SessionEvent::LinkLost, "left the session");
     peer_ready_ = false;
@@ -240,6 +246,7 @@ void SessionController::leave() {
 }
 
 void SessionController::shutdown() {
+    stop_transfers();
     if (link_) {
         link_->stop(ErrorCode::Shutdown);
         link_.reset();
@@ -292,7 +299,7 @@ void SessionController::send_status(bool force) {
     if (!link_ || link_state_ != LinkState::Connected) {
         return;
     }
-    const std::string payload = std::to_string(local_ready_) + std::to_string(consent_) +
+    const std::string payload = std::to_string(local_ready_) + std::to_string(consent_) + std::to_string(delivery_consent_) +
                                 std::to_string(static_cast<int>(state_)) + join_reasons(reasons_) +
                                 encode_checks(local_checks_);
     const std::int64_t now = time::monotonic_ns();
@@ -306,6 +313,9 @@ void SessionController::send_status(bool force) {
     f.set_u8(Tag::State, static_cast<std::uint8_t>(state_));
     f.set_str(Tag::Reasons, join_reasons(reasons_));
     f.set_str(Tag::ReadyChecks, encode_checks(local_checks_));
+    if (cfg_.role == Role::Performer) {
+        f.set_u8(Tag::DeliveryConsent, delivery_consent_ ? 1 : 0);
+    }
     if (send(std::move(f))) {
         last_status_payload_ = payload;
         last_status_ns_ = now;
@@ -334,6 +344,11 @@ void SessionController::update_readiness() {
     if (!consent_) {
         reasons_.emplace_back("recording consent not given");
     }
+    const bool transferring = (receiver_ && receiver_->any_active()) || (sender_ && sender_->busy());
+    if (transferring) {
+        reasons_.emplace_back(cfg_.role == Role::Producer ? "a take transfer is running (Record is available when it ends)"
+                                                          : "sending a take to the producer");
+    }
     if (!link_) {
         reasons_.emplace_back(cfg_.role == Role::Producer ? "no session created" : "not joined to a session");
     } else if (link_state_ != LinkState::Connected) {
@@ -349,7 +364,7 @@ void SessionController::update_readiness() {
         reasons_.emplace_back("measuring clock offset to the producer");
     }
     // Readiness reported to the peer means "this side could record" (excluding the peer).
-    local_ready_ = local.ok && consent_ && link_ && link_state_ == LinkState::Connected &&
+    local_ready_ = local.ok && consent_ && !transferring && link_ && link_state_ == LinkState::Connected &&
                    (cfg_.role == Role::Producer || link_->stats().offset_samples >= cfg_.min_offset_samples);
     const bool ready = reasons_.empty();
     if (state_ == SessionState::NotReady || state_ == SessionState::Ready || state_ == SessionState::Completed) {
@@ -480,6 +495,7 @@ void SessionController::poll() {
         handle_port_event(e);
     }
     check_timers();
+    poll_transfers();
     update_readiness();
     send_status(false);
 }
@@ -579,6 +595,7 @@ void SessionController::handle_frame(const Frame& f) {
         peer_consent_ = f.u8(Tag::Consent).value_or(0) != 0;
         peer_reasons_ = f.str(Tag::Reasons).value_or("");
         peer_checks_ = decode_checks(f.str(Tag::ReadyChecks).value_or(""));
+        peer_delivery_consent_ = f.u8(Tag::DeliveryConsent).value_or(0) != 0;
         return;
     }
     if (carries_session(f.type) && !session_id_.empty()) {
@@ -723,9 +740,26 @@ void SessionController::producer_frame(const Frame& f) {
         stop_owed_ = false;
         take_.peer_status = static_cast<TakeStatus>(f.u8(Tag::Status).value_or(0));
         take_.peer_frames = f.u64(Tag::Frames).value_or(0);
+        finished_takes_[take] = FinishedTake{take_.peer_status, take_.peer_frames, {}};
+        if (cfg_.auto_transfer) {
+            auto_queue_.push_back(take);  // requested once this take has ended on both PCs
+        }
         history(tag + "performer's take " + std::string(take_status_name(take_.peer_status)) + ", " +
                 std::to_string(take_.peer_frames) + " frames");
         maybe_complete();
+        return;
+    case MsgType::TransferAck:
+        if (f.u8(Tag::Accepted).value_or(0) != 0) {
+            history(tag + "performer is sending its take (copy; its original stays on the performer's PC)");
+        } else {
+            const auto code = static_cast<ErrorCode>(f.u16(Tag::ErrorCode).value_or(0));
+            const std::string why = "performer refused: " + std::string(error_code_name(code)) + ": " +
+                                    f.str(Tag::ErrorText).value_or("");
+            history(tag + "transfer " + why);
+            if (receiver_) {
+                receiver_->cancel(take, why);
+            }
+        }
         return;
     default:
         ++refused_;
@@ -886,6 +920,9 @@ void SessionController::performer_frame(const Frame& f) {
         history("take " + std::to_string(take) + ": stop scheduled by the producer");
         return;
     }
+    case MsgType::TransferRequest:
+        performer_transfer_request(f);
+        return;
     default:
         ++refused_;
         refuse(f, ErrorCode::ProtocolMalformed, "message not valid for the performer");
@@ -956,6 +993,9 @@ void SessionController::handle_port_event(const PortEvent& e) {
     apply(SessionEvent::LocalFinalised, "local take " + std::string(take_status_name(e.status)));
     history(tag + "LOCAL take " + std::string(take_status_name(e.status)) + (e.finalised ? " (finalised)" : " (NOT finalised)") +
             ", " + std::to_string(e.frames) + " frames" + (e.error.empty() ? "" : ", " + e.error));
+    if (cfg_.role == Role::Performer && e.finalised) {
+        finished_takes_[e.take_id] = FinishedTake{e.status, e.frames, e.file};  // candidate for transfer
+    }
     if (cfg_.role == Role::Performer) {
         Frame f;
         f.type = MsgType::TakeFinalised;
@@ -1145,6 +1185,199 @@ void SessionController::log_take_timing(const std::string& outcome) {
             std::to_string(t.local_late_frames) + " late frames), " + std::to_string(t.local_frames) + " frames, " + outcome);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Stage 11: take transfer. The control link only carries the request and its answer; the file
+// moves on its own TCP connection (rr_transfer), so control messages are never delayed by it.
+
+void SessionController::set_auto_transfer(bool on) {
+    cfg_.auto_transfer = on;
+}
+
+void SessionController::set_delivery_consent(bool given) {
+    if (delivery_consent_ != given) {
+        delivery_consent_ = given;
+        history(given ? "allowed the producer to receive copies of this PC's takes"
+                      : "no longer allows copies of this PC's takes to be sent");
+        log_.log(log::Level::Info, "transfer", given ? "delivery_consent_given" : "delivery_consent_withdrawn",
+                 given ? "performer allows take copies to be sent" : "performer withdrew permission to send take copies");
+        send_status(true);
+    }
+}
+
+bool SessionController::ensure_receiver(std::string& error) {
+    if (receiver_ && receiver_->running()) {
+        return true;
+    }
+    xfer::ReceiverParams p;
+    p.bind_address = bind_address_;
+    p.port = static_cast<std::uint16_t>(port_number_ + 2);  // control + 2 (media is control + 1)
+    p.session_id = session_id_;
+    p.resume_wait_ms = cfg_.transfer_resume_wait_ms;
+    receiver_ = std::make_unique<xfer::TakeReceiver>(p, log_);
+    if (!receiver_->start(error)) {
+        error = "cannot open the take-transfer port " + std::to_string(p.port) + ": " + error;
+        receiver_.reset();
+        return false;
+    }
+    return true;  // the receiver itself reports "transfer listener on ..." in the history
+}
+
+bool SessionController::request_transfer(std::uint32_t take_id, std::string& error) {
+    if (cfg_.role != Role::Producer) {
+        error = "only Producer Studio requests take copies";
+        return false;
+    }
+    if (!link_ || link_state_ != LinkState::Connected) {
+        error = "the performer is not connected";
+        return false;
+    }
+    const net::JoinInfo info = link_->join_info();
+    if (info.protocol_minor < 2) {
+        error = "the performer's app does not support take transfer (control protocol 1." +
+                std::to_string(info.protocol_minor) + "; 1.2 needed)";
+        return false;
+    }
+    if (take_running(state_) || state_ == SessionState::Armed || state_ == SessionState::Scheduled) {
+        error = "a take is being recorded; request the copy after it";
+        return false;
+    }
+    const auto it = finished_takes_.find(take_id);
+    if (it == finished_takes_.end()) {
+        error = "take " + std::to_string(take_id) + " has not been reported finalised by the performer";
+        return false;
+    }
+    std::filesystem::path dir = port_.session_folder();
+    if (!dir.empty()) {
+        dir /= "from_performer";
+    } else if (!cfg_.received_root.empty()) {
+        dir = cfg_.received_root / session_id_ / "from_performer";
+    } else {
+        error = "no folder for received takes (record a take on this PC first)";
+        return false;
+    }
+    if (!ensure_receiver(error)) {
+        return false;
+    }
+    receiver_->set_allowed_peer(info.peer_address);
+    std::string token;
+    if (!receiver_->expect(take_id, it->second.frames, dir, token, error)) {
+        return false;
+    }
+    Frame f;
+    f.type = MsgType::TransferRequest;
+    f.set_u32(Tag::TakeId, take_id);
+    f.set_u16(Tag::TransferPort, receiver_->port());
+    f.set_str(Tag::TransferToken, token);  // never logged
+    if (!send(std::move(f))) {
+        receiver_->cancel(take_id, "the request could not be sent (control link down)");
+        error = "the request could not be sent";
+        return false;
+    }
+    history("take " + std::to_string(take_id) + ": copy requested from the performer (QUEUED; the original stays on the performer's PC)");
+    log_.log(log::Level::Info, "transfer", "requested", "take copy requested",
+             {{"take", std::to_string(take_id)}, {"port", std::to_string(receiver_->port())},
+              {"expected_frames", std::to_string(it->second.frames)}, {"token", "<redacted>"}});
+    return true;
+}
+
+void SessionController::cancel_transfer(std::uint32_t take_id) {
+    if (receiver_) {
+        receiver_->cancel(take_id, "cancelled by the producer");
+        history("take " + std::to_string(take_id) + ": transfer cancelled by the producer");
+    }
+}
+
+void SessionController::performer_transfer_request(const Frame& f) {
+    const std::uint32_t take = f.u32(Tag::TakeId).value_or(0);
+    const std::uint16_t xport = f.u16(Tag::TransferPort).value_or(0);
+    const std::string token = f.str(Tag::TransferToken).value_or("");
+    const std::string tag = "take " + std::to_string(take) + ": ";
+    auto no = [&](ErrorCode code, const std::string& text) {
+        reply(MsgType::TransferAck, f.msg_id, take, false, code, text);
+        refuse(f, code, text);
+    };
+    if (!delivery_consent_) {
+        no(ErrorCode::TransferRefused, "the performer has not allowed copies of its takes to be sent");
+        return;
+    }
+    if (take_running(state_) || state_ == SessionState::Armed || state_ == SessionState::Scheduled) {
+        no(ErrorCode::Busy, "recording in progress; ask again after the take");
+        return;
+    }
+    const auto it = finished_takes_.find(take);
+    if (it == finished_takes_.end() || it->second.file.empty()) {
+        no(ErrorCode::UnknownTake, "no finalised take with this id on the performer's PC");
+        return;
+    }
+    bool hex = token.size() == 32;
+    for (const char ch : token) {
+        hex = hex && ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'));
+    }
+    if (!hex || xport == 0 || !link_) {
+        no(ErrorCode::ProtocolMalformed, "malformed transfer request");
+        return;
+    }
+    if (!sender_) {
+        sender_ = std::make_unique<xfer::TakeSender>(cfg_.transfer_sender, log_);
+    }
+    xfer::SendJob job;
+    job.host = link_->join_info().peer_address;
+    job.port = xport;
+    job.session_id = session_id_;
+    job.token = token;
+    job.take_id = take;
+    job.file = std::filesystem::u8path(it->second.file);
+    job.take_status = static_cast<std::uint8_t>(it->second.status);
+    std::string error;
+    if (!sender_->start(job, error)) {
+        no(ErrorCode::Busy, error);
+        return;
+    }
+    reply(MsgType::TransferAck, f.msg_id, take, true, ErrorCode::Ok, {});
+    history(tag + "producer asked for a copy; sending it (the original stays here, opened read-only)");
+    log_.log(log::Level::Info, "transfer", "send_started", "sending a copy of the take",
+             {{"take", std::to_string(take)}, {"port", std::to_string(xport)}, {"token", "<redacted>"}});
+}
+
+void SessionController::poll_transfers() {
+    auto take_lines = [this](std::vector<std::string> lines) {
+        for (auto& l : lines) {
+            history_.push_back(std::move(l));  // already time-stamped
+            if (history_.size() > 300) {
+                history_.pop_front();
+            }
+        }
+    };
+    if (receiver_) {
+        take_lines(receiver_->take_history());
+    }
+    if (sender_) {
+        take_lines(sender_->take_history());
+    }
+    if (cfg_.role == Role::Producer && !auto_queue_.empty() && !take_running(state_) &&
+        state_ != SessionState::Armed && state_ != SessionState::Scheduled && link_state_ == LinkState::Connected &&
+        !(receiver_ && receiver_->any_active())) {
+        const std::uint32_t take = auto_queue_.front();
+        auto_queue_.pop_front();
+        std::string error;
+        if (!request_transfer(take, error)) {
+            history("take " + std::to_string(take) + ": automatic copy not requested: " + error);
+        }
+    }
+}
+
+void SessionController::stop_transfers() {
+    if (sender_) {
+        sender_->stop();
+        sender_.reset();
+    }
+    if (receiver_) {
+        receiver_->stop();
+        receiver_.reset();
+    }
+    auto_queue_.clear();
+}
+
 ControllerSnapshot SessionController::snapshot() const {
     ControllerSnapshot s;
     s.role = cfg_.role;
@@ -1177,6 +1410,16 @@ ControllerSnapshot SessionController::snapshot() const {
     s.refused_messages = refused_;
     s.duplicate_messages = duplicates_;
     s.recorder_description = port_.description();
+    if (receiver_) {
+        s.transfers = receiver_->transfers();
+        s.transfer_port = receiver_->port();
+    } else if (sender_) {
+        s.transfers = sender_->transfers();
+    }
+    s.delivery_consent = delivery_consent_;
+    s.peer_delivery_consent = peer_delivery_consent_;
+    s.auto_transfer = cfg_.auto_transfer;
+    s.protocol_minor = link_ ? link_->join_info().protocol_minor : 0;
     return s;
 }
 

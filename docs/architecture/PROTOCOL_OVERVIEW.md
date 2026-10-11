@@ -173,6 +173,7 @@ S = producer (Studio), R = performer. "Req." lists the required fields.
 | 20 | E_TRANSFER_HASH_MISMATCH | XFER |
 | 21 | E_TRANSFER_REFUSED | XFER (no consent, name rejected) |
 | 22 | E_INTERNAL | Bug or invariant violation (always logged) |
+| 23 | E_TRANSFER_INVALID_FILE | XFER (Stage 11): the received copy is not a complete WAV matching the offer and the TAKE_FINALISED report |
 
 ### 6.2 Take status (metadata, TAKE_FINALISED, verification report)
 | Status | Meaning |
@@ -386,3 +387,30 @@ Decision: ADR-019. **1.1 = 1.0 plus optional fields.** A 1.0 peer ignores them (
 | Stop while stopping/finalising | The producer refuses locally. A duplicate STOP_SCHEDULE is answered idempotently. |
 
 Timing record: each PC logs one `take_timing` JSONL record per take (ADR-019). It uses that PC's monotonic clock and never mixes clocks, except in the producer's start-offset *estimate*, which is converted with θ.
+
+## 15. Control protocol 1.2 and the take-transfer connection RRXF v1 (Stage 11, authoritative)
+
+Decision: ADR-020. **1.2 = 1.1 plus two messages and three optional tags.** The producer sends TRANSFER_REQUEST only when the agreed minor version (min of both HELLOs) is 2 or more. A 1.1 performer would treat an unknown message type as an error (§5), so it is never sent one.
+
+| Addition (control link) | Rule |
+|---|---|
+| `TRANSFER_REQUEST` 0x0060, S→R | Required: TakeId, `TransferPort` (tag 34, u16), `TransferToken` (tag 35, 32 hex, **never logged**), plus SessionId (1.1 rule). Sent only for a take whose TAKE_FINALISED arrived, never while a take is armed/scheduled/recording. |
+| `TRANSFER_ACK` 0x0061, R→S | Required: TakeId, Accepted. Refusal codes: `TransferRefused` (no delivery consent), `Busy` (recording, or another transfer running), `UnknownTake` (no finalised file), `ProtocolMalformed`. |
+| Tag 36 `DeliveryConsent` (u8) in READY_STATUS | The performer allows copies of its takes (XFER-05). Absent = not allowed. |
+| Error code 23 `E_TRANSFER_INVALID_FILE` | The received copy's hash matched but it is not a complete WAV matching the offer and TAKE_FINALISED. |
+
+**Transfer connection:** TCP from the performer to the producer's selected interface, port = control port + 2 (52002). One connection at a time, only from the joined performer's address. Frame: `u32 length (4 .. 65 580) | u16 type | u16 0 | payload`, big-endian, every payload checked to its exact length.
+
+| Type | Dir | Payload | Notes |
+|---|---|---|---|
+| 1 HELLO | R→P | u32 magic "RRXF", u16 version 1, 8 B session id, 32 B token, u32 take | Wrong session, unknown take or wrong token: ABORT, nothing written |
+| 2 OFFER | R→P | u32 take, u64 bytes, u32 chunk bytes (1024–65536), u32 chunks, 32 B SHA-256 (file), u32 rate, u16 channels, u16 bits, u16 WAV format tag, u64 frames, u8 take status, u16 n + name (≤ 128, display only) | Checked against TAKE_FINALISED frames; a later OFFER must equal the first |
+| 3 RESUME | P→R | u32 take, u32 next chunk needed, u16 code (0 = go), u16 n + text | next > 0 = resume from the journal |
+| 4 CHUNK | R→P | u32 index, u32 n (1–65536), 32 B SHA-256 (chunk), n bytes | Must arrive in order; length must match its position |
+| 5 ACK | P→R | u32 next chunk expected | After flush + journal (every 16 chunks and at the end) |
+| 6 NACK | P→R | u32 resend-from index, u16 reason | Chunk hash mismatch; the producer drops chunks (and a DONE) until the resent one arrives |
+| 7 DONE | R→P | u32 take | All chunks sent |
+| 8 RESULT | P→R | u32 take, u16 code (0 = VERIFIED, `TransferHashMismatch`, `TransferInvalidFile`, …), u8 already-verified, u16 n + text | VERIFIED only after the whole-file SHA-256 of the bytes on disk and the WAV checks pass |
+| 9 ABORT | either | u16 code, u16 n + text | The sender closes the connection |
+
+Timeouts (prov.): HELLO/OFFER 5 s; no data while receiving 10 s; performer reply 10 s; producer keeps a QUEUED or PAUSED transfer 60 s; performer retries every 1 s for up to 60 s. Retry after a whole-file mismatch: once, from chunk 0.

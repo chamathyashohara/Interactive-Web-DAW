@@ -165,11 +165,11 @@ is met without it.
 
 | ID | Pri | Requirement: user-visible behaviour | Rationale / trace | Test | Evidence | Status |
 |---|---|---|---|---|---|---|
-| XFER-01 | COULD | After a take is finalised, the performer's app can send a **copy** to the producer over a reliable connection (TCP). The original on the performer's PC is never changed or deleted. | BRIEF ("later stage"), RO FR8 | T-18 | E-HASH, E-SCR | Not started |
-| XFER-02 | COULD, **but mandatory if XFER-01 is built** | The performer computes the SHA-256 of the whole file. The producer checks it and labels the copy **"Verified copy"** only if it matches. Otherwise it retries, then shows "Copy failed, original still on the performer's PC". | BRIEF (integrity checks, final verification), A0-G8 | T-18 | E-HASH | Not started |
-| XFER-03 | COULD, mandatory if XFER-01 is built | The producer chooses the received file's name itself and never overwrites an existing file | A0 (Rust allowlist idea), security | T-18 | E-SCR | Not started |
-| XFER-04 | LATER | Chunked transfer with per-chunk checks and resume after interruption | BRIEF (retry/resume) | — | — | Not started |
-| XFER-05 | COULD | The performer agrees to delivery, at session level or per take (OQ-10) | Consent | T-18 | E-SCR | Not started |
+| XFER-01 | COULD | After a take is finalised, the performer's app can send a **copy** to the producer over a reliable connection (TCP). The original on the performer's PC is never changed or deleted. | BRIEF ("later stage"), RO FR8 | T-18 | E-HASH, E-SCR | Implemented in Stage 11 (ADR-020); tested on one PC, two PCs not run |
+| XFER-02 | COULD, **but mandatory if XFER-01 is built** | The performer computes the SHA-256 of the whole file. The producer checks it and labels the copy **"Verified copy"** only if it matches. Otherwise it retries, then shows "Copy failed, original still on the performer's PC". | BRIEF (integrity checks, final verification), A0-G8 | T-18 | E-HASH | Implemented in Stage 11 (ADR-020); tested on one PC, two PCs not run |
+| XFER-03 | COULD, mandatory if XFER-01 is built | The producer chooses the received file's name itself and never overwrites an existing file | A0 (Rust allowlist idea), security | T-18 | E-SCR | Implemented in Stage 11 (ADR-020); tested on one PC, two PCs not run |
+| XFER-04 | LATER | Chunked transfer with per-chunk checks and resume after interruption | BRIEF (retry/resume) | — | — | Implemented in Stage 11 (ADR-020); tested on one PC, two PCs not run |
+| XFER-05 | COULD | The performer agrees to delivery, at session level or per take (OQ-10) | Consent | T-18 | E-SCR | Implemented in Stage 11 (ADR-020); tested on one PC, two PCs not run |
 
 ## 14. Security disclosure (SEC) and research honesty (RES)
 

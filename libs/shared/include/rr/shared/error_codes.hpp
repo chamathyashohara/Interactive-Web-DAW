@@ -33,9 +33,10 @@ enum class ErrorCode : std::uint16_t {
     TransferHashMismatch = 20,
     TransferRefused = 21,
     Internal = 22,
+    TransferInvalidFile = 23,  // Stage 11: received copy is not the WAV that was offered
 };
 
-inline constexpr std::array<ErrorCode, 23> kAllErrorCodes = {
+inline constexpr std::array<ErrorCode, 24> kAllErrorCodes = {
     ErrorCode::Ok, ErrorCode::ProtocolMalformed, ErrorCode::VersionUnsupported,
     ErrorCode::BadPairingCode, ErrorCode::SessionFull, ErrorCode::WrongRole,
     ErrorCode::NotReady, ErrorCode::NoConsent, ErrorCode::ArmTooLate,
@@ -43,7 +44,7 @@ inline constexpr std::array<ErrorCode, 23> kAllErrorCodes = {
     ErrorCode::DiskSpace, ErrorCode::DiskWrite, ErrorCode::Timeout,
     ErrorCode::Cancelled, ErrorCode::UnknownTake, ErrorCode::UserStop,
     ErrorCode::SafetyLimit, ErrorCode::Shutdown, ErrorCode::TransferHashMismatch,
-    ErrorCode::TransferRefused, ErrorCode::Internal,
+    ErrorCode::TransferRefused, ErrorCode::Internal, ErrorCode::TransferInvalidFile,
 };
 
 // Protocol name, e.g. "E_DISK_WRITE" ("OK" for Ok, "E_UNKNOWN_CODE" otherwise).

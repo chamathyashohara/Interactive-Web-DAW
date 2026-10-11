@@ -118,6 +118,9 @@ with a test recorder (no audio) or `--audio`. Run two instances (two terminals, 
 
 See `docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md`. The producer PC needs inbound UDP on the media port (control port + 1) on the Private profile; see §3 of that document.
 
+## 4e. Take transfer check without the GUI (Stage 11)
+`rr_session_probe.exe` with `--allow-delivery` (performer) and the script commands `transfer <take>; wait-transfer <take> 60 VERIFIED` (producer) requests a verified copy of the performer's take over the transfer connection (control port + 2). Fault injection for tests: `--xfer-drop-after`, `--xfer-corrupt-chunk`, `--xfer-corrupt-whole`, `--xfer-wrong-session`. See `docs/testing/SESSION_TEST_PROTOCOL.md` §5.
+
 ## 5. Dependencies and how they are acquired
 See `third_party/README.md`.
 - **Catch2:** fetched at configure time and **checked against a pinned SHA-256**. To build offline:
@@ -128,6 +131,7 @@ See `third_party/README.md`.
   The source-dir override skips the hash check, so check the archive yourself in step 2.
 - **libopus 1.6.1** (Stage 7, `cmake/RrOpus.cmake`): fetched at configure time from `https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz` and **checked against SHA-256 `6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`**, as published in `https://downloads.xiph.org/releases/opus/SHA256SUMS.txt`. To build offline, follow the Catch2 steps with `-DFETCHCONTENT_SOURCE_DIR_OPUS=<unpacked folder>`.
 - **Qt:** installed manually (§1). Never committed.
+- **Windows CNG (`bcrypt.lib`, Stage 11):** part of the Windows SDK, linked by `rr_transfer` for SHA-256. Nothing to download.
 
 ## 6. Options
 | CMake option | Default | Meaning |

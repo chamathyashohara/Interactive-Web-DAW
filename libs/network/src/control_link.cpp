@@ -619,6 +619,7 @@ void ControlLink::server_handle_handshake(Frame& f) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             join_.peer_app_version = f.str(Tag::AppVersion).value_or("");
+            join_.protocol_minor = std::min<std::uint16_t>(kProtocolMinor, minor);
         }
         Frame ack;
         ack.type = MsgType::HelloAck;
@@ -724,6 +725,7 @@ void ControlLink::client_handle_handshake(Frame& f) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             join_.peer_app_version = f.str(Tag::AppVersion).value_or("");
+            join_.protocol_minor = std::min<std::uint16_t>(kProtocolMinor, f.u16(Tag::ProtoMinor).value_or(0));
         }
         Frame join;
         join.type = MsgType::Join;

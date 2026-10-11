@@ -50,6 +50,7 @@ add_subdirectory(libs/shared)
 add_subdirectory(libs/session)
 add_subdirectory(libs/audio)
 add_subdirectory(libs/network)
+add_subdirectory(libs/transfer)   # Stage 11: verified take transfer
 add_subdirectory(libs/control)
 include(RrOpus)              # libopus 1.6.1, pinned by SHA-256 (ADR-006, ADR-017)
 add_subdirectory(libs/media)

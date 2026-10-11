@@ -76,6 +76,13 @@ Do **not** disable the firewall, allow the Public or Domain profile, open port r
 
 **Stage 7:** live audio also needs inbound **UDP** on the media port (control port + 1, 52001 by default) on the producer PC, Private profile only. See LIVE_AUDIO_TEST_PROTOCOL §3.
 
+**Stage 11:** take copies need inbound **TCP** on the transfer port (control port + 2, 52002 by default) on the producer PC, Private profile only. The performer PC needs no rule (it connects out). The narrow rule, again **not run during development** and only for the researcher to run deliberately:
+```powershell
+New-NetFirewallRule -DisplayName "ProducerStudio take transfer (TCP 52002, Private)" `
+  -Direction Inbound -Protocol TCP -LocalPort 52002 -Profile Private -Action Allow `
+  -Program "C:\path\to\ProducerStudio.exe"
+```
+
 Troubleshooting a failed join:
 - **"connection refused" (WSA 10061):** wrong address or port, or no session created.
 - **"timed out":** often the firewall or the Public profile. Check the profile and the rule.
@@ -116,3 +123,33 @@ Preconditions: as §2. Both PCs have the input open; the input and output are at
 7. **Disconnect before the start:** Record, then unplug the performer's cable during the countdown. Expect no recording; this is detected only if the loss is noticed before the start (≤ 3 s, ADR-019).
 8. Play every take on each PC in a media player, and run `verify_take_wav.py` on them.
 9. **Measured start offset across PCs:** play one shared click (a hand clap near both microphones, or a tone in both headsets) during a take. Measure the offset between the two files by cross-correlation (LATER-04 tool not yet built: do it by hand in an audio editor and record the method). Report it next to the app's *estimated* offset ± u, with the test conditions (network, distance of the source to each microphone, interfaces). Do not report the estimate as the measurement.
+
+## 5. Stage 11: verified take transfer (evidence `2026-10-11_devpc_stage11_transfer_runs.txt`)
+
+### 5.1 On one PC with the real input device (done on the development PC, 11 Oct 2026)
+Script: two `rr_session_probe` processes over loopback, `--audio` on both (WASAPI, microphone endpoint muted in Windows, so the takes are near-silent), one take of about 20 s each, then `transfer 1`. Each scenario was a fresh session:
+
+| Run | Injected condition | Expected and observed |
+|---|---|---|
+| X1 | none | VERIFIED, 1 connection |
+| X2 | performer cuts the connection after 100 chunks (`--xfer-drop-after 100`) | PAUSED, resumed from chunk 100, VERIFIED |
+| X3 | producer cuts the connection after 80 chunks | PAUSED, resumed from chunk 80, VERIFIED |
+| X4 | the same take requested twice | second answer "already verified", nothing rewritten |
+| X5 | chunk 5 damaged after hashing (`--xfer-corrupt-chunk 5`) | chunk rejected (NACK), resent, VERIFIED |
+| X6 | chunk 3 altered before hashing (`--xfer-corrupt-whole 3`) | whole-file SHA-256 MISMATCH, copy set aside, resent, VERIFIED |
+| X7 | HELLO with another session id (`--xfer-wrong-session`) | refused, nothing written, FAILED after 60 s |
+| X8 | performer has not allowed copies | refused (`E_TRANSFER_REFUSED`), nothing written |
+
+Independent checks (`scratchpad` script, results in the evidence): Python `hashlib` SHA-256 of every original and copy, `tools/audit/verify_take_wav.py` on every copy, Windows MCI open/length, the app's pre-send hash against `hashlib` after the run, and a search of the logs for tokens and pairing codes.
+
+### 5.2 On two PCs (NOT YET RUN)
+Preconditions: §2 and the Stage 11 firewall note in §3. Performer: tick **Allow the producer to receive a verified copy of my takes**.
+1. Record one take (§4.2 step 3). Producer: **Get verified copy of the performer's last take**.
+   - Both PCs show QUEUED → TRANSFERRING → VERIFYING → **VERIFIED COPY** (producer) / VERIFIED (performer).
+   - Record is unavailable on the producer while the copy is moving.
+2. On the producer, play the copy in a media player and check its duration against the performer's take. Run `verify_take_wav.py` on it.
+3. On both PCs compute `certutil -hashfile <file> SHA256` for the original and the copy and compare (E-HASH).
+4. **Interrupted:** record a long take (5 min), request the copy and unplug the performer's network cable for 10 s halfway. Expect PAUSED / RETRYING, then "resumed from chunk N" and VERIFIED. Repeat with the cable out for more than 60 s: expect FAILED with "the original is still on the performer's PC", then request again and expect a resume from the kept chunks.
+5. **Duplicate:** request the same take again: "already verified", no second file.
+6. **No consent:** untick the performer's checkbox and request: refused, nothing written.
+7. Record the network (wired/Wi-Fi), the file size and the transfer time. Do not present one measurement as a throughput figure.

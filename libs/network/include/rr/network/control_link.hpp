@@ -98,6 +98,7 @@ struct JoinInfo {
     std::string peer_app_version;
     std::string peer_address;
     std::uint32_t max_take_seconds = 0;
+    std::uint16_t protocol_minor = 0;  // agreed minor version (min of both sides); 2+ = take transfer
 };
 
 class ControlLink {

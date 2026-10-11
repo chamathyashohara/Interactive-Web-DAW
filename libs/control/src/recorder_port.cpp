@@ -248,6 +248,9 @@ std::vector<PortEvent> TestRecorderPort::poll() {
         e.stop_reason = fault_ ? "device_lost" : (remote_stop_ ? "producer_stop" : "user");
         e.error = fault_ ? "test: simulated device fault" : "";
         e.file = "(test recorder: no file)";
+        if (report_file_) {
+            e.file = audio::path_to_utf8(report_file_(e.take_id, e.frames));
+        }
         events_.push_back(e);
         active_ = false;
         fault_ = false;

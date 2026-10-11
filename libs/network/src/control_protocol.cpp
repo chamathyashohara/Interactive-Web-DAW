@@ -53,10 +53,12 @@ int tag_width(Tag tag) {
     case Tag::Status:
     case Tag::Consent:
     case Tag::Accepted:
+    case Tag::DeliveryConsent:
         return 1;
     case Tag::ProtoMajor:
     case Tag::ProtoMinor:
     case Tag::ErrorCode:
+    case Tag::TransferPort:
         return 2;
     case Tag::TakeId:
     case Tag::MaxTakeSeconds:
@@ -102,6 +104,8 @@ const char* msg_type_name(MsgType type) noexcept {
     case MsgType::LocalStop: return "LOCAL_STOP";
     case MsgType::TakeFinalised: return "TAKE_FINALISED";
     case MsgType::SessionClosed: return "SESSION_CLOSED";
+    case MsgType::TransferRequest: return "TRANSFER_REQUEST";
+    case MsgType::TransferAck: return "TRANSFER_ACK";
     }
     return "UNKNOWN";
 }
@@ -232,6 +236,12 @@ std::vector<Tag> required_tags(MsgType type) {
         break;
     case MsgType::SessionClosed:
         r.insert(r.end(), {Tag::ErrorCode});
+        break;
+    case MsgType::TransferRequest:
+        r.insert(r.end(), {Tag::TakeId, Tag::TransferPort, Tag::TransferToken});
+        break;
+    case MsgType::TransferAck:
+        r.insert(r.end(), {Tag::TakeId, Tag::Accepted});
         break;
     }
     return r;

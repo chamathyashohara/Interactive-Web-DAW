@@ -33,7 +33,7 @@ that depend on it are reviewed. Open questions need an answer from the
 | OQ-07 | Does PP1 need the **two GUI apps**, or would the panel accept the terminal prototype if the apps aren't ready? | S | Now (it drives the schedule) | APP-01, the whole matrix | The matrix targets the apps. The prototype is a declared fallback, not a pass. |
 | OQ-08 | The exact PP1 date | R | Now | Scope trade-offs | About 20 Oct 2026 |
 | OQ-09 | Ethics: does a demo with a partner need clearance, and what is the status of the clearance application (RO §3.5)? | S | Before any test with someone other than the researcher's agreed partner | STA-03, LATER-09 | Treat PP1 as a system test with an agreed team member |
-| OQ-10 | Take delivery consent: once per session or per take? | R | Only if XFER is built | XFER-05 | Per session, shown in the consent notice |
+| OQ-10 | Take delivery consent: once per session or per take? | R | Only if XFER is built | XFER-05 | Per session, shown in the consent notice. **Stage 11: implemented as proposed (per session, explicit performer checkbox, default off; D-83). Open for review.** |
 | OQ-11 | Support 44.1 kHz devices (resample the live stream only, record the master at its native rate) or require 48 kHz? | R | Implementing DEV-05 | DEV-05, REC-02 | Require 48 kHz for PP1 |
 | OQ-12 | Is mono enough for the performer's master (for example a stereo instrument)? | R | Implementing REC | REC-02 | Mono for PP1 |
 | OQ-13 | Planned maximum take length (sets the REC-09 disk check) | R | Implementing REC-09 | REC-09 | 30 min (prov.) |

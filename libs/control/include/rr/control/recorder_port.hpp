@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -69,6 +70,9 @@ public:
     virtual void cancel_take() = 0;  // only before the take started
     virtual std::vector<PortEvent> poll() = 0;
     virtual std::string description() const = 0;
+    // Folder of the current session's takes on this PC (empty if none yet). Stage 11: the
+    // producer keeps verified copies of the performer's takes in "<this>/from_performer".
+    virtual std::filesystem::path session_folder() const { return {}; }
 };
 
 // Real recording through the audio engine. Takes go to
@@ -86,6 +90,7 @@ public:
 
     void set_recordings_root(std::filesystem::path root) { root_ = std::move(root); }
     std::filesystem::path current_session_dir() const { return session_dir_; }
+    std::filesystem::path session_folder() const override { return session_dir_; }
 
 private:
     audio::AudioEngine& engine_;
@@ -110,6 +115,11 @@ public:
     void set_ready(bool ready, const std::string& reason = "test: not ready");
     void fail_next_schedule(const std::string& error) { fail_next_ = error; }
     void simulate_fault() { fault_ = true; }
+    // TEST ONLY: called when a take finalises; returns the path of a file the test wrote for it
+    // (the test recorder itself never writes anything). Used by the Stage 11 transfer tests.
+    void test_report_file(std::function<std::filesystem::path(std::uint32_t take, std::uint64_t frames)> f) {
+        report_file_ = std::move(f);
+    }
 
 private:
     bool ready_ = true;
@@ -123,6 +133,7 @@ private:
     PortTakeSpec spec_;
     std::int64_t stop_at_ns_ = 0;
     std::vector<PortEvent> events_;
+    std::function<std::filesystem::path(std::uint32_t, std::uint64_t)> report_file_;
 };
 
 }  // namespace rr::control

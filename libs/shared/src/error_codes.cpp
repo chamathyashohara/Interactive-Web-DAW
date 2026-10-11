@@ -27,6 +27,7 @@ std::string_view error_code_name(ErrorCode code) noexcept {
     case ErrorCode::TransferHashMismatch: return "E_TRANSFER_HASH_MISMATCH";
     case ErrorCode::TransferRefused: return "E_TRANSFER_REFUSED";
     case ErrorCode::Internal: return "E_INTERNAL";
+    case ErrorCode::TransferInvalidFile: return "E_TRANSFER_INVALID_FILE";
     }
     return "E_UNKNOWN_CODE";
 }

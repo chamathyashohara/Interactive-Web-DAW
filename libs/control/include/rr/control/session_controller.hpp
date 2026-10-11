@@ -15,6 +15,8 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +27,8 @@
 #include "rr/session/session_machine.hpp"
 #include "rr/shared/config.hpp"
 #include "rr/shared/log.hpp"
+#include "rr/transfer/take_receiver.hpp"
+#include "rr/transfer/take_sender.hpp"
 
 namespace rr::control {
 
@@ -38,6 +42,11 @@ struct ControllerConfig {
     std::uint32_t status_interval_ms = 2000;
     std::uint32_t min_offset_samples = 3;              // performer: before it can accept a schedule
     std::uint16_t test_protocol_major = 0;             // TEST ONLY: non-zero announces this major in HELLO
+    // Stage 11: take transfer (performer's original -> producer's verified copy).
+    bool auto_transfer = false;                        // producer: request each finalised performer take
+    std::filesystem::path received_root;               // producer: used when the recorder has no session folder
+    std::uint32_t transfer_resume_wait_ms = 60000;     // producer: paused transfer -> FAILED
+    xfer::SenderParams transfer_sender;                // performer
 };
 
 // Everything the UI shows about one take. Producer: "peer_*" flags are set only by the
@@ -125,6 +134,13 @@ struct ControllerSnapshot {
     std::uint64_t refused_messages = 0;
     std::uint64_t duplicate_messages = 0;
     std::string recorder_description;
+    // Stage 11: take transfer.
+    std::vector<xfer::TransferView> transfers;  // producer: received copies; performer: takes sent
+    bool delivery_consent = false;              // performer: allows copies to be sent (XFER-05)
+    bool peer_delivery_consent = false;         // producer: the performer allows it (from READY_STATUS)
+    bool auto_transfer = false;
+    std::uint16_t protocol_minor = 0;           // agreed control protocol minor (2+ = transfer)
+    std::uint16_t transfer_port = 0;            // producer: listening transfer port (0 = not open)
 };
 
 class SessionController {
@@ -149,6 +165,17 @@ public:
     // ---- performer ----
     bool join(const std::string& host, std::uint16_t port, const std::string& pairing_code, std::string& error);
     bool stop_and_save(std::string& error);  // performer's own Stop & save
+
+    // ---- take transfer (Stage 11) ----
+    // Producer: ask the performer for a verified copy of its finalised take `take_id`. Refused while
+    // a take is being recorded, before the performer's TAKE_FINALISED, or if the performer's app
+    // is older than control protocol 1.2.
+    bool request_transfer(std::uint32_t take_id, std::string& error);
+    void cancel_transfer(std::uint32_t take_id);  // producer: ends a queued/paused transfer as FAILED
+    void set_auto_transfer(bool on);              // producer
+    void set_delivery_consent(bool given);        // performer: explicit permission to send copies (XFER-05)
+    xfer::TakeReceiver* transfer_receiver() { return receiver_.get(); }  // tests
+    xfer::TakeSender* transfer_sender() { return sender_.get(); }        // tests
 
     // ---- both ----
     void set_consent(bool given);
@@ -182,6 +209,10 @@ private:
     void release_finished_link();
     void cancel_before_start(const std::string& why);
     void log_take_timing(const std::string& outcome);
+    void poll_transfers();
+    bool ensure_receiver(std::string& error);
+    void performer_transfer_request(const net::Frame& f);
+    void stop_transfers();
 
     ControllerConfig cfg_;
     RecorderPort& port_;
@@ -222,6 +253,19 @@ private:
     std::uint64_t refused_ = 0;
     std::uint64_t duplicates_ = 0;
     std::deque<std::string> history_;
+
+    // Stage 11: take transfer.
+    struct FinishedTake {
+        TakeStatus status = TakeStatus::Complete;
+        std::uint64_t frames = 0;
+        std::string file;  // performer: its finalised WAV
+    };
+    std::map<std::uint32_t, FinishedTake> finished_takes_;  // producer: from TAKE_FINALISED; performer: own files
+    std::unique_ptr<xfer::TakeReceiver> receiver_;          // producer
+    std::unique_ptr<xfer::TakeSender> sender_;              // performer
+    bool delivery_consent_ = false;
+    bool peer_delivery_consent_ = false;
+    std::deque<std::uint32_t> auto_queue_;
 };
 
 }  // namespace rr::control

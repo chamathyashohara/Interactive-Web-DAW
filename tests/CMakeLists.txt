@@ -42,9 +42,10 @@ add_executable(rr_unit_tests
     shared/test_json_escape.cpp
     shared/test_logger.cpp
     shared/test_role.cpp
-    session/test_states.cpp)
+    session/test_states.cpp
+    transfer/test_transfer.cpp)
 
-target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network rr_control rr_media Catch2::Catch2WithMain)
+target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network rr_control rr_media rr_transfer Catch2::Catch2WithMain)
 target_include_directories(rr_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/audio")
 rr_set_compiler_options(rr_unit_tests)
 

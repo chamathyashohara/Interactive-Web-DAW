@@ -45,6 +45,8 @@ enum class MsgType : std::uint16_t {
     LocalStop = 0x0042,      // R->S: performer stopped on its own (user, fault, limit)
     TakeFinalised = 0x0043,  // either: final status of take N
     SessionClosed = 0x0050,  // either: leaving / ending the session (reason)
+    TransferRequest = 0x0060,  // S->R, protocol 1.2: send take N's file on the transfer connection
+    TransferAck = 0x0061,      // R->S, protocol 1.2: accepted, or refused with a reason
 };
 
 enum class Tag : std::uint16_t {
@@ -81,6 +83,9 @@ enum class Tag : std::uint16_t {
     FirstSampleNs = 31,  // i64 estimated local time of the first written sample
     LateFrames = 32,     // u64 frames by which a scheduled start was missed (0 = on time)
     ReadyChecks = 33,    // str, protocol 1.1: readiness checklist "id=0|1,..." (rr/control/readiness.hpp)
+    TransferPort = 34,   // u16, protocol 1.2: producer's take-transfer TCP port
+    TransferToken = 35,  // str (32 hex), protocol 1.2: one-time transfer token - never logged
+    DeliveryConsent = 36,  // u8 bool, protocol 1.2 (READY_STATUS): performer allows take copies (XFER-05)
 };
 
 const char* msg_type_name(MsgType type) noexcept;
