@@ -36,3 +36,12 @@ until the architecture review.
 | D-19 | 2026-10-11 | Fixed-depth jitter buffer owned by the playback callback, decoding in the callback (measured) | ADR-011 | Proposed |
 | D-20 | 2026-10-11 | Catch2 v3.16.0, test-only | ADR-015 | Proposed |
 | D-21 | 2026-10-11 | Proposed requirement amendments A-1…A-4 (SYSTEM_ARCHITECTURE §10) | — | **Needs the researcher's decision** |
+
+## Stage 3 (11 Oct 2026): build foundation
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-22 | 2026-10-11 | CMake presets use the **"Visual Studio 17 2022" generator with toolset `v143` pinned**, not Ninja (amends ADR-002) | The VS generator selects the pinned toolset itself and needs no Developer Command Prompt, which is easier to reproduce. Ninja stays in use for the GCC core check. | Implemented. Not run with MSVC. |
+| D-23 | 2026-10-11 | ADR-001's `rr_core` is split into the Qt-free folders `libs/shared` and `libs/session` (and later `libs/audio`, `libs/network`). `rr_app` becomes `libs/ui_common` (`rr_ui`). | Follows the Stage 3 brief's suggested layout. Module boundaries are visible in the file system. The Qt-free rule is enforced by a test. | Implemented |
+| D-24 | 2026-10-11 | Catch2 fetched by URL with a pinned SHA-256. Offline override documented. Nothing vendored yet. | Reproducible without committing third-party code | Implemented. Fetch verified. |
+| D-25 | 2026-10-11 | AUTOMOC per Qt target instead of `qt_standard_project_setup()` | Keeps moc away from the Qt-free libraries and the tests | Implemented. Not run with Qt. |

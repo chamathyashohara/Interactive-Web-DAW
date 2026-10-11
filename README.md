@@ -13,8 +13,41 @@ v2 §4.1).
 
 ## Status
 
-**Stage 2 (system architecture and ADRs) is drafted and awaiting review. No application code exists yet.**
-See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
+**Stage 3 (buildable two-application foundation) is in place.** Version 0.1.0.
+
+- **Implemented:** CMake build with presets, two Qt Widgets apps that identify their role and show "Not connected / Not ready", Qt-free shared and session libraries, structured logging, diagnostics tab, 26 unit and boundary tests.
+- **Not implemented** (by design at this stage): audio devices, recording, networking.
+- **Verified on the development PC:** the Qt-free libraries build with GCC 16.2 with 0 warnings, and 26/26 tests pass. Configuration fails with clear messages when the toolchain or Qt is missing.
+- **Not verified:** the MSVC build and the two Qt apps. MSVC v143 and Qt are not installed on the development PC.
+
+See [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md) and [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
+
+## Build (Windows, MSVC 2022, Qt 6.11.3)
+
+```powershell
+$env:RR_QT_DIR = "C:\Qt\6.11.3\msvc2022_64"
+cmake --preset msvc-x64
+cmake --build --preset msvc-x64-debug
+ctest --preset msvc-x64-debug
+```
+Prerequisites, offline use and troubleshooting: [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md).
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `apps/producer`, `apps/performer` | The two executables (role wiring only) |
+| `libs/shared` | Qt-free: roles, version/build info, error codes, configuration, clock, logging |
+| `libs/session` | Qt-free: link/session state definitions and the initial snapshot |
+| `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics |
+| `libs/audio`, `libs/network` | Module boundaries only (README). Code comes in later increments. |
+| `tests/` | Catch2 unit tests and the no-Qt-in-core boundary check |
+| `cmake/` | Toolchain/Qt checks, version generation, compiler options |
+| `scripts/build-windows.ps1` | Configure + build + test with the presets |
+| `third_party/` | Dependency policy (nothing vendored yet) |
+| `docs/` | Research index, audit, requirements, architecture, ADRs, build guide |
+
+Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE_MAP.md).
 
 ## Documents
 
@@ -26,6 +59,8 @@ See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 | [docs/requirements/USE_CASES.md](docs/requirements/USE_CASES.md) | UC-01…UC-10 |
 | [docs/requirements/PP1_ACCEPTANCE_MATRIX.md](docs/requirements/PP1_ACCEPTANCE_MATRIX.md) | PP1 completion criteria, reproducible tests, MUST→test traceability |
 | [docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md](docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md) | Assumptions, open questions, provisional defaults |
+| [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md) | Windows build: prerequisites, commands, verification status, troubleshooting |
+| [docs/architecture/CODE_MAP.md](docs/architecture/CODE_MAP.md) | Architecture concepts to code locations and their status |
 | [docs/environment/TOOLCHAIN_AUDIT.md](docs/environment/TOOLCHAIN_AUDIT.md) | What is installed, what is missing, setup commands |
 | [docs/architecture/SYSTEM_ARCHITECTURE.md](docs/architecture/SYSTEM_ARCHITECTURE.md) | **Current architecture**: structure, audio policies, measurement definitions, dependencies, risks |
 | [docs/architecture/COMPONENT_DIAGRAM.md](docs/architecture/COMPONENT_DIAGRAM.md) | Mermaid component, data-path and deployment diagrams |
@@ -47,4 +82,4 @@ See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 ## Security note
 
 The planned PP1 build is **LAN-only and unencrypted**. Use it only on a trusted
-private network. See ARCHITECTURE.md §9.
+private network. See ADR-012.
