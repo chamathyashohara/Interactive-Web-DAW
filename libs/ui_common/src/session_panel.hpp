@@ -27,6 +27,18 @@ namespace rr::ui {
 
 class AudioPanel;
 
+// What the live audio panel needs from the session (Stage 7). Media is set up only from an
+// established session: the session id, the producer's selected interface and the performer's
+// control-connection address. No other address is ever used for live audio.
+struct LiveContext {
+    bool connected = false;          // control link Connected (live keeps running through LinkLost)
+    bool session_open = false;       // a session exists (created/joined and not ended)
+    std::string session_id;
+    std::string local_address;       // producer: the selected interface
+    std::string peer_address;        // producer: the performer; performer: the producer host
+    std::uint16_t control_port = 0;
+};
+
 // Producer/performer session control (Stage 6) on top of rr::control::SessionController.
 //
 // The panel only renders the controller's snapshot (20 Hz timer on the UI thread) and forwards
@@ -52,6 +64,7 @@ public:
     // App closing: ends the session (SESSION_CLOSED) and hands the recorder back to the AudioPanel.
     void shut_down();
     QString diagnostics_text() const;
+    LiveContext live_context() const;
 
 signals:
     void statusChanged();

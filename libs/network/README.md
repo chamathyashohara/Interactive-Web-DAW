@@ -1,3 +1,8 @@
+> **Superseded note (Stage 7, 11 Oct 2026):** this README describes the Stage 3 plan and is kept
+> unchanged below. As built, `libs/network` holds the Qt-free control transport (ADR-016) and the
+> TCP/UDP sockets. The media header, jitter buffer and live threads are in `libs/media` (ADR-017).
+> See `docs/architecture/CODE_MAP.md`.
+
 # libs/network: module boundary (no code yet)
 
 This folder is deliberately empty at Stage 3 and has **no CMake target**.

@@ -1,6 +1,7 @@
 # ADR-006: Live codec behind an interface. PCM16 first, Opus 1.6.1 next.
 
 - **Status:** Proposed. **The PCM16-first order depends on OQ-03 / D-08.** · **Traces:** COM-02, COM-07, BRIEF
+- **Stage 7 note:** Opus 1.6.1 implemented first (the brief asked for Opus). PCM16 is **not** implemented and is refused on the wire. The settings were checked against the 1.6.1 headers; the lookahead is read back and shown. See [ADR-017](ADR-017-one-way-live-audio-opus-udp.md).
 
 ## Facts checked (official Opus API docs, libopus 1.5 API pages; 1.6.1 is the current release)
 **Encoder:**

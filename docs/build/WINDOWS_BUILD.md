@@ -15,6 +15,9 @@
 | Build of the two **Qt apps** and their smoke tests | **NOT TESTED**: Qt is not installed on the development PC | — |
 | Stage 6: `rr_network`, `rr_control`, `rr_session_probe` + session tests with GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process session runs on one PC. | Stage 6 report, `docs/testing/evidence/2026-10-11_devpc_stage6_session_runs.txt` |
 | Stage 6: Qt `SessionPanel` | **NOT COMPILED** (no Qt). Only a `g++ -fsyntax-only` check against hand-written stub headers, which checks the non-Qt logic only. | Stage 6 report |
+| Stage 7: libopus 1.6.1 fetch (SHA-256 checked) + `rr_media` + live probe + media tests with GCC | **PASS**: 0 warnings in a clean rebuild (libopus included), all tests, 10 repeats. Two-process live runs on one PC. | Stage 7 report, `docs/testing/evidence/2026-10-11_devpc_stage7_live_runs.txt` |
+| Stage 7: libopus and `rr_media` with **MSVC** | **NOT TESTED** (no MSVC). libopus selects `USE_ALLOCA` there; configuration stops if it would fall back to its pseudostack. | — |
+| Stage 7: Qt `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 7 report |
 
 The commands below are the intended reference procedure. Run them on a PC with
 the prerequisites, and record the output in the next stage report.
@@ -103,6 +106,14 @@ same library code as the apps. See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md` 
 with a test recorder (no audio) or `--audio`. Run two instances (two terminals, or two PCs). See
 `docs/testing/SESSION_TEST_PROTOCOL.md`. Windows Firewall: see §3 of that document. The tool never changes firewall settings.
 
+## 4d. Live audio check without the GUI (Stage 7)
+`rr_session_probe.exe --live` adds the one-way live stream (producer -> performer) to a session run:
+- a labelled test tone or the real input on the producer;
+- a labelled 10 ms test playback clock (optionally saved to a WAV) or the real output on the performer;
+- test-only loss simulation (`--sim-*`).
+
+See `docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md`. The producer PC needs inbound UDP on the media port (control port + 1) on the Private profile; see §3 of that document.
+
 ## 5. Dependencies and how they are acquired
 See `third_party/README.md`.
 - **Catch2:** fetched at configure time and **checked against a pinned SHA-256**. To build offline:
@@ -111,6 +122,7 @@ See `third_party/README.md`.
   3. unpack it and configure with `-DFETCHCONTENT_SOURCE_DIR_CATCH2=<unpacked folder>`.
 
   The source-dir override skips the hash check, so check the archive yourself in step 2.
+- **libopus 1.6.1** (Stage 7, `cmake/RrOpus.cmake`): fetched at configure time from `https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz` and **checked against SHA-256 `6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`**, as published in `https://downloads.xiph.org/releases/opus/SHA256SUMS.txt`. To build offline, follow the Catch2 steps with `-DFETCHCONTENT_SOURCE_DIR_OPUS=<unpacked folder>`.
 - **Qt:** installed manually (§1). Never committed.
 
 ## 6. Options

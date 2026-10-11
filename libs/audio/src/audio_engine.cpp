@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <thread>
 
 #include "miniaudio.h"
 #include "rr/shared/clock.hpp"
@@ -37,6 +38,11 @@ struct AudioEngine::Impl {
     // ---- monitor bus: shared by both callbacks; replaced only while both devices are stopped ----
     std::unique_ptr<MonitorBus> bus;
 
+    // ---- live audio (Stage 7): tap fed by the capture callback, contributor mixed by playback ----
+    LiveTap tap;
+    std::atomic<PlaybackContributor*> contributor{nullptr};
+    std::atomic<bool> playback_in_contributor{false};
+
     std::atomic<std::uint64_t> capture_opens{0};
     std::atomic<std::uint64_t> capture_faults{0};
     std::atomic<std::uint64_t> playback_opens{0};
@@ -48,11 +54,20 @@ struct AudioEngine::Impl {
         const auto* in = static_cast<const float*>(input);
         self->ingest->on_block(in, frames, time::monotonic_ns());
         self->bus->push_capture(in, frames, self->capture_channels);
+        self->tap.push_capture(in, frames, self->capture_channels);
     }
 
     static void on_playback(ma_device* device, void* output, const void* /*input*/, ma_uint32 frames) {
         auto* self = static_cast<Impl*>(device->pUserData);
         self->bus->render(static_cast<float*>(output), frames, self->playback_channels);
+        // Seq-cst handshake with detach_playback_contributor(): either detach sees this flag
+        // set and waits, or this load sees the null it stored.
+        self->playback_in_contributor.store(true);
+        PlaybackContributor* c = self->contributor.load();
+        if (c != nullptr) {
+            c->render_add(static_cast<float*>(output), frames, self->playback_channels, self->playback.sampleRate);
+        }
+        self->playback_in_contributor.store(false);
     }
 
     static void on_capture_notification(const ma_device_notification* n) {
@@ -131,6 +146,7 @@ AudioEngine::AudioEngine() : impl_(std::make_unique<Impl>()) {
 }
 
 AudioEngine::~AudioEngine() {
+    detach_playback_contributor();
     close_capture();
     close_playback();
     if (impl_->context_ok) {
@@ -259,6 +275,7 @@ bool AudioEngine::open_capture(std::size_t capture_index, const CaptureOptions& 
 
         // Everything the callback touches is allocated before the device starts.
         d.capture_channels = channels;
+        d.tap.set_source_rate(rate);
         d.recreate_bus(rate, playback_options);
         d.ingest = std::make_unique<CaptureIngest>(channels, rate, options.ring_seconds);
         d.recorder = std::make_unique<TakeRecorder>(*d.ingest, recorder_options);
@@ -300,6 +317,7 @@ void AudioEngine::close_capture() {
         ma_device_uninit(&d.capture);  // stops the device; no callbacks after this returns
         d.capture_ok = false;
     }
+    d.tap.set_source_rate(0);
     d.recorder.reset();
     d.ingest.reset();
 }
@@ -434,6 +452,31 @@ MonitorBus& AudioEngine::monitor() noexcept {
 
 const MonitorBus& AudioEngine::monitor() const noexcept {
     return *impl_->bus;
+}
+
+LiveTap& AudioEngine::live_tap() noexcept {
+    return impl_->tap;
+}
+
+const LiveTap& AudioEngine::live_tap() const noexcept {
+    return impl_->tap;
+}
+
+void AudioEngine::attach_playback_contributor(PlaybackContributor* c) noexcept {
+    detach_playback_contributor();
+    impl_->contributor.store(c);
+}
+
+void AudioEngine::detach_playback_contributor() noexcept {
+    impl_->contributor.store(nullptr);
+    // Bounded by one playback callback (a few ms); the callback itself never waits.
+    while (impl_->playback_in_contributor.load()) {
+        std::this_thread::yield();
+    }
+}
+
+std::uint32_t AudioEngine::playback_rate() const noexcept {
+    return impl_->playback_ok ? impl_->playback.sampleRate : 0;
 }
 
 DeviceFault AudioEngine::capture_fault() const noexcept {

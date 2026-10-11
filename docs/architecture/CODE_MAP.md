@@ -59,7 +59,17 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Scheduled start/stop in the recorder (capture stamps, pre-roll, late-start report) | `libs/audio/.../take_recorder.hpp`, `capture_ingest.hpp` | Implemented, tested (test signal) |
 | Session panel (producer/performer UI) | `libs/ui_common/src/session_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
 | Session CLI | `tools/rr_session_probe/` | Implemented. Run on this PC. |
-| Media header, UDP threads, jitter buffer (ADR-005, 008, 011) | — | Planned (live-audio stage) |
+| Media header v1 codec, CRC-32, validation order, receiver report (PROTOCOL §12, ADR-008/017) | `libs/media/.../media_packet.hpp`, `src/media_packet.cpp` | Implemented, tested (every rejection reason) |
+| Opus 1.6.1 encoder/decoder wrappers, bounded live settings (ADR-006/017) | `libs/media/.../opus_codec.hpp`, `live_settings.hpp`, `cmake/RrOpus.cmake` | Implemented, tested (all frames x both modes, CBR size, tone round trip, PLC) |
+| Jitter buffer (ADR-011) | `libs/media/.../jitter_buffer.hpp` | Implemented, tested (loss, reorder, late, duplicates, underrun/refill, too-early, 2^32 wrap, drift skip) |
+| Arrival statistics: loss estimate, duplicates, reordering, RFC 3550 jitter | `libs/media/.../arrival_stats.hpp` | Implemented, tested |
+| Capture -> sender hand-over (mono tap) and playback-contributor hook | `libs/audio/.../live_tap.hpp`, `src/audio_engine.cpp` | Implemented, tested (tap); hook run on a real output device |
+| Live sender (media-send thread) and live receiver (media-receive thread + playback render) | `libs/media/.../live_sender.hpp`, `live_receiver.hpp` | Implemented, tested over loopback UDP, two-process runs |
+| UDP socket: explicit-interface bind, connected client, ICMP-reset workaround | `libs/network/.../socket.hpp` (`UdpSocket`) | Implemented, run on loopback and the Wi-Fi address |
+| Test-only network impairment (loss, duplicates, reordering, bursts) | `libs/media/.../net_impairment.hpp` | Implemented (test/probe only) |
+| Live audio panel (producer/performer UI) | `libs/ui_common/src/live_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
+| Live-sink WAV analysis | `tools/audit/analyse_live_sink.py` | Implemented, used for the Stage 7 evidence |
+| UDP clock probes (ADR-010) | - | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |
 | Presets: debug/release, core-only, GCC check | `CMakePresets.json` | GCC preset run. MSVC presets not run. |

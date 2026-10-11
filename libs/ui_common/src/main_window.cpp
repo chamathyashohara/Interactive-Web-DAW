@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include "audio_panel.hpp"
+#include "live_panel.hpp"
 #include "session_panel.hpp"
 #include "rr/shared/build_info.hpp"
 
@@ -43,10 +44,11 @@ const char* const kSecurityNotice =
     "network (ADR-012, ADR-016). Not designed or tested for use across the internet.";
 
 const char* const kStageNotice =
-    "Stage 6 build: devices, meters, local monitoring, local recording and producer-controlled "
-    "sessions over a LAN (control messages only). Live talkback audio between the two PCs is NOT "
-    "implemented yet (Stage 7): during a session each PC records only its own input, and the people "
-    "cannot hear each other through this app.";
+    "Stage 7 build: devices, meters, local monitoring, local recording, producer-controlled sessions "
+    "over a LAN, and ONE-WAY live audio from the producer to the performer (Opus over UDP). The "
+    "performer cannot yet be heard by the producer through this app (two-way talkback is a later "
+    "stage). The live stream is a monitor only: each PC records its own input locally, and the "
+    "recordings never contain the live stream.";
 
 }  // namespace
 
@@ -120,7 +122,9 @@ QWidget* MainWindow::build_session_tab() {
         snapshot_ = session_panel_->status_snapshot();
         render_snapshot();
     });
+    live_panel_ = new LivePanel(sources_.role, *sources_.config, *audio_panel_, *session_panel_, logger_);
     layout->addWidget(session_panel_);
+    layout->addWidget(live_panel_);
     layout->addWidget(audio_panel_);
 
     auto* stage = new QLabel(QString::fromUtf8(kStageNotice));
@@ -172,6 +176,7 @@ void MainWindow::refresh_diagnostics() {
     const int position = bar->value();
     diagnostics_view_->setPlainText(diagnostics_text(sources_) + QLatin1Char('\n') +
                                     (session_panel_ ? session_panel_->diagnostics_text() + QLatin1Char('\n') : QString()) +
+                                    (live_panel_ ? live_panel_->diagnostics_text() + QLatin1Char('\n') : QString()) +
                                     (audio_panel_ ? audio_panel_->diagnostics_text() : QString()));
     bar->setValue(position);
 }
@@ -258,6 +263,9 @@ void MainWindow::closeEvent(QCloseEvent* event) {
             event->ignore();
             return;
         }
+    }
+    if (live_panel_) {
+        live_panel_->shut_down();  // live audio stops and detaches from the output before the engine goes
     }
     if (session_panel_) {
         session_panel_->shut_down();  // SESSION_CLOSED to the other side; recorder back to the audio panel

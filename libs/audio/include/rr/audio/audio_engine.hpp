@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "rr/audio/capture_ingest.hpp"
+#include "rr/audio/live_tap.hpp"
 #include "rr/audio/monitor_bus.hpp"
 #include "rr/audio/take_metadata.hpp"
 #include "rr/audio/take_recorder.hpp"
@@ -95,6 +96,17 @@ public:
     TakeRecorder* recorder() noexcept;          // null when no capture device is open
     MonitorBus& monitor() noexcept;             // always valid
     const MonitorBus& monitor() const noexcept;
+    // Live audio (Stage 7, ADR-017). The tap exists for the engine's whole life and is fed by
+    // the capture callback while enabled and the capture rate is 48 kHz.
+    LiveTap& live_tap() noexcept;
+    const LiveTap& live_tap() const noexcept;
+    // Mixes `c` into the output after the monitor. Only one contributor at a time. detach
+    // returns once the playback callback can no longer be inside c->render_add(), so `c` may
+    // be destroyed afterwards. Both are for the control thread.
+    void attach_playback_contributor(PlaybackContributor* c) noexcept;
+    void detach_playback_contributor() noexcept;
+    std::uint32_t playback_rate() const noexcept;  // rate the output callback renders at (0 = closed)
+
     DeviceFault capture_fault() const noexcept;
     DeviceFault playback_fault() const noexcept;
     DeviceEventCounts device_events() const noexcept;

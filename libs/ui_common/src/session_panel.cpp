@@ -608,6 +608,21 @@ void SessionPanel::shut_down() {
     set_session_control(false);
 }
 
+LiveContext SessionPanel::live_context() const {
+    LiveContext c;
+    if (!controller_ || !controller_->session_active()) {
+        return c;
+    }
+    const rr::control::ControllerSnapshot s = controller_->snapshot();
+    c.session_open = s.link != LinkState::Disconnected;
+    c.connected = s.link == LinkState::Connected;
+    c.session_id = s.session_id;
+    c.local_address = s.bind_address;
+    c.peer_address = s.peer_address;
+    c.control_port = s.port;
+    return c;
+}
+
 QString SessionPanel::diagnostics_text() const {
     QString out = QStringLiteral("=== Session ===\n");
     if (!controller_) {

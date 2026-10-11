@@ -1,6 +1,7 @@
 # ADR-008: Media packet header v1 (26 bytes, versioned, CRC over header and payload)
 
 - **Status:** Proposed · **Traces:** COM-02/03, SEC-02/03, proposal Table 2
+- **Stage 7 note:** implemented with one clarification and one addition. Offset 4 carries the 48 kHz **live-stream sample counter** (gaps included), not the capture-device frame index. Type **4 = RECEIVER_REPORT** was added. See [ADR-017](ADR-017-one-way-live-audio-opus-udp.md) and PROTOCOL_OVERVIEW §12.
 
 ## Decision
 The header keeps the prototypes' 26-byte layout and proposal Table 2's fields

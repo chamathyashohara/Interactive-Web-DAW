@@ -13,7 +13,11 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#include <mstcpip.h>
 #include <windows.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)  // as in the Windows SDK's mstcpip.h; missing in some MinGW headers
+#endif
 using socklen_type = int;
 #else
 #include <arpa/inet.h>
@@ -420,6 +424,211 @@ bool TcpSocket::is_writable(const TcpSocket& s) {
     FD_SET(raw(s.handle_), &set);
     timeval tv{0, 0};
     return ::select(static_cast<int>(s.handle_ + 1), nullptr, &set, nullptr, &tv) > 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// UDP (live media, ADR-017)
+
+std::string ipv4_text(std::uint32_t ip) {
+    in_addr a{};
+    a.s_addr = htonl(ip);
+    char text[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, &a, text, sizeof text);
+    return text;
+}
+
+std::string Endpoint::text() const {
+    return ipv4_text(ip) + ":" + std::to_string(port);
+}
+
+bool parse_endpoint(const std::string& ipv4, std::uint16_t port, Endpoint& out) noexcept {
+    sockaddr_in a{};
+    if (!parse_address(ipv4, port, a)) {
+        return false;
+    }
+    out.ip = ntohl(a.sin_addr.s_addr);
+    out.port = port;
+    return true;
+}
+
+UdpSocket::~UdpSocket() {
+    close();
+}
+
+bool UdpSocket::valid() const noexcept {
+    return handle_ != kInvalid;
+}
+
+void UdpSocket::close() noexcept {
+    if (handle_ != kInvalid) {
+#ifdef _WIN32
+        closesocket(raw(handle_));
+#else
+        ::close(raw(handle_));
+#endif
+        handle_ = kInvalid;
+    }
+}
+
+bool UdpSocket::open(std::string& error) {
+    close();
+    handle_ = static_cast<std::intptr_t>(::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP));
+    if (!valid() || !make_non_blocking(handle_)) {
+        error = "socket() failed: " + error_text(last_error());
+        close();
+        return false;
+    }
+#ifdef _WIN32
+    // Without this, an ICMP "port unreachable" (peer not listening yet) makes the next
+    // recvfrom() fail with WSAECONNRESET (seen in the 2026 C++ prototype).
+    BOOL report = FALSE;
+    DWORD returned = 0;
+    WSAIoctl(raw(handle_), SIO_UDP_CONNRESET, &report, sizeof report, nullptr, 0, &returned, nullptr, nullptr);
+#endif
+    return true;
+}
+
+bool UdpSocket::bind_on(const std::string& ipv4, std::uint16_t port, std::string& error) {
+    sockaddr_in addr{};
+    if (!parse_address(ipv4, port, addr)) {
+        error = "not an IPv4 address: " + ipv4;
+        return false;
+    }
+    if (addr.sin_addr.s_addr == htonl(INADDR_ANY)) {
+        error = "refusing to receive on all interfaces (0.0.0.0): choose one network interface";
+        return false;
+    }
+    if (!open(error)) {
+        return false;
+    }
+#ifdef _WIN32
+    BOOL exclusive = TRUE;
+    setsockopt(raw(handle_), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof exclusive);
+#endif
+    if (::bind(raw(handle_), reinterpret_cast<const sockaddr*>(&addr), sizeof addr) != 0) {
+        error = "cannot use UDP " + ipv4 + ":" + std::to_string(port) + ": " + error_text(last_error()) +
+                " (port in use by another program, or the address is not on this PC)";
+        close();
+        return false;
+    }
+    return true;
+}
+
+bool UdpSocket::connect_to(const std::string& ipv4, std::uint16_t port, std::string& error) {
+    sockaddr_in addr{};
+    if (!parse_address(ipv4, port, addr) || port == 0) {
+        error = "not an IPv4 address and port: " + ipv4 + ":" + std::to_string(port);
+        return false;
+    }
+    if (!open(error)) {
+        return false;
+    }
+    if (::connect(raw(handle_), reinterpret_cast<const sockaddr*>(&addr), sizeof addr) != 0) {
+        error = "UDP connect to " + ipv4 + ":" + std::to_string(port) + " failed: " + error_text(last_error());
+        close();
+        return false;
+    }
+    return true;
+}
+
+long UdpSocket::send_to(const Endpoint& to, const std::uint8_t* data, std::size_t size, std::string& error) {
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(to.port);
+    addr.sin_addr.s_addr = htonl(to.ip);
+#ifdef _WIN32
+    const int n = ::sendto(raw(handle_), reinterpret_cast<const char*>(data), static_cast<int>(size), 0,
+                           reinterpret_cast<const sockaddr*>(&addr), sizeof addr);
+#else
+    const ssize_t n = ::sendto(raw(handle_), data, size, 0, reinterpret_cast<const sockaddr*>(&addr), sizeof addr);
+#endif
+    if (n < 0) {
+        const int e = last_error();
+        if (would_block(e)) {
+            return 0;
+        }
+        error = "sendto " + to.text() + " failed: " + error_text(e);
+        return -1;
+    }
+    return static_cast<long>(n);
+}
+
+long UdpSocket::send(const std::uint8_t* data, std::size_t size, std::string& error) {
+#ifdef _WIN32
+    const int n = ::send(raw(handle_), reinterpret_cast<const char*>(data), static_cast<int>(size), 0);
+#else
+    const ssize_t n = ::send(raw(handle_), data, size, 0);
+#endif
+    if (n < 0) {
+        const int e = last_error();
+        if (would_block(e)) {
+            return 0;
+        }
+        error = "send failed: " + error_text(e);
+        return -1;
+    }
+    return static_cast<long>(n);
+}
+
+long UdpSocket::recv_from(std::uint8_t* buffer, std::size_t size, Endpoint& from, std::string& error) {
+    sockaddr_in addr{};
+    socklen_type len = sizeof addr;
+#ifdef _WIN32
+    const int n = ::recvfrom(raw(handle_), reinterpret_cast<char*>(buffer), static_cast<int>(size), 0,
+                             reinterpret_cast<sockaddr*>(&addr), &len);
+#else
+    const ssize_t n = ::recvfrom(raw(handle_), buffer, size, 0, reinterpret_cast<sockaddr*>(&addr), &len);
+#endif
+    if (n < 0) {
+        const int e = last_error();
+        if (would_block(e)) {
+            return 0;
+        }
+#ifdef _WIN32
+        if (e == WSAEMSGSIZE) {
+            from.ip = ntohl(addr.sin_addr.s_addr);
+            from.port = ntohs(addr.sin_port);
+            return -3;
+        }
+        if (e == WSAECONNRESET) {
+            return 0;  // stale ICMP report on a connected socket; nothing to read
+        }
+#else
+        if (e == ECONNREFUSED) {
+            return 0;
+        }
+#endif
+        error = "receive failed: " + error_text(e);
+        return -1;
+    }
+    from.ip = ntohl(addr.sin_addr.s_addr);
+    from.port = ntohs(addr.sin_port);
+    return static_cast<long>(n);
+}
+
+bool UdpSocket::wait_readable(int timeout_ms) {
+    if (!valid()) {
+        return false;
+    }
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(raw(handle_), &set);
+    timeval tv{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+    return ::select(static_cast<int>(handle_ + 1), &set, nullptr, nullptr, &tv) >= 0;
+}
+
+Endpoint UdpSocket::local_endpoint() const {
+    Endpoint e;
+    if (!valid()) {
+        return e;
+    }
+    sockaddr_in addr{};
+    socklen_type len = sizeof addr;
+    if (getsockname(raw(handle_), reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        e.ip = ntohl(addr.sin_addr.s_addr);
+        e.port = ntohs(addr.sin_port);
+    }
+    return e;
 }
 
 }  // namespace rr::net

@@ -74,6 +74,8 @@ Remove-NetFirewallRule -DisplayName "ProducerStudio control (TCP 52000, Private)
 ```
 Do **not** disable the firewall, allow the Public or Domain profile, open port ranges, or forward the port on a router.
 
+**Stage 7:** live audio also needs inbound **UDP** on the media port (control port + 1, 52001 by default) on the producer PC, Private profile only. See LIVE_AUDIO_TEST_PROTOCOL §3.
+
 Troubleshooting a failed join:
 - **"connection refused" (WSA 10061):** wrong address or port, or no session created.
 - **"timed out":** often the firewall or the Public profile. Check the profile and the rule.

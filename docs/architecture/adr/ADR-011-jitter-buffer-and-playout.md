@@ -1,6 +1,7 @@
 # ADR-011: A fixed-depth jitter buffer owned by the playback callback, with decode in the callback
 
 - **Status:** Proposed · **Traces:** COM-02, ERR-04, TEL-01. RQ2/H2 (adaptive depth) is LATER.
+- **Stage 7 note:** implemented as decided, with decode in the playback callback, the target at 1-16 frames (default 3), stall limit 20, drift skip and a 64-packet queue. The MON ring and conceal-event ring are not built. Measured: see [ADR-017](ADR-017-one-way-live-audio-opus-udp.md).
 
 ## Decision
 - **Ownership:** the media-receive thread checks packets and pushes them into a **bounded SPSC packet queue** (64 slots, prov.). The **playback callback owns the jitter buffer outright**, so no jitter-buffer state is shared between threads. This is the Rust prototype's pattern; the C++ prototype shared atomic slots instead.

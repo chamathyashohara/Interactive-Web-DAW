@@ -23,6 +23,8 @@ because AnyDesk was observed holding UDP 50001 on the development PC
 
 ## 2. Media packet header v1 (26 bytes, ADR-008)
 
+> **Stage 7:** the live media path as built is in **§12** (ADR-017). Where §2–§3 differ (the meaning of offset 4, packet type 4, Opus only, address learning), **§12 is authoritative**. §2–§3 are kept as the Stage 2 draft.
+
 | Offset | Size | Field | Meaning |
 |---|---|---|---|
 | 0 | 4 | `seq` | Per-stream sequence number. Starts at 0 when the stream starts and wraps at 2³². Compared with `int32(a − b)`. |
@@ -291,3 +293,65 @@ What a lost link does:
 - **Clock offset θ ± u:** θ from the minimum-δ sample of the last 16 heartbeats, u = δmin/2. It describes the two PCs' monotonic clocks only.
 - **Estimated start difference:** (performer first-sample time − θ) − producer first-sample time, ± u. It does **not** include device input latency or the converter, so it is **not** an acoustic alignment measurement.
 - **UI/poll delay:** about 60–80 ms per command/answer through both apps' 20 ms select and 50 ms (GUI) / 10 ms (probe) poll loops. It is absorbed by the 1000 ms start lead. This value was observed on one PC and not measured systematically.
+
+## 12. Live media 1.0 as implemented (Stage 7, one way: producer → performer, authoritative)
+
+Code: `libs/media` (`media_packet.*`, `opus_codec.*`, `jitter_buffer.*`, `arrival_stats.*`,
+`live_sender.*`, `live_receiver.*`), `libs/audio/live_tap.*`, and `UdpSocket` in `libs/network/socket.*`.
+Decision: ADR-017. **LAN-only, unencrypted, unauthenticated** (ADR-012). The CRC detects corruption only.
+
+### 12.1 Header (26 bytes, big-endian)
+| Offset | Size | Field | As built |
+|---|---|---|---|
+| 0 | 4 | `seq` | Per stream. Starts at 0 when the stream starts (each time the producer starts sending). Serial arithmetic. |
+| 4 | 8 | `media_index` | 48 kHz **live-stream sample counter** of the packet's first sample. It advances by dropped samples too (tap overflow, backlog trim), so sender-side gaps are visible. |
+| 12 | 4 | `session_id` | The 8-hex-digit session id as a u32 (e.g. `1a2b3c4d` → 0x1A2B3C4D) |
+| 16 | 2 | `stream_id` | 1 = producer microphone (the only stream) |
+| 18 | 2 | `payload_len` | = datagram length − 26 |
+| 20 | 1 | `ver_type` | Version 1 (high nibble), type (low nibble) |
+| 21 | 1 | `flags` | AUDIO: 1 (Opus); bits 2–7 zero. Other types: 0. |
+| 22 | 4 | `crc32` | CRC-32/IEEE over bytes 0–21 and the payload |
+
+Maximum datagram 1472 bytes (no IP fragmentation on a 1500-byte MTU).
+
+| Type | Name | Direction | Payload |
+|---|---|---|---|
+| 0 | AUDIO | producer → performer | One Opus packet (1…1276 bytes) holding exactly one 2.5/5/10/20 ms frame |
+| 1, 2 | PROBE_REQ / PROBE_RESP | — | Designed (§3.4), **not implemented**: rejected as `bad_type` |
+| 3 | END_OF_STREAM | producer → performer | Empty. Sent twice when the producer stops sending. The receiver refills without counting loss. |
+| 4 | RECEIVER_REPORT | performer → producer | 64 bytes: received u64, lost_estimate u64, late, duplicates, reordered, jitter_us, jb_fill, jb_target, underruns, concealed, decode_errors, invalid_packets, flags (bit 0 playing, bit 1 closing), reserved (all u32). Every 500 ms. |
+
+### 12.2 Validation (receiver and producer; every failure counted by reason)
+1. Source endpoint:
+   - **Performer:** the socket is connected to `producer:media_port`, so the kernel filters, and the endpoint is checked again (`src_rejected`).
+   - **Producer:** the report's source IP must equal the performer's control-connection IP (`src_rejected`).
+2. A datagram larger than the 2048-byte buffer is `oversized` (Windows `WSAEMSGSIZE`).
+3. Then §2.1 steps 2–8: `bad_length` (< 26, > 1472, or `payload_len` mismatch), `bad_version`, `bad_type`, `bad_crc`, `bad_session`, `bad_payload` (stream ≠ 1, codec ≠ Opus, reserved bits, sizes).
+4. AUDIO: `opus_packet_get_nb_samples` must give 120, 240, 480 or 960 samples, else `bad_payload`.
+5. Duplicates within the last 1024 sequence numbers are dropped (`duplicates`). A sequence step back by ≥ 1024 counts as a new stream (`stream_restarts`).
+
+### 12.3 Addressing and start/stop (no change to the control protocol)
+- **Media port:** control port + 1 on the producer. The producer binds UDP on its **selected interface** (never `0.0.0.0`).
+- **Performer:** once the control link is Connected, it opens a UDP socket **connected** to `producer_host:media_port` and sends a RECEIVER_REPORT every 500 ms.
+- **Producer:** sends AUDIO only to the endpoint learned from a valid report (step 1). It stops (END_OF_STREAM) when:
+  - its "send live" switch is off;
+  - a report has the closing flag;
+  - no report has arrived for **3 s**.
+- **Lifetime:** live media runs while the session exists, including through a control-link outage. It stops when the session ends.
+
+### 12.4 Codec (libopus 1.6.1; legality per `opus.h` / `opus_defines.h`)
+48 kHz mono; frame 10 ms (2.5/5/10/20 allowed); `OPUS_APPLICATION_RESTRICTED_LOWDELAY` (or `AUDIO`); 64 kbit/s hard CBR (16–128 allowed); complexity 5; in-band FEC off. The lookahead is read back and shown (120 samples = 2.5 ms for RESTRICTED_LOWDELAY on this PC).
+
+### 12.5 Playout (receiver, playback callback)
+§3.3 (ADR-011) with the target in 1…16 frames (default 3), stall limit 20, drift skip at more than target+2 held for about 1 s, and the 64-packet queue.
+- Lost and underrun frames are filled by **Opus PLC** with the last frame's duration. This is **for the live monitor only**: no recording is touched.
+- Gain −60…0 dB (default −12). Off until the performer enables it.
+
+### 12.6 Counters (shown in the apps and the probe)
+| Side | Counters |
+|---|---|
+| Producer (sender) | packets and bytes sent, send errors, encode errors, frames encoded, tap overflow (capture gaps), backlog trims, END_OF_STREAM sent, reports received, peer timeouts, invalid incoming by reason, max encode time, lookahead, test-impairment drops/dups/reorders |
+| Producer (from the performer's report) | received, lost estimate, late, duplicates, reordered, jitter, buffer fill/target, underruns, concealed, decode errors, invalid |
+| Performer (receiver) | received, expected, lost estimate, duplicates, reordered, late, inter-arrival jitter (RFC 3550 estimator over arrival time vs `media_index`), largest arrival gap, buffer fill/target/max, played, lost (concealed), underruns, refills, drift skips, too-early resets, decode errors, queue-full drops, invalid by reason, max decode+mix time per callback, wrong-rate callbacks, output peak |
+
+**Measurement terms (kept distinct):** inter-arrival jitter describes packet timing at the receiver. It is not latency. The loss estimate comes from sequence numbers, and loss after the last received packet cannot be seen. None of these counters measure acoustic (mouth-to-ear) latency, which needs a loopback measurement with real devices (MONITOR_LOOPBACK_TEST_PROTOCOL, not yet run for the live path).

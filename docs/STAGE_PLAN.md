@@ -12,7 +12,8 @@ and **stops for review**. Nothing starts automatically.
 | 4 | Real local audio capture and WAV recording | Done (11 Oct 2026). The core and the real WASAPI capture path are verified with GCC and the CLI probe. The endpoint was muted, so no signal content was verified. **The Qt apps and MSVC are not verified.** See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md`. |
 | 5 | Local playback and audio-engine diagnostics | Done (11 Oct 2026). Monitor path and diagnostics verified with GCC, unit tests and real WASAPI devices (mic muted: silent input). **The Qt GUI and MSVC are not verified.** See `docs/architecture/MONITOR_PATH.md`. |
 | 6 | Producer/performer session control over a controlled LAN | Implemented (11 Oct 2026). Core, link and controller verified with GCC, unit tests and two-process runs on **one** PC. **Two PCs not run; the Qt Session panel and MSVC are not compiled.** LAN-only, unencrypted. See `docs/testing/SESSION_TEST_PROTOCOL.md`, ADR-016. |
-| 7+ | To be issued by the researcher | — |
+| 7 | One-way live audio over UDP/Opus | Implemented (11 Oct 2026). Producer → performer, libopus 1.6.1, ADR-008 header, jitter buffer, counters on both sides, test loss simulation, Live audio panel. Verified with GCC, unit tests and two-process runs on **one** PC (test tone and test clock, plus one real-device run at −60 dB). **Not heard at a remote PC (two PCs not run); Qt panel and MSVC not compiled.** See `docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md`, ADR-017. |
+| 8+ | To be issued by the researcher | — |
 
 ## Proposed implementation increments (input for later stages, not a commitment)
 

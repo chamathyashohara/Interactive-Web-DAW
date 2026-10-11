@@ -137,6 +137,16 @@ jitter buffer. The capture callback (T1) also writes to the monitor ring when mo
 Both use only preallocated memory and atomics. See `MONITOR_PATH.md` §4–§6. The jitter buffer
 replaces or joins this path in the live-talkback stage.
 
+## 9c. Stage 7 addendum: one-way live audio as built (ADR-017)
+- **T1 (capture, producer):** also calls `LiveTap::push_capture`, which averages the block to mono and copies it all-or-nothing into an SPSC ring of 32 768 frames. If the ring is full, the whole block is dropped and counted. No kernel call: §5's `SetEvent` is **not** used.
+- **T4 (media send, producer):** `LiveSender`'s thread polls the tap with `select(1 ms)` under `timeBeginPeriod(1)`. It encodes with Opus, sends, receives the performer's reports, and trims a backlog above 6 frames.
+- **T5 (media receive, performer):** `LiveReceiver`'s thread validates and counts every datagram and pushes it into the 64-slot packet queue. It sends a report every 500 ms.
+- **T2 (playback, performer):** renders the monitor bus first. Then, through `AudioEngine`'s *playback contributor* hook, `LiveReceiver::render_add` moves the queue into the jitter buffer, decodes or conceals, applies the gain and **adds** to the output.
+  - `detach_playback_contributor()` waits (control thread only) until T2 has left the receiver.
+  - The worst `render_add` time is measured (`max_render_ns`).
+- **Not built yet:** the MON ring and conceal-event ring (§2), and the probe requests and replies.
+- Deviations and measurements: ADR-017.
+
 ## 10. Review checklist (T-16; a copy is in PP1_ACCEPTANCE_MATRIX §4.2)
 Every function reachable from T1 and T2 is listed with file and line, and
 checked against §5.

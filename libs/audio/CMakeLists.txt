@@ -20,6 +20,7 @@ add_library(rr_audio STATIC
     include/rr/audio/audio_engine.hpp
     include/rr/audio/capture_ingest.hpp
     include/rr/audio/file_io.hpp
+    include/rr/audio/live_tap.hpp
     include/rr/audio/monitor_bus.hpp
     include/rr/audio/spsc_ring.hpp
     include/rr/audio/take_metadata.hpp
@@ -32,6 +33,7 @@ add_library(rr_audio STATIC
     src/capture_ingest.cpp
     src/engine_report.cpp
     src/file_io.cpp
+    src/live_tap.cpp
     src/monitor_bus.cpp
     src/take_metadata.cpp
     src/take_naming.cpp

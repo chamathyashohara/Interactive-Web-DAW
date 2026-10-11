@@ -13,9 +13,34 @@ v2 §4.1).
 
 ## Status
 
-**Stage 6 (producer/performer session control over a controlled LAN) is implemented.** Version 0.1.0.
-Stages 4–5 (local recording, monitoring, diagnostics) remain as before.
+**Stage 7 (one-way live audio, producer → performer, Opus over UDP) is implemented.** Version 0.1.0.
+Stages 4–6 (local recording, monitoring, diagnostics, session control) remain as before.
 
+### Stage 7: one-way live audio
+- **Implemented:**
+  - the producer's microphone is sent live to the performer with libopus 1.6.1 (48 kHz mono, 10 ms frames, RESTRICTED_LOWDELAY, 64 kbit/s CBR by default; all bounded and configurable);
+  - UDP packets with the ADR-008 header (version, session, stream, sequence, sample counter, length, CRC-32), validated and counted per reason;
+  - a bounded jitter buffer in the playback callback, with Opus concealment for the **live monitor only**;
+  - sender and receiver counters on both sides (the producer also sees the performer's reports);
+  - test-only loss/duplicate/reorder/burst simulation;
+  - Live audio panel in both apps (off by default, gain −60…0 dB, jitter-buffer depth, headphones advice);
+  - `rr_session_probe --live`.
+- **Verified on the development PC** (GCC build; two processes on ONE PC; loopback and Wi-Fi address; test tone and test playback clock; one run with the real input and output devices at −60 dB):
+  - all unit tests pass, 0 warnings;
+  - 440 Hz test tone received at the expected level with 0 lost packets and 0 dropout blocks;
+  - forced 5 % loss, duplicates, reordering and 250 ms bursts handled without a crash, all counted;
+  - real WASAPI playback at 48 kHz with the decoder in the callback (worst 0.17 ms), while both master takes recorded separately and complete.
+  - See `docs/testing/evidence/2026-10-11_devpc_stage7_live_runs.txt`.
+- **Not verified:**
+  - **audio heard at a remote PC** (two-PC run not done);
+  - audible content on this PC (microphone muted, output at −60 dB);
+  - the MSVC build and the Qt GUI, including the new Live audio panel (only syntax-checked against stub headers);
+  - acoustic (mouth-to-ear) latency, which is not measured.
+- **Not implemented:** two-way talkback (performer → producer), UDP clock probes, take transfer, encryption.
+
+See [docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §12](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-017](docs/architecture/adr/ADR-017-one-way-live-audio-opus-udp.md).
+
+### Stage 6: producer/performer session control over a controlled LAN
 - **Implemented:**
   - the producer creates a session on an explicitly selected network interface, with a session ID and a single-use 6-digit pairing code (10-minute TTL, locked after 5 wrong attempts);
   - the performer joins with the host address and code;
@@ -40,7 +65,7 @@ Stages 4–5 (local recording, monitoring, diagnostics) remain as before.
   - **two separate PCs** (not run yet);
   - the MSVC build and the Qt GUI, including the new Session panel (toolchain not installed; the panel was only syntax-checked against stub headers);
   - audible content.
-- **Not implemented:** live talkback audio between the PCs (next stage), take transfer, encryption.
+- **Not implemented in Stage 6:** live audio (added in Stage 7, one way), take transfer, encryption.
 
 See [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §11](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-016](docs/architecture/adr/ADR-016-control-transport-qt-free-sockets.md).
 
@@ -61,16 +86,17 @@ Prerequisites, offline use and troubleshooting: [docs/build/WINDOWS_BUILD.md](do
 | `apps/producer`, `apps/performer` | The two executables (role wiring only) |
 | `libs/shared` | Qt-free: roles, version/build info, error codes, configuration, clock, logging |
 | `libs/session` | Qt-free: link/session state definitions, transition tables |
-| `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics, audio panel, session panel |
+| `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics, audio panel, session panel, live audio panel |
 | `libs/audio` | Qt-free: capture engine, ring, recorder worker, WAV writer/inspector, take naming/metadata |
-| `libs/network` | Qt-free: control protocol codec, sockets, control link (pairing, heartbeats, reconnect), clock offset |
+| `libs/network` | Qt-free: control protocol codec, TCP and UDP sockets, control link (pairing, heartbeats, reconnect), clock offset |
 | `libs/control` | Qt-free: session controller (state machine + link + local recorder), recorder ports |
+| `libs/media` | Qt-free: live audio: media packets, Opus 1.6.1 wrappers, jitter buffer, arrival statistics, live sender/receiver |
 | `tools/rr_audio_probe` | CLI device and recording check (no Qt) |
-| `tools/rr_session_probe` | CLI producer/performer session runs (no Qt) |
+| `tools/rr_session_probe` | CLI producer/performer session and live-audio runs (no Qt) |
 | `tests/` | Catch2 unit tests and the no-Qt-in-core boundary check |
 | `cmake/` | Toolchain/Qt checks, version generation, compiler options |
 | `scripts/build-windows.ps1` | Configure + build + test with the presets |
-| `third_party/` | Dependency policy. miniaudio 0.11.25 vendored. |
+| `third_party/` | Dependency policy. miniaudio 0.11.25 vendored; libopus 1.6.1 fetched and hash-pinned (`cmake/RrOpus.cmake`). |
 | `docs/` | Research index, audit, requirements, architecture, ADRs, build guide |
 
 Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE_MAP.md).
@@ -110,6 +136,7 @@ Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE
 
 This build is **LAN-only and unencrypted**: the control connection has no TLS and
 is protected only by a short-lived pairing code, which is not a security control.
-Use it only on a trusted private network. It is not designed or tested for use
-across the internet. The apps never change Windows Firewall settings
-(see SESSION_TEST_PROTOCOL §3). See ADR-012 and ADR-016.
+The live audio stream (UDP) is neither encrypted nor authenticated; its CRC detects
+corruption only. Use it only on a trusted private network. It is not designed or
+tested for use across the internet. The apps never change Windows Firewall settings
+(see SESSION_TEST_PROTOCOL §3 and LIVE_AUDIO_TEST_PROTOCOL §3). See ADR-012, ADR-016 and ADR-017.

@@ -51,7 +51,8 @@ add_subdirectory(libs/session)
 add_subdirectory(libs/audio)
 add_subdirectory(libs/network)
 add_subdirectory(libs/control)
-# libs/network: control transport (Stage 6, in progress).
+include(RrOpus)              # libopus 1.6.1, pinned by SHA-256 (ADR-006, ADR-017)
+add_subdirectory(libs/media)
 
 add_subdirectory(tools/rr_audio_probe)
 add_subdirectory(tools/rr_session_probe)
