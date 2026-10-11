@@ -22,6 +22,11 @@
 | Stage 8: Qt two-way `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 8 report |
 | Stage 9: coordinated recording (control 1.1, readiness, timing) + tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Real-device coordinated runs on one PC. | Stage 9 report, `docs/testing/evidence/2026-10-11_devpc_stage9_coordinated_runs.txt` |
 | Stage 9: Qt `SessionPanel` changes (checklist, countdown, per-PC rows, start lead) | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 9 report |
+| **Product build (11 Oct 2026, after Stage 11):** VS 2022 Build Tools, **MSVC 19.44 (v143)**, Windows SDK 10.0.26100, **Qt 6.11.3 msvc2022_64**, preset `msvc-x64`, Release | **PASS**: both apps and every library build; **0 compiler warnings** after fixing 6 (2 × C4458 shadowing, 4 × C4996 CRT deprecations); **170/170 tests** incl. `producer_smoke` and `performer_smoke`. `windeployqt` warns that Qt translations are unavailable (qttranslations not installed; the UI is English only). | This section; DECISION_LOG D-86, D-87 |
+| Qt panels (session, live, transfer table) compiled with real Qt | **PASS** (compiled; both windows opened, rendered and closed normally on the development PC; screenshots checked). Not yet used in a session. | — |
+| Two-PC package (app-local Qt + MSVC runtime DLLs) | Assembled; starts from its own folder and loads Qt and the runtime from there. **Not yet run on a second PC.** | — |
+
+**How Qt was installed on the development PC (deviation from §1 step 2, D-87):** the Qt Online Installer was not used. `aqtinstall` 3.3.0 cannot read the per-kit repository layout Qt uses for 6.11.x, so the two archives needed (`qtbase`, `qtsvg` of package `qt.qt6.6113.win64_msvc2022_64`) were downloaded from `https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6113/qt6_6113_msvc2022_64/`, checked against the published `.sha1` files (both OK), and extracted to `D:\Qt\6.11.3\msvc2022_64`. `RR_QT_DIR` points there (user environment).
 
 The commands below are the intended reference procedure. Run them on a PC with
 the prerequisites, and record the output in the next stage report.

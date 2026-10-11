@@ -14,6 +14,7 @@
 #define NOMINMAX
 #endif
 #include <io.h>
+#include <share.h>
 #include <windows.h>
 #endif
 
@@ -34,7 +35,13 @@ std::string win32_error_text(DWORD code) {
 #endif
 
 std::string errno_text(int err) {
-    return std::string(std::strerror(err)) + " (errno " + std::to_string(err) + ")";
+    char text[256] = {};
+#ifdef _WIN32
+    strerror_s(text, sizeof text, err);
+#else
+    std::strncpy(text, std::strerror(err), sizeof text - 1);
+#endif
+    return std::string(text) + " (errno " + std::to_string(err) + ")";
 }
 
 // stdio-based file with a large buffer. Used only from non-real-time threads.
@@ -132,7 +139,7 @@ private:
 FileOpener default_file_opener() {
     return [](const std::filesystem::path& path, std::string& error) -> std::unique_ptr<WritableFile> {
 #ifdef _WIN32
-        std::FILE* f = _wfopen(path.c_str(), L"wbx");
+        std::FILE* f = _wfsopen(path.c_str(), L"wbx", _SH_DENYNO);  // same sharing as _wfopen
 #else
         std::FILE* f = std::fopen(path.c_str(), "wbx");
 #endif

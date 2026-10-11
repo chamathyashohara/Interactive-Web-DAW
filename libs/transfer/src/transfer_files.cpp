@@ -19,7 +19,14 @@ namespace rr::xfer {
 namespace {
 
 std::string errno_text(const char* what) {
-    return std::string(what) + ": " + std::strerror(errno);
+    const int err = errno;
+    char text[256] = {};
+#ifdef _WIN32
+    strerror_s(text, sizeof text, err);
+#else
+    std::strncpy(text, std::strerror(err), sizeof text - 1);
+#endif
+    return std::string(what) + ": " + text;
 }
 
 bool seek(std::FILE* f, std::uint64_t offset) {

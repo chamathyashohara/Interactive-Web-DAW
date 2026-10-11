@@ -430,9 +430,9 @@ void LivePanel::export_report() {
     const auto answer = QMessageBox::question(this, tr("Live report"), tr("Are both people wearing headphones?"),
                                               QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     c.headphones = answer == QMessageBox::Yes ? "confirmed by the user" : "NOT confirmed";
-    const QByteArray data = QString::fromStdString(rr::media::live_report_text(c, *endpoint_)).toUtf8();
+    const QByteArray bytes = QString::fromStdString(rr::media::live_report_text(c, *endpoint_)).toUtf8();
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size()) {
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(bytes) != bytes.size()) {
         QMessageBox::warning(this, tr("Export failed"), tr("Could not write %1: %2").arg(path, file.errorString()));
         return;
     }

@@ -140,3 +140,10 @@ until the architecture review.
 | D-83 | 2026-10-11 | Delivery consent (XFER-05) per session, explicit performer checkbox, default off (OQ-10 answered as proposed) | Consent | Implemented, tested (refused without it) |
 | D-84 | 2026-10-11 | A queued/running transfer makes the producer NOT READY and a sending performer not ready; requests refused while a take is armed/scheduled/recording; QUEUED/PAUSED end FAILED after 60 s; Cancel available | No recording while a file is moving; a failed performer must not block the producer | Implemented, tested |
 | D-85 | 2026-10-11 | Control protocol 1.2 (TRANSFER_REQUEST/ACK, tags 34–36); error code 23 `E_TRANSFER_INVALID_FILE` appended | Additive; a 1.1 performer is never sent the new messages | Implemented, tested |
+
+## Product build (11 Oct 2026, after Stage 11, researcher's request)
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-86 | 2026-10-11 | Installed **VS 2022 Build Tools** (MSVC 14.44 = v143, Windows SDK 10.0.26100) with `winget`, approved by the researcher (UAC). The existing VS 2026 Community install (no C++ tools) was left untouched. Fixed all 6 MSVC warnings in our code: C4458 (local `data` hid `QWidget::data`), C4996 (`strerror` -> `strerror_s`, `_wfopen` -> `_wfsopen(..., _SH_DENYNO)` keeping the same sharing, `getenv` -> `_dupenv_s` in a test). | ADR-002 pins v143; the researcher chose this option | Done: 0 warnings, 170/170 tests |
+| D-87 | 2026-10-11 | Qt 6.11.3 msvc2022_64 installed from the official repository archives (qtbase, qtsvg), SHA1-checked, to `D:\Qt` without an account; `RR_QT_DIR` set for the user. aqtinstall 3.3.0 could not read the 6.11 repository layout. | The researcher chose a no-admin, no-account install | Done; translations package not installed |

@@ -155,7 +155,14 @@ struct Rig {
             return v && transfer_state_final(v->state);
         }, 3000ms);
         // Set RR_XFER_TRACE=1 to print both sides' history (diagnosis).
+#ifdef _WIN32
+        char* env = nullptr;
+        std::size_t env_len = 0;
+        const bool trace = _dupenv_s(&env, &env_len, "RR_XFER_TRACE") == 0 && env != nullptr;
+        std::free(env);
+#else
         const bool trace = std::getenv("RR_XFER_TRACE") != nullptr;
+#endif
         for (const auto& line : rx->take_history()) {
             if (trace) {
                 std::fprintf(stderr, "producer  %s\n", line.c_str());

@@ -192,9 +192,9 @@ void MainWindow::export_report() {
         return;
     }
     const std::string audio = audio_panel_ ? audio_panel_->report_json() : std::string();
-    const QByteArray data = diagnostics_report_json(sources_, audio).toUtf8();
+    const QByteArray bytes = diagnostics_report_json(sources_, audio).toUtf8();
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size()) {
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(bytes) != bytes.size()) {
         QMessageBox::warning(this, tr("Export failed"), tr("Could not write %1: %2").arg(path, file.errorString()));
         logger_.log(rr::log::Level::Error, "ui", "report_export_failed", file.errorString().toStdString(),
                     {{"path", path.toStdString()}});
@@ -202,7 +202,7 @@ void MainWindow::export_report() {
     }
     file.close();
     logger_.log(rr::log::Level::Info, "ui", "report_exported", "diagnostic report written",
-                {{"path", path.toStdString()}, {"bytes", std::to_string(data.size())}});
+                {{"path", path.toStdString()}, {"bytes", std::to_string(bytes.size())}});
     QMessageBox::information(this, tr("Report exported"), tr("Diagnostic report written to\n%1").arg(path));
 }
 
