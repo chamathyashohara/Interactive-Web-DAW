@@ -13,7 +13,7 @@ v2 §4.1).
 
 ## Status
 
-**Stage 0 (inventory and architecture) is complete. No application code exists yet.**
+**Stage 1 (requirements and acceptance baseline) is complete. No application code exists yet.**
 See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 
 ## Documents
@@ -22,6 +22,10 @@ See [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 |---|---|
 | [docs/research/RESEARCH_PRESERVATION_INDEX.md](docs/research/RESEARCH_PRESERVATION_INDEX.md) | Every existing paper, proposal, prototype and data file, with hashes, scope extraction and missing items. Nothing was moved or deleted. |
 | [docs/project/REPOSITORY_AUDIT.md](docs/project/REPOSITORY_AUDIT.md) | Repository map, actual build and run results of both prototypes, C++ vs Rust comparison, path to the PP1 demo |
+| [docs/requirements/PRODUCT_REQUIREMENTS.md](docs/requirements/PRODUCT_REQUIREMENTS.md) | MoSCoW requirements with trace, test and evidence for each |
+| [docs/requirements/USE_CASES.md](docs/requirements/USE_CASES.md) | UC-01…UC-10 |
+| [docs/requirements/PP1_ACCEPTANCE_MATRIX.md](docs/requirements/PP1_ACCEPTANCE_MATRIX.md) | PP1 completion criteria, reproducible tests, MUST→test traceability |
+| [docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md](docs/requirements/ASSUMPTIONS_AND_OPEN_QUESTIONS.md) | Assumptions, open questions, provisional defaults |
 | [docs/environment/TOOLCHAIN_AUDIT.md](docs/environment/TOOLCHAIN_AUDIT.md) | What is installed, what is missing, setup commands |
 | [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | Threads, queues, protocols, timing terms, state machines, security assumptions |
 | [docs/architecture/DEPENDENCIES.md](docs/architecture/DEPENDENCIES.md) | Proposed dependencies with pinned versions and licences |

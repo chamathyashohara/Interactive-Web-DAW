@@ -187,9 +187,9 @@ smallest reliable path is testing first and code second:
    list, and fix G4. Then repeat the step 1 rehearsal.
 4. **Present honestly:** "C++17 engine prototype (terminal) proving the dual-path
    design on two PCs. Producer Studio / Performer Client GUI apps are in
-   progress (Stage 1+)." Keep the Rust build as the fallback on both laptops.
+   progress (increments I-1+)." Keep the Rust build as the fallback on both laptops.
 
-The two-executable Qt product (Stages 1–4 of `docs/STAGE_PLAN.md`) is the right
+The two-executable Qt product (increments I-1…I-4 of `docs/STAGE_PLAN.md`) is the right
 long-term target. It is **not** the smallest path to a reliable two-PC demo in
 about 9 days, because it still needs a compiler install, Qt, and new code that
 has never run on two PCs. Steps 2–3 above need the researcher's approval, because

@@ -1,25 +1,30 @@
 # Stage Plan
 
-Each stage ends with the mandatory report (summary, files, commands and results,
-acceptance checklist, limitations, preserved material, next stage) and **stops
-for review**. No stage starts automatically.
+**The researcher defines the stages.** Each stage ends with the mandatory report
+and **stops for review**. Nothing starts automatically.
 
-**Schedule pressure:** PP1 is expected around **20 October 2026**, nine days
-after the C++ decision. The panel acceptance target needs Stages 1–4, plus a
-two-PC test, to pass in that time, and none of the C++ toolchain is installed
-yet. **Keep the Rust prototype (`duplexrec-rs`, 14/14 tests passing) ready as
-the PP1 fallback** and do its two-PC rehearsal anyway (chat record §12, day 4).
-The C++ stages below are not shortened to hit a date: a stage that is not
-verified is reported as not verified.
-
-| Stage | Scope | Acceptance (summary) |
+| Stage | Defined by researcher | Status |
 |---|---|---|
-| **0** ✔ | Inventory, toolchain audit, architecture, dependency review, decision log, this plan | Docs exist. Nothing moved or deleted. Rust prototype re-verified. |
-| **1** | Toolchain installed. CMake + presets + MSVC build. `dawrr_core` with SPSC ring, WAV writer, media-header codec (26 B, CRC-32), plus Catch2 tests. Both exes open a Qt window that lists the **real** audio devices via miniaudio. | Clean configure and build with MSVC from a fresh clone. All unit tests pass. Both exes start on this PC and list real devices. |
-| **2** | Local recording in each app: choose devices, live input meter, record to `takeNN_<role>.wav.partial` → finalise, overrun, disk and device error reporting, take JSON | Single PC: 5-minute take with real mic, file plays, frame count matches, zero overruns; forced error cases (disk full simulation, unplug) shown correctly |
-| **3** | TCP control: pairing code, HELLO, readiness, time exchange, producer-scheduled ARM/ACK start and STOP, TAKE_FINALISED reporting, heartbeat and disconnect policy | Two instances on one PC, then two PCs: producer starts and stops both recordings, both files are complete, offset and uncertainty are logged under their own names |
-| **4** | Live talkback over UDP (PCM16 10 ms), jitter buffer, PLC, loss, late and jitter counters, peer meter, runtime segment and depth settings | **Panel acceptance test on two real Windows PCs:** both record their own original-quality audio locally, both hear each other live, the producer controls start and stop. `--sim-loss` style test shows the master is unaffected. |
-| 5 | Opus 1.6.1 monitor codec (10/20 ms), codec flag in the header | Same as 4, with bitrate and latency compared against PCM16 |
-| 6 | Performer → producer take transfer: reliable TCP, chunked, SHA-256 per chunk and per file (Windows CNG), retry and resume, final verification. The performer's original is kept. | Transferred file is byte-identical (hash). Resume works after a forced disconnect. |
-| 7 | Measurement: drift (ppm), alignment residual from a reference signal (proposal Test 1), derived aligned export plus manifest | Measured numbers, reported with method and uncertainty |
-| Later | TLS for control, NAT/internet, SQLite sessions, usability study (RQ4), Web DAW export (FR9), macOS (NFR10) | Separately designed and documented |
+| 0 | Repository, prototype and research audit | ✔ Done (11 Oct 2026). See `docs/project/REPOSITORY_AUDIT.md`. |
+| 1 | Requirements and acceptance baseline | ✔ Done (11 Oct 2026). See `docs/requirements/`. |
+| 2+ | To be issued by the researcher | — |
+
+## Proposed implementation increments (input for later stages, not a commitment)
+
+This was proposed in Stage 0 and called "stages 1–7" there. It is renamed here to
+**increments I-1…I-7** to avoid clashing with the researcher's stage numbers.
+Each increment's acceptance is now defined by the tests in
+`docs/requirements/PP1_ACCEPTANCE_MATRIX.md`.
+
+**Schedule pressure:** PP1 is around 20 October 2026 (OQ-08). Keep the Rust
+prototype ready as the declared fallback (OQ-07).
+
+| Increment | Scope | Main tests |
+|---|---|---|
+| I-1 | Toolchain installed. CMake + MSVC. Core library (ring buffer, WAV writer, header/CRC) with unit tests. Both exes start and list real devices. | T-01, T-02, T-16 (unit part) |
+| I-2 | Local recording in each app: meters, safe `.partial` → `.wav`, metadata, disk check, device and disk errors, verification tool | T-03, T-04, T-10, T-11, T-13, T-15 |
+| I-3 | TCP control: pairing, consent, readiness, ARM/ACK scheduled start, STOP, finalisation reports, heartbeat | T-05, T-06, T-07b, T-09, T-14 |
+| I-4 | Live talk over UDP (PCM16), jitter buffer, concealment, counters, test mode. **Full PP1 matrix on two PCs.** | T-07, T-08, T-12 |
+| I-5 | Opus for the live stream (COM-07) | T-17 |
+| I-6 | Take delivery with SHA-256 verification (XFER) | T-18 |
+| I-7 | Measurement: drift, alignment residual, latency impulse (LATER-04/10) | Later test plan |
