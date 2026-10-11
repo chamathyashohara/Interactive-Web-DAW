@@ -20,6 +20,8 @@
 | Stage 7: Qt `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 7 report |
 | Stage 8: two-way `rr_media` (endpoint, streams, report) + duplex tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process duplex runs on one PC. | Stage 8 report, `docs/testing/evidence/2026-10-11_devpc_stage8_duplex_runs.txt` |
 | Stage 8: Qt two-way `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 8 report |
+| Stage 9: coordinated recording (control 1.1, readiness, timing) + tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Real-device coordinated runs on one PC. | Stage 9 report, `docs/testing/evidence/2026-10-11_devpc_stage9_coordinated_runs.txt` |
+| Stage 9: Qt `SessionPanel` changes (checklist, countdown, per-PC rows, start lead) | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 9 report |
 
 The commands below are the intended reference procedure. Run them on a PC with
 the prerequisites, and record the output in the next stage report.

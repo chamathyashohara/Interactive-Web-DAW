@@ -24,6 +24,7 @@
 #include "audio_panel.hpp"
 #include "rr/network/socket.hpp"
 #include "rr/shared/build_info.hpp"
+#include "rr/shared/clock.hpp"
 
 namespace rr::ui {
 namespace {
@@ -96,6 +97,14 @@ SessionPanel::SessionPanel(Role role, const AppConfig& config, AudioPanel& audio
     reasons_label_ = new QLabel;
     reasons_label_->setWordWrap(true);
     layout->addWidget(reasons_label_);
+    checks_label_ = new QLabel;
+    checks_label_->setTextFormat(Qt::RichText);
+    checks_label_->setWordWrap(true);
+    layout->addWidget(checks_label_);
+    pcs_label_ = new QLabel;
+    pcs_label_->setTextFormat(Qt::RichText);
+    pcs_label_->setWordWrap(true);
+    layout->addWidget(pcs_label_);
     error_label_ = new QLabel;
     error_label_->setWordWrap(true);
     error_label_->setStyleSheet(QStringLiteral("color: #b00020;"));
@@ -103,7 +112,7 @@ SessionPanel::SessionPanel(Role role, const AppConfig& config, AudioPanel& audio
 
     consent_check_ = new QCheckBox(role_ == Role::Producer
                                        ? tr("I consent to this session being recorded")
-                                       : tr("I agree to be recorded in this session (consent)"));
+                                       : tr("I agree to be recorded in this session and am ready (consent = arm)"));
     layout->addWidget(consent_check_);
     connect(consent_check_, &QCheckBox::toggled, this, [this](bool on) {
         if (controller_) {
@@ -151,6 +160,22 @@ void SessionPanel::build_producer_ui(QVBoxLayout* layout) {
     port_spin_->setRange(1024, 65535);
     port_spin_->setValue(QSettings().value(QString::fromLatin1(kSettingsPort), static_cast<int>(config_.network.control_tcp_port)).toInt());
     form->addRow(tr("TCP port:"), port_spin_);
+    lead_spin_ = new QSpinBox;
+    lead_spin_->setRange(300, 10000);
+    lead_spin_->setSingleStep(100);
+    lead_spin_->setSuffix(tr(" ms"));
+    lead_spin_->setValue(QSettings().value(QStringLiteral("session/start_lead_ms"),
+                                           static_cast<int>(config_.timing.start_lead_ms)).toInt());
+    lead_spin_->setToolTip(tr("How far ahead both PCs are told the start time. It must cover the network round "
+                              "trip, the clock-offset uncertainty and both apps' processing; Record is refused if "
+                              "it is below the minimum measured for this link."));
+    form->addRow(tr("Start lead:"), lead_spin_);
+    connect(lead_spin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int v) {
+        QSettings().setValue(QStringLiteral("session/start_lead_ms"), v);
+        if (controller_) {
+            controller_->set_start_lead_ms(static_cast<std::uint32_t>(v));
+        }
+    });
     layout->addLayout(form);
 
     auto* row = new QHBoxLayout;
@@ -244,8 +269,15 @@ void SessionPanel::build_performer_ui(QVBoxLayout* layout) {
                                "microphone locally at full quality; the recording does not depend on the network."));
     note->setWordWrap(true);
     layout->addWidget(note);
+    controller_label_ = new QLabel;
+    controller_label_->setWordWrap(true);
+    layout->addWidget(controller_label_);
     take_label_ = new QLabel;
     take_label_->setWordWrap(true);
+    QFont take_font = take_label_->font();
+    take_font.setBold(true);
+    take_font.setPointSize(take_font.pointSize() + 4);
+    take_label_->setFont(take_font);
     layout->addWidget(take_label_);
 
     connect(join_button_, &QPushButton::clicked, this, &SessionPanel::join_or_leave);
@@ -298,6 +330,9 @@ void SessionPanel::ensure_controller() {
     c.display_name = std::string(rr::role_display_name(role_)) + " (" + QSysInfo::machineHostName().toStdString() + ")";
     controller_ = std::make_unique<rr::control::SessionController>(c, *port_, logger_);
     controller_->set_consent(consent_check_->isChecked());
+    if (lead_spin_ != nullptr) {
+        controller_->set_start_lead_ms(static_cast<std::uint32_t>(lead_spin_->value()));
+    }
     shown_history_ = 0;
     shown_history_last_.clear();
     history_view_->clear();
@@ -452,6 +487,8 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
                             s.peer_reasons.empty() ? QString() : QStringLiteral(" (") + qs(s.peer_reasons) + QLatin1Char(')'));
     }
     reasons_label_->setText(reasons);
+    checks_label_->setText(live ? checks_html(s) : QString());
+    pcs_label_->setText(live && s.take.take_id != 0 ? pcs_text(s) : QString());
     if (!s.last_error.empty()) {
         error_label_->setText(qs(s.last_error));
     }
@@ -491,7 +528,12 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
                                            .arg(s.port)
                                      : QStringLiteral("-"));
         record_button_->setEnabled(s.session == SessionState::Ready);
-        stop_button_->setEnabled(s.session == SessionState::Recording);
+        const bool before_start = s.session == SessionState::Armed || s.session == SessionState::Scheduled;
+        stop_button_->setEnabled(before_start || s.session == SessionState::Recording);
+        stop_button_->setText(before_start ? tr("Cancel take (not started)") : tr("Stop (both)"));
+        record_button_->setToolTip(s.session == SessionState::Ready
+                                       ? tr("Start lead %1 ms (minimum for this link: %2 ms)").arg(s.start_lead_ms).arg(s.min_start_lead_ms)
+                                       : tr("Not ready: see the checklist"));
         confirmations_label_->setText(confirmations_text(s));
     } else {
         join_button_->setText(live ? tr("Leave") : tr("Join"));
@@ -500,6 +542,11 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
         port_spin_->setEnabled(!live);
         code_edit_->setEnabled(!live);
         stop_save_button_->setEnabled(s.session == SessionState::Recording);
+        controller_label_->setText(live && !s.peer_name.empty()
+                                       ? tr("Session controlled by: %1 at %2. Only the producer starts and stops takes; "
+                                            "your recording starts automatically at the agreed time.")
+                                             .arg(qs(s.peer_name), qs(s.peer_address))
+                                       : QString());
         const auto& t = s.take;
         QString text;
         if (t.take_id != 0) {
@@ -507,7 +554,10 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
             if (s.session == SessionState::Armed) {
                 text += tr("armed by the producer, waiting for the start time");
             } else if (s.session == SessionState::Scheduled) {
-                text += tr("start scheduled");
+                const std::int64_t left_ms = (t.start_at_local_ns - rr::time::monotonic_ns()) / 1000000;
+                text += tr("SCHEDULED - recording starts in %1 s, at about %2 (this PC's clock)")
+                            .arg(static_cast<double>(left_ms) / 1000.0, 0, 'f', 1)
+                            .arg(qs(rr::time::format_utc_iso8601_ms(rr::time::utc_now_ms() + left_ms)));
             } else if (s.session == SessionState::Recording) {
                 text += tr("RECORDING on this PC");
             } else if (t.local_finalised) {
@@ -535,6 +585,82 @@ void SessionPanel::render(const rr::control::ControllerSnapshot& s) {
         shown_history_ = history.size();
         shown_history_last_ = history.back();
     }
+}
+
+QString SessionPanel::checks_html(const rr::control::ControllerSnapshot& s) const {
+    // Every item, both PCs, passing ones included (Stage 9).
+    using rr::control::ReadyItem;
+    auto mark = [](const std::vector<rr::control::ReadinessCheck>& list, ReadyItem item, QString* detail) -> QString {
+        for (const auto& c : list) {
+            if (c.item == item) {
+                if (detail != nullptr) {
+                    *detail = QString::fromStdString(c.detail).toHtmlEscaped();
+                }
+                return c.ok ? QStringLiteral("<b style='color:#006400'>OK</b>") : QStringLiteral("<b style='color:#b00020'>NO</b>");
+            }
+        }
+        return QStringLiteral("-");
+    };
+    QString html = QStringLiteral("<table cellspacing='4'><tr><th align='left'>%1</th><th>%2</th><th>%3</th><th align='left'>%4</th></tr>")
+                       .arg(tr("Readiness check"), tr("This PC"), tr("Other PC"), tr("Detail (this PC)"));
+    for (const ReadyItem item : {ReadyItem::InputDevice, ReadyItem::EngineHealthy, ReadyItem::FolderWritable,
+                                 ReadyItem::DiskSpace, ReadyItem::NoActiveRecording, ReadyItem::Consent,
+                                 ReadyItem::Connected, ReadyItem::ClockOffset}) {
+        QString detail;
+        const QString here = mark(s.local_checks, item, &detail);
+        const QString there = mark(s.peer_checks, item, nullptr);
+        html += QStringLiteral("<tr><td>%1</td><td align='center'>%2</td><td align='center'>%3</td><td>%4</td></tr>")
+                    .arg(qs(std::string(rr::control::ready_item_label(item))), here, there, detail);
+    }
+    return html + QStringLiteral("</table>");
+}
+
+QString SessionPanel::pcs_text(const rr::control::ControllerSnapshot& s) const {
+    // One row per PC: scheduled / recording / saved. "Recording" only after that PC's own start report.
+    const auto& t = s.take;
+    auto row = [](const QString& who, const QString& state) {
+        return QStringLiteral("<b>%1:</b> %2<br>").arg(who, state);
+    };
+    QString here;
+    if (t.cancelled) {
+        here = tr("take %1 cancelled before the start (nothing recorded)").arg(t.take_id);
+    } else if (t.local_finalised) {
+        here = tr("take %1 saved: %2, %3 frames").arg(t.take_id).arg(qs(rr::take_status_name(t.local_status))).arg(t.local_frames);
+    } else if (t.local_started) {
+        here = tr("RECORDING take %1").arg(t.take_id);
+    } else if (t.start_at_local_ns != 0) {
+        const std::int64_t left_ms = (t.start_at_local_ns - rr::time::monotonic_ns()) / 1000000;
+        here = tr("SCHEDULED take %1, starts in %2 s").arg(t.take_id).arg(static_cast<double>(left_ms) / 1000.0, 0, 'f', 1);
+    } else {
+        here = tr("take %1 armed, no start time yet").arg(t.take_id);
+    }
+    QString out = row(role_ == Role::Producer ? tr("Producer PC (this PC)") : tr("This PC"), here);
+    if (role_ == Role::Producer) {
+        QString there;
+        if (t.cancelled) {
+            there = tr("cancelled");
+        } else if (t.peer_finalised) {
+            there = tr("saved: %1, %2 frames").arg(qs(rr::take_status_name(t.peer_status))).arg(t.peer_frames);
+        } else if (t.peer_report_timed_out) {
+            there = tr("<b>UNKNOWN</b> (no report from the performer)");
+        } else if (t.peer_started) {
+            there = tr("RECORDING (confirmed by the performer)");
+        } else if (t.peer_start_ack) {
+            there = tr("SCHEDULED (start time acknowledged)");
+        } else if (t.peer_arm_ack) {
+            there = tr("armed (acknowledged), start time being agreed");
+        } else {
+            there = tr("waiting for the performer's acknowledgement");
+        }
+        out += row(tr("Performer PC"), there);
+        if (t.has_start_offset) {
+            out += tr("Estimated recording-start offset (performer - producer): %1 ms +/- %2 ms "
+                      "(clock-offset uncertainty only; device input latency not included)")
+                       .arg(t.start_offset_ms, 0, 'f', 3)
+                       .arg(t.start_offset_unc_ms, 0, 'f', 3);
+        }
+    }
+    return out;
 }
 
 QString SessionPanel::confirmations_text(const rr::control::ControllerSnapshot& s) const {

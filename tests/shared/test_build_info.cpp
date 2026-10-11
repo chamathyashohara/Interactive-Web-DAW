@@ -7,7 +7,7 @@ TEST_CASE("build info reports the project version and protocol 1.0", "[shared][v
     const rr::BuildInfo info = rr::build_info();
     CHECK(info.version == "0.1.0");
     CHECK(info.version == rr::build::kVersion);
-    CHECK(info.protocol_version == "1.0");
+    CHECK(info.protocol_version == "1.1");
     CHECK_FALSE(info.git_commit.empty());
     CHECK_FALSE(info.compiler.empty());
     CHECK_FALSE(info.build_config.empty());

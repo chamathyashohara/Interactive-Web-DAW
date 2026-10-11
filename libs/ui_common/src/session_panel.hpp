@@ -89,6 +89,8 @@ private:
     void render(const rr::control::ControllerSnapshot& s);
     void set_session_control(bool active);
     QString confirmations_text(const rr::control::ControllerSnapshot& s) const;
+    QString checks_html(const rr::control::ControllerSnapshot& s) const;
+    QString pcs_text(const rr::control::ControllerSnapshot& s) const;
     void show_error(const QString& text);
 
     Role role_;
@@ -110,6 +112,8 @@ private:
     QPlainTextEdit* history_view_ = nullptr;
     QSpinBox* port_spin_ = nullptr;
     QTimer* timer_ = nullptr;
+    QLabel* checks_label_ = nullptr;      // Stage 9: both readiness checklists
+    QLabel* pcs_label_ = nullptr;         // Stage 9: per-PC take state
     // producer
     QComboBox* interface_combo_ = nullptr;
     QPushButton* interfaces_button_ = nullptr;
@@ -121,12 +125,14 @@ private:
     QPushButton* record_button_ = nullptr;
     QPushButton* stop_button_ = nullptr;
     QLabel* confirmations_label_ = nullptr;
+    QSpinBox* lead_spin_ = nullptr;       // Stage 9: scheduling lead
     // performer
     QLineEdit* host_edit_ = nullptr;
     QLineEdit* code_edit_ = nullptr;
     QPushButton* join_button_ = nullptr;
     QPushButton* stop_save_button_ = nullptr;
     QLabel* take_label_ = nullptr;
+    QLabel* controller_label_ = nullptr;  // Stage 9: who controls the session
 };
 
 }  // namespace rr::ui

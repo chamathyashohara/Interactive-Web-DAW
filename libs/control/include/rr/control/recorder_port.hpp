@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "rr/control/readiness.hpp"
 #include "rr/shared/config.hpp"
 #include "rr/shared/error_codes.hpp"
 #include "rr/shared/role.hpp"
@@ -24,7 +25,8 @@ namespace rr::control {
 
 struct LocalReadiness {
     bool ok = false;
-    std::vector<std::string> reasons;  // why not ready (empty when ok)
+    std::vector<std::string> reasons;      // why not ready (empty when ok)
+    std::vector<ReadinessCheck> checks;    // every device-side item, passing ones included (Stage 9)
 };
 
 struct PortTakeSpec {
@@ -40,8 +42,11 @@ enum class PortEventKind { Started, Finalised };
 struct PortEvent {
     PortEventKind kind = PortEventKind::Started;
     std::uint32_t take_id = 0;
+    std::int64_t event_ns = 0;  // local monotonic time the controller saw the event
     // Started
     std::uint64_t first_frame = 0;
+    std::uint32_t device_period_frames = 0;  // device timing information available at the start
+    std::uint32_t device_periods = 0;
     std::int64_t first_sample_ns = 0;
     std::uint64_t late_frames = 0;
     // Finalised

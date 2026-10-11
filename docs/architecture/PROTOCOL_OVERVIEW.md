@@ -371,3 +371,18 @@ Decision: ADR-018. Header layout unchanged (version 1).
 | Reachability | Send while a valid datagram arrived within 3 s **or** the control link is Connected, unless the peer sent a closing report. One failed direction does not stop the other while control is up. |
 | Sequence numbers | Start at 0 when the endpoint starts and **continue across pauses** (send off/on, peer unreachable). A step back of ≥ 64 counts as a stream restart (`stream_restarts`), not as duplicates. |
 | Jitter buffer | Adds **catch-up** (more than target + max(8, target) held → drop to the target, `catchup_frames`) and **resync** (3 consecutive late arrivals → refill, `resyncs`) |
+
+## 14. Control protocol 1.1 additions (Stage 9, authoritative where it differs from §11)
+
+Decision: ADR-019. **1.1 = 1.0 plus optional fields.** A 1.0 peer ignores them (unknown tags are ignored), and differing minors are accepted (§7).
+
+| Addition | Rule |
+|---|---|
+| Tag 33 `ReadyChecks` (str) in READY_STATUS | The readiness checklist as `id=0\|1` pairs, e.g. `input=1,engine=1,folder=1,disk=1,idle=1,consent=1,link=1,clock=1`. Unknown ids are skipped. |
+| Tag 8 `SessionId` on ARM, ARM_ACK, SCHEDULE_START, START_ACK, TAKE_STARTED, CANCEL, STOP_SCHEDULE, STOP_ACK, LOCAL_STOP, TAKE_FINALISED | If present it must equal the session's id, otherwise refused with ERROR `UnknownTake` ("session id mismatch") and counted. If absent (a 1.0 peer), the message is accepted as before. |
+| Command id | The frame's `msg_id` (strictly increasing per connection). Acknowledgements and refusals echo it in `ref_id`. |
+| Start lead | Producer setting 300–10 000 ms (default 1000). Record is refused below `ARM_ACK margin + 2·RTT + 2·u + 200 ms`. |
+| Stop before the start | The producer sends CANCEL (`Cancelled`) in Armed/Scheduled. Within 150 ms of the start it stops right after the start instead. A CANCEL reaching a performer that is already recording = stop and save. |
+| Stop while stopping/finalising | The producer refuses locally. A duplicate STOP_SCHEDULE is answered idempotently. |
+
+Timing record: each PC logs one `take_timing` JSONL record per take (ADR-019). It uses that PC's monotonic clock and never mixes clocks, except in the producer's start-offset *estimate*, which is converted with θ.

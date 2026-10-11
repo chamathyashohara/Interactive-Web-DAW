@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "rr/control/readiness.hpp"
 #include "rr/control/recorder_port.hpp"
 #include "rr/network/control_link.hpp"
 #include "rr/session/session_machine.hpp"
@@ -69,6 +70,33 @@ struct TakeView {
     bool has_start_offset = false;
     double start_offset_ms = 0.0;     // (performer first sample - producer first sample), estimated
     double start_offset_unc_ms = 0.0; // +/- (clock-offset uncertainty only; callback jitter not included)
+
+    // Stage 9 timing record (this PC's monotonic clock, ns; 0 = did not happen). Logged as
+    // "take_timing" when the take ends (completed, failed or cancelled).
+    std::int64_t arm_sent_ns = 0;          // producer
+    std::int64_t arm_ack_rx_ns = 0;        // producer
+    std::int64_t schedule_sent_ns = 0;     // producer
+    std::int64_t start_ack_rx_ns = 0;      // producer
+    std::int64_t arm_rx_ns = 0;            // performer
+    std::int64_t schedule_rx_ns = 0;       // performer: SCHEDULE_START received
+    std::int64_t start_ack_sent_ns = 0;    // performer
+    std::int64_t peer_started_rx_ns = 0;   // producer: TAKE_STARTED received
+    std::int64_t peer_finalised_rx_ns = 0; // producer: TAKE_FINALISED received
+    std::int64_t stop_cmd_ns = 0;          // producer: STOP_SCHEDULE sent; performer: received / own stop
+    std::int64_t stop_at_local_ns = 0;     // when the local recorder was told to stop
+    std::int64_t stop_ack_rx_ns = 0;       // producer
+    std::int64_t local_started_seen_ns = 0;
+    std::int64_t local_finalised_ns = 0;
+    std::uint64_t local_first_frame = 0;   // capture frame index of the first written sample
+    std::uint64_t peer_first_frame = 0;
+    std::uint32_t device_period_frames = 0;
+    std::uint32_t device_periods = 0;
+    std::int64_t theta_ns = 0;             // clock offset used for the schedule (performer - producer as seen here)
+    std::int64_t theta_unc_ns = 0;
+    std::uint64_t offset_samples = 0;
+    std::uint32_t start_lead_ms = 0;
+    bool cancelled = false;
+    std::string cancel_reason;
 };
 
 struct ControllerSnapshot {
@@ -86,6 +114,10 @@ struct ControllerSnapshot {
     bool peer_ready = false;
     bool peer_consent = false;
     std::string peer_reasons;
+    std::vector<ReadinessCheck> local_checks;  // every item on this PC (Stage 9)
+    std::vector<ReadinessCheck> peer_checks;   // the other PC's items, from its READY_STATUS
+    std::uint32_t start_lead_ms = 0;           // configured scheduling lead (producer)
+    std::uint32_t min_start_lead_ms = 0;       // minimum for the measured link (producer)
     net::LinkStats link_stats;
     TakeView take;              // current or last take
     std::string last_error;
@@ -106,7 +138,13 @@ public:
     bool create_session(const std::string& bind_address, std::uint16_t port, std::string& error);
     std::string new_pairing_code();
     bool start_take(std::string& error);  // Record
-    bool stop_take(std::string& error);   // Stop
+    // Stop. Before the start (Armed/Scheduled) this CANCELS the take on both PCs; while stopping or
+    // finalising it is refused (the files are being closed).
+    bool stop_take(std::string& error);
+    // Scheduling lead, clamped to 300..10000 ms. Record is refused while it is below
+    // min_start_lead_ms() for the measured link.
+    void set_start_lead_ms(std::uint32_t ms);
+    std::uint32_t min_start_lead_ms() const;
 
     // ---- performer ----
     bool join(const std::string& host, std::uint16_t port, const std::string& pairing_code, std::string& error);
@@ -142,6 +180,8 @@ private:
     void compute_start_offset();
     bool send_stop_schedule(std::int64_t stop_at);
     void release_finished_link();
+    void cancel_before_start(const std::string& why);
+    void log_take_timing(const std::string& outcome);
 
     ControllerConfig cfg_;
     RecorderPort& port_;
@@ -158,7 +198,10 @@ private:
     bool peer_consent_ = false;
     std::string peer_reasons_;
     std::vector<std::string> reasons_;
+    std::vector<ReadinessCheck> local_checks_;
+    std::vector<ReadinessCheck> peer_checks_;
     bool local_ready_ = false;
+    bool stop_after_start_ = false;     // producer: Stop pressed in the last moments before the start
     std::string last_status_payload_;
     std::int64_t last_status_ns_ = 0;
     std::string last_error_;

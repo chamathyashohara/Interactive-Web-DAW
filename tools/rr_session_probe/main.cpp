@@ -13,6 +13,8 @@
 //   wait-state <State> [s]
 //   wait-link <State> [s]
 //   record | stop | stop-and-save | drop-link | leave | quit
+//   stop-now              Stop without waiting for Recording (before the start = cancel, Stage 9)
+//   checks                print this PC's and the other PC's readiness checklist (Stage 9)
 //   consent on|off
 //   live on|off           send this side's live stream (Stage 7/8)
 //   mute on|off           send flagged silence instead of the microphone (stream keeps running)
@@ -45,6 +47,7 @@
 //   --application lowdelay|audio (default lowdelay)
 //   --no-control-hint         do not treat the control link as proof that the peer is reachable
 //   --report <file>           write the one-page live diagnostics report at the end
+//   --start-lead-ms <n>       producer: scheduling lead 300..10000 (default 1000; Stage 9)
 //   --conditions "<text>"     test conditions written into the report
 //   test only: --sim-loss <pct> --sim-dup <pct> --sim-reorder <pct> --sim-burst <every>:<length>
 //              --sim-seed <n>   (applied to THIS side's outgoing stream before sendto)
@@ -215,8 +218,61 @@ void print_summary(const control::ControllerSnapshot& s, const char* who) {
             }
         }
     }
+    if (t.take_id != 0) {
+        // Stage 9 timing record (this PC's monotonic clock).
+        // "n/a" when either stamp is missing (D-76: an earlier build printed -1.000 here).
+        auto ms = [](std::int64_t a, std::int64_t b) -> std::string {
+            if (a == 0 || b == 0) {
+                return "n/a";
+            }
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "%.3f", static_cast<double>(b - a) / 1e6);
+            return buf;
+        };
+        const std::string lead = s.role == Role::Producer ? std::to_string(t.start_lead_ms) + " ms" : "n/a (set by the producer)";
+        std::printf("  timing take %u: lead %s, scheduled start (local) %lld ns, first sample %s ms after it "
+                    "(%llu late frames, first frame %llu), device period %u frames x %u, clock offset %.3f ms +/- %.3f ms "
+                    "from %llu samples%s\n",
+                    t.take_id, lead.c_str(), static_cast<long long>(t.start_at_local_ns),
+                    ms(t.start_at_local_ns, t.local_first_sample_ns).c_str(), static_cast<unsigned long long>(t.local_late_frames),
+                    static_cast<unsigned long long>(t.local_first_frame), t.device_period_frames, t.device_periods,
+                    static_cast<double>(t.theta_ns) / 1e6, static_cast<double>(t.theta_unc_ns) / 1e6,
+                    static_cast<unsigned long long>(t.offset_samples), t.cancelled ? ", CANCELLED" : "");
+        if (s.role == Role::Producer) {
+            std::printf("  timing producer: ARM->ARM_ACK %s ms, SCHEDULE_START->START_ACK %s ms, START_ACK %s ms "
+                        "before the start, TAKE_STARTED %s ms after the start, STOP_SCHEDULE->STOP_ACK %s ms, "
+                        "stop->performer report %s ms\n",
+                        ms(t.arm_sent_ns, t.arm_ack_rx_ns).c_str(), ms(t.schedule_sent_ns, t.start_ack_rx_ns).c_str(),
+                        ms(t.start_ack_rx_ns, t.start_at_local_ns).c_str(), ms(t.start_at_local_ns, t.peer_started_rx_ns).c_str(),
+                        ms(t.stop_cmd_ns, t.stop_ack_rx_ns).c_str(), ms(t.stop_cmd_ns, t.peer_finalised_rx_ns).c_str());
+        } else {
+            std::printf("  timing performer: SCHEDULE_START received %s ms before the local start, START_ACK sent "
+                        "%s ms after receipt\n",
+                        ms(t.schedule_rx_ns, t.start_at_local_ns).c_str(), ms(t.schedule_rx_ns, t.start_ack_sent_ns).c_str());
+        }
+        std::printf("  first sample time (this PC's monotonic clock): %lld ns\n",
+                    static_cast<long long>(t.local_first_sample_ns));
+    }
     if (!s.last_error.empty()) {
         std::printf("  last error: %s\n", s.last_error.c_str());
+    }
+}
+
+void print_checks(const control::ControllerSnapshot& s, const char* who) {
+    std::printf("[%s] readiness, this PC:\n", who);
+    for (const auto& c : s.local_checks) {
+        std::printf("[%s]   [%s] %s: %s\n", who, c.ok ? "OK  " : "FAIL", control::ready_item_label(c.item), c.detail.c_str());
+    }
+    std::printf("[%s] readiness, other PC (from its READY_STATUS):\n", who);
+    for (const auto& c : s.peer_checks) {
+        std::printf("[%s]   [%s] %s\n", who, c.ok ? "OK  " : "FAIL", control::ready_item_label(c.item));
+    }
+    if (!s.not_ready_reasons.empty()) {
+        std::printf("[%s]   not ready because:", who);
+        for (const auto& r : s.not_ready_reasons) {
+            std::printf(" %s;", r.c_str());
+        }
+        std::printf("\n");
     }
 }
 
@@ -364,6 +420,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::path out = "rr_session_takes";
     std::string log_path;
     std::uint16_t test_major = 0;
+    std::uint32_t start_lead_ms = 0;
     LiveOptions live;
     std::string script = producer ? "wait-ready; record; wait 3; stop; wait-state Ready 10; wait 1; quit"
                                   : "wait-ready 30; wait-closed";
@@ -381,6 +438,7 @@ int main(int argc, char* argv[]) {
         else if (a == "--log") log_path = next();
         else if (a == "--script") script = next();
         else if (a == "--test-protocol-major") test_major = static_cast<std::uint16_t>(std::atoi(next().c_str()));
+        else if (a == "--start-lead-ms") start_lead_ms = static_cast<std::uint32_t>(std::atoi(next().c_str()));
         else if (a == "--live") live.enabled = true;
         else if (a == "--one-way") live.one_way = true;
         else if (a == "--no-control-hint") live.control_hint = false;
@@ -506,6 +564,9 @@ int main(int argc, char* argv[]) {
     }
 
     control::SessionController controller(cfg, *port_impl, logger);
+    if (start_lead_ms != 0) {
+        controller.set_start_lead_ms(start_lead_ms);
+    }
     Probe probe{controller, 0, who, nullptr};
 
     // ---- live audio: started once the session is connected ----
@@ -633,7 +694,20 @@ int main(int argc, char* argv[]) {
     };
 
     std::uint32_t media_session = 0;
+    std::uint32_t countdown_shown_for = 0;
     probe.on_pump = [&]() {
+        // Stage 9: a visible countdown and the scheduled time once a start is agreed.
+        const auto st = controller.snapshot();
+        if (st.session == SessionState::Scheduled && st.take.start_at_local_ns != 0 &&
+            countdown_shown_for != st.take.take_id) {
+            countdown_shown_for = st.take.take_id;
+            const std::int64_t left = st.take.start_at_local_ns - time::monotonic_ns();
+            std::printf("[%s] SCHEDULED take %u: recording starts in %lld ms, at about %s (this PC's clock); "
+                        "controlled by '%s'\n",
+                        who, st.take.take_id, static_cast<long long>(left / 1000000),
+                        time::format_utc_iso8601_ms(time::utc_now_ms() + left / 1000000).c_str(),
+                        producer ? "this PC (producer)" : st.peer_name.c_str());
+        }
         if (!live.enabled) {
             return;
         }
@@ -759,6 +833,10 @@ int main(int argc, char* argv[]) {
         } else if (cmd == "stop") {
             ok = probe.until([&] { return controller.snapshot().session == SessionState::Recording; }, 5) &&
                  controller.stop_take(error);
+        } else if (cmd == "stop-now") {
+            ok = controller.stop_take(error);
+        } else if (cmd == "checks") {
+            print_checks(controller.snapshot(), who);
         } else if (cmd == "stop-and-save") {
             ok = controller.stop_and_save(error);
         } else if (cmd == "drop-link") {

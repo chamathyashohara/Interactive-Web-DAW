@@ -13,8 +13,33 @@ v2 §4.1).
 
 ## Status
 
-**Stage 8 (two-way live audio, Opus over UDP) is implemented.** Version 0.1.0.
-Stages 4–7 (local recording, monitoring, diagnostics, session control, one-way live audio) remain as before.
+**Stage 9 (coordinated recording state and scheduled start/stop) is implemented.** Version 0.1.0, control protocol 1.1.
+Stages 4–8 (local recording, monitoring, diagnostics, session control, live audio) remain as before.
+
+### Stage 9: coordinated recording
+- **Implemented:**
+  - itemised readiness checklist shown for both PCs (input, engine health, folder writable, disk policy, no other recording, consent/arm, connection, clock offset); Record refused while any item fails;
+  - commands carry the session id (mismatch refused);
+  - configurable start lead with a stated minimum;
+  - performer countdown and scheduled time, plus "controlled by";
+  - per-PC scheduled / RECORDING / saved rows, where RECORDING appears only after that PC's own start report;
+  - stop before the start cancels on both PCs; stop during finalisation is refused;
+  - a full per-take timing record on each PC.
+- **Verified on the development PC** (GCC; two processes; the REAL input device opened twice, muted endpoint so silent files; two-way live audio at −60 dB):
+  - 5 coordinated takes complete on both sides, including one during a 3 s live-audio blackout;
+  - start difference **measured on the shared clock**: mean +0.007 ms (−0.027 … +0.050 ms); the producer's estimate within 0.027 ms of it;
+  - all 10 WAVs pass an independent structural check and open in Windows MCI;
+  - cancel-before-start and disconnect-before-start recorded nothing.
+  - See `docs/testing/evidence/2026-10-11_devpc_stage9_coordinated_runs.txt`.
+- **Not verified:**
+  - **two physical PCs** (the acceptance test);
+  - the Qt panels and MSVC;
+  - audible playback;
+  - any acoustic alignment measurement (needs a shared reference sound on two PCs).
+- One-PC timing numbers are a check of the mechanism, **not** a two-PC accuracy claim, and not sample-accurate alignment.
+
+See [SESSION_TEST_PROTOCOL §4](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §14](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-019](docs/architecture/adr/ADR-019-coordinated-recording.md).
+
 
 ### Stage 8: two-way live audio (talkback)
 - **Implemented:**

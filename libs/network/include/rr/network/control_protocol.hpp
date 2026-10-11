@@ -80,6 +80,7 @@ enum class Tag : std::uint16_t {
     Accepted = 30,       // u8 bool
     FirstSampleNs = 31,  // i64 estimated local time of the first written sample
     LateFrames = 32,     // u64 frames by which a scheduled start was missed (0 = on time)
+    ReadyChecks = 33,    // str, protocol 1.1: readiness checklist "id=0|1,..." (rr/control/readiness.hpp)
 };
 
 const char* msg_type_name(MsgType type) noexcept;

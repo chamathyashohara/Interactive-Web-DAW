@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include "rr/audio/take_naming.hpp"
 #include "rr/shared/clock.hpp"
@@ -26,6 +27,37 @@ std::string join_reasons(const std::vector<std::string>& r) {
         out += (i ? "; " : "") + r[i];
     }
     return out;
+}
+
+// Messages that carry the session id (protocol 1.1); a mismatch is refused (Stage 9).
+bool carries_session(MsgType t) {
+    switch (t) {
+        case MsgType::Arm: case MsgType::ArmAck: case MsgType::ScheduleStart: case MsgType::StartAck:
+        case MsgType::TakeStarted: case MsgType::Cancel: case MsgType::StopSchedule: case MsgType::StopAck:
+        case MsgType::LocalStop: case MsgType::TakeFinalised:
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::string ns_text(std::int64_t v) {
+    return std::to_string(v);
+}
+
+std::string ms_between(std::int64_t from, std::int64_t to) {
+    if (from == 0 || to == 0) {
+        return "n/a";
+    }
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3f", static_cast<double>(to - from) / 1e6);
+    return b;
+}
+
+std::string ms_value(double v) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3f", v);
+    return b;
 }
 
 bool take_running(SessionState s) {
@@ -222,6 +254,9 @@ void SessionController::shutdown() {
 
 // ---------------------------------------------------------------------------------------------
 bool SessionController::send(Frame f) {
+    if (carries_session(f.type) && !session_id_.empty()) {
+        f.set_str(Tag::SessionId, session_id_);
+    }
     return link_ && link_->send(std::move(f));
 }
 
@@ -258,7 +293,8 @@ void SessionController::send_status(bool force) {
         return;
     }
     const std::string payload = std::to_string(local_ready_) + std::to_string(consent_) +
-                                std::to_string(static_cast<int>(state_)) + join_reasons(reasons_);
+                                std::to_string(static_cast<int>(state_)) + join_reasons(reasons_) +
+                                encode_checks(local_checks_);
     const std::int64_t now = time::monotonic_ns();
     if (!force && payload == last_status_payload_ && now - last_status_ns_ < ms(cfg_.status_interval_ms)) {
         return;
@@ -269,6 +305,7 @@ void SessionController::send_status(bool force) {
     f.set_u8(Tag::Consent, consent_ ? 1 : 0);
     f.set_u8(Tag::State, static_cast<std::uint8_t>(state_));
     f.set_str(Tag::Reasons, join_reasons(reasons_));
+    f.set_str(Tag::ReadyChecks, encode_checks(local_checks_));
     if (send(std::move(f))) {
         last_status_payload_ = payload;
         last_status_ns_ = now;
@@ -279,6 +316,21 @@ void SessionController::update_readiness() {
     reasons_.clear();
     const LocalReadiness local = port_.readiness();
     reasons_ = local.reasons;
+    local_checks_ = local.checks;
+    local_checks_.push_back(ReadinessCheck{ReadyItem::Consent, consent_, true, consent_ ? "given" : "not given"});
+    {
+        const bool up = link_ && link_state_ == LinkState::Connected;
+        local_checks_.push_back(ReadinessCheck{ReadyItem::Connected, up, true,
+                                               up ? std::string("connected") : std::string(session::link_state_name(link_state_))});
+    }
+    if (cfg_.role == Role::Performer) {
+        const std::uint64_t n = link_ ? link_->stats().offset_samples : 0;
+        char d[96];
+        std::snprintf(d, sizeof d, "%llu of %u samples, +/- %.3f ms", static_cast<unsigned long long>(n),
+                      cfg_.min_offset_samples,
+                      link_ ? static_cast<double>(link_->stats().theta_uncertainty_ns) / 1e6 : 0.0);
+        local_checks_.push_back(ReadinessCheck{ReadyItem::ClockOffset, n >= cfg_.min_offset_samples, true, d});
+    }
     if (!consent_) {
         reasons_.emplace_back("recording consent not given");
     }
@@ -311,6 +363,19 @@ void SessionController::update_readiness() {
 }
 
 // ---------------------------------------------------------------------------------------------
+void SessionController::set_start_lead_ms(std::uint32_t v) {
+    cfg_.timing.start_lead_ms = std::min<std::uint32_t>(10000, std::max<std::uint32_t>(300, v));
+}
+
+// Provisional rule (ADR-019): the performer needs arm_ack_margin before the start, the SCHEDULE_START
+// and START_ACK each take about one control RTT, the clock offset can be wrong by +/- u, and both
+// apps add polling delay (UI 50 ms + link 20 ms, each side) -> margin + 2 RTT + 2 u + 200 ms.
+std::uint32_t SessionController::min_start_lead_ms() const {
+    const net::LinkStats ls = link_ ? link_->stats() : net::LinkStats{};
+    const double extra_ms = (2.0 * static_cast<double>(ls.control_rtt_ns) + 2.0 * static_cast<double>(ls.theta_uncertainty_ns)) / 1e6;
+    return cfg_.timing.arm_ack_margin_ms + 200u + static_cast<std::uint32_t>(std::ceil(extra_ms));
+}
+
 bool SessionController::start_take(std::string& error) {
     if (cfg_.role != Role::Producer) {
         error = "only the producer starts takes";
@@ -321,6 +386,11 @@ bool SessionController::start_take(std::string& error) {
         error = "not ready: " + join_reasons(reasons_);
         return false;
     }
+    if (cfg_.timing.start_lead_ms < min_start_lead_ms()) {
+        error = "start lead " + std::to_string(cfg_.timing.start_lead_ms) + " ms is below the minimum " +
+                std::to_string(min_start_lead_ms()) + " ms for the measured link";
+        return false;
+    }
     if (!apply(SessionEvent::UserRecord, "producer pressed Record")) {
         error = "Record is not allowed in this state";
         return false;
@@ -329,6 +399,9 @@ bool SessionController::start_take(std::string& error) {
     take_open_ = true;
     stop_owed_ = false;
     take_.take_id = ++last_take_id_;
+    stop_after_start_ = false;
+    take_.start_lead_ms = cfg_.timing.start_lead_ms;
+    take_.arm_sent_ns = time::monotonic_ns();
     Frame f;
     f.type = MsgType::Arm;
     f.set_u32(Tag::TakeId, take_.take_id);
@@ -343,6 +416,21 @@ bool SessionController::start_take(std::string& error) {
 bool SessionController::stop_take(std::string& error) {
     if (cfg_.role != Role::Producer) {
         error = "only the producer stops session takes; use Stop & save";
+        return false;
+    }
+    if (state_ == SessionState::Armed || state_ == SessionState::Scheduled) {
+        // Stop before the start. Far enough ahead: cancel on both PCs. In the last 150 ms the local
+        // recorder may already be starting, so stop it right after the start instead.
+        if (take_.start_at_local_ns != 0 && take_.start_at_local_ns - time::monotonic_ns() < ms(150)) {
+            stop_after_start_ = true;
+            history("take " + std::to_string(take_.take_id) + ": Stop pressed just before the start; it stops right after");
+            return true;
+        }
+        cancel_before_start("producer pressed Stop before the start");
+        return true;
+    }
+    if (state_ == SessionState::Stopping || state_ == SessionState::Finalising) {
+        error = "the take is already stopping; wait until both files are finalised";
         return false;
     }
     if (state_ != SessionState::Recording) {
@@ -369,6 +457,8 @@ bool SessionController::stop_and_save(std::string& error) {
         return false;
     }
     port_.schedule_stop(0, false);
+    take_.stop_cmd_ns = time::monotonic_ns();
+    take_.stop_at_local_ns = take_.stop_cmd_ns;
     apply(SessionEvent::UserStopAndSave, "performer pressed Stop & save");
     Frame f;
     f.type = MsgType::LocalStop;
@@ -405,10 +495,18 @@ void SessionController::handle_link_event(const net::LinkEvent& e) {
         history("link " + std::string(session::link_state_name(e.state)) + ": " + e.text);
         if (old == LinkState::Connected && e.state != LinkState::Connected) {
             peer_ready_ = false;
+            const bool before_start = state_ == SessionState::Armed || state_ == SessionState::Scheduled;
             if (state_ == SessionState::Scheduled) {
                 port_.cancel_take();  // never start a take the other side cannot see (A-3)
             }
             apply(SessionEvent::LinkLost, "control link lost");
+            if (before_start && take_open_ && !take_.local_started) {
+                // Same outcome as CANCEL: the take never started on this PC (D-76).
+                take_.cancelled = true;
+                take_.cancel_reason = "control link lost before the start";
+                history("take " + std::to_string(take_.take_id) + ": cancelled, control link lost before the start");
+                log_take_timing("cancelled");
+            }
             if (state_ == SessionState::NotReady) {
                 take_open_ = take_open_ && take_.local_started;
             }
@@ -480,7 +578,19 @@ void SessionController::handle_frame(const Frame& f) {
         peer_ready_ = f.u8(Tag::Ready).value_or(0) != 0;
         peer_consent_ = f.u8(Tag::Consent).value_or(0) != 0;
         peer_reasons_ = f.str(Tag::Reasons).value_or("");
+        peer_checks_ = decode_checks(f.str(Tag::ReadyChecks).value_or(""));
         return;
+    }
+    if (carries_session(f.type) && !session_id_.empty()) {
+        const auto sid = f.str(Tag::SessionId);
+        if (sid && *sid != session_id_) {
+            ++refused_;
+            log_.log(log::Level::Warn, "session", "wrong_session", "command for another session refused",
+                     {{"type", net::msg_type_name(f.type)}, {"expected", session_id_}, {"got", *sid}});
+            history(std::string("refused ") + net::msg_type_name(f.type) + " for another session (" + *sid + ")");
+            refuse(f, ErrorCode::UnknownTake, "session id mismatch");
+            return;
+        }
     }
     if (f.type == MsgType::Error) {
         const auto code = static_cast<ErrorCode>(f.u16(Tag::ErrorCode).value_or(0));
@@ -516,9 +626,17 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_arm_ack = true;
+        take_.arm_ack_rx_ns = time::monotonic_ns();
         apply(SessionEvent::ArmAckReceived, "performer accepted ARM");
         const std::int64_t start_at = time::monotonic_ns() + ms(cfg_.timing.start_lead_ms);
         take_.start_at_local_ns = start_at;
+        {
+            const net::LinkStats ls = link_->stats();
+            take_.theta_ns = ls.theta_ns;
+            take_.theta_unc_ns = ls.theta_uncertainty_ns;
+            take_.offset_samples = ls.offset_samples;
+        }
+        take_.schedule_sent_ns = time::monotonic_ns();
         Frame s;
         s.type = MsgType::ScheduleStart;
         s.set_u32(Tag::TakeId, take_.take_id);
@@ -543,6 +661,7 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_start_ack = true;
+        take_.start_ack_rx_ns = time::monotonic_ns();
         take_.peer_planned_start_ns = f.i64(Tag::PlannedLocalNs).value_or(0);
         PortTakeSpec spec;
         spec.take_id = take_.take_id;
@@ -573,6 +692,8 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_started = true;
+        take_.peer_started_rx_ns = time::monotonic_ns();
+        take_.peer_first_frame = f.u64(Tag::FirstFrame).value_or(0);
         take_.peer_first_sample_ns = f.i64(Tag::FirstSampleNs).value_or(0);
         take_.peer_late_frames = f.u64(Tag::LateFrames).value_or(0);
         history(tag + "performer CONFIRMED its recording started" +
@@ -586,6 +707,7 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_stop_ack = f.u8(Tag::Accepted).value_or(0) != 0;
+        take_.stop_ack_rx_ns = time::monotonic_ns();
         history(tag + (take_.peer_stop_ack ? "STOP_ACK received" : "performer refused STOP: " + f.str(Tag::ErrorText).value_or("")));
         return;
     case MsgType::LocalStop:
@@ -597,6 +719,7 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_finalised = true;
+        take_.peer_finalised_rx_ns = time::monotonic_ns();
         stop_owed_ = false;
         take_.peer_status = static_cast<TakeStatus>(f.u8(Tag::Status).value_or(0));
         take_.peer_frames = f.u64(Tag::Frames).value_or(0);
@@ -639,6 +762,7 @@ void SessionController::performer_frame(const Frame& f) {
         take_ = TakeView{};
         take_open_ = true;
         take_.take_id = take;
+        take_.arm_rx_ns = now;
         last_take_id_ = take;
         schedule_deadline_ = now + ms(cfg_.arm_to_schedule_timeout_ms);
         reply(MsgType::ArmAck, f.msg_id, take, true, ErrorCode::Ok, "");
@@ -664,6 +788,7 @@ void SessionController::performer_frame(const Frame& f) {
             refuse(f, ErrorCode::UnknownTake, "SCHEDULE_START for an unknown take");
             return;
         }
+        take_.schedule_rx_ns = now;
         const net::LinkStats ls = link_->stats();
         // theta = producer clock - performer clock, so the producer's time T is T - theta here.
         const std::int64_t start_local = f.i64(Tag::StartAtNs).value_or(0) - ls.theta_ns;
@@ -698,6 +823,9 @@ void SessionController::performer_frame(const Frame& f) {
         apply(SessionEvent::ScheduleReceived, "start scheduled");
         take_.peer_start_ack = true;  // here: "we acknowledged"
         take_.start_at_local_ns = start_local;
+        take_.theta_ns = ls.theta_ns;
+        take_.theta_unc_ns = ls.theta_uncertainty_ns;
+        take_.offset_samples = ls.offset_samples;
         Frame r;
         r.type = MsgType::StartAck;
         r.ref_id = f.msg_id;
@@ -707,6 +835,7 @@ void SessionController::performer_frame(const Frame& f) {
         r.set_i64(Tag::ThetaNs, ls.theta_ns);
         r.set_i64(Tag::UncertaintyNs, ls.theta_uncertainty_ns);
         send(std::move(r));
+        take_.start_ack_sent_ns = time::monotonic_ns();
         history("take " + std::to_string(take) + ": start scheduled in " +
                 std::to_string((start_local - now) / 1'000'000) + " ms (clock offset " +
                 std::to_string(ls.theta_ns / 1000) + " us +/- " + std::to_string(ls.theta_uncertainty_ns / 1000) + " us)");
@@ -718,7 +847,17 @@ void SessionController::performer_frame(const Frame& f) {
             port_.cancel_take();
             apply(SessionEvent::CancelReceived, "producer cancelled take " + std::to_string(take));
             take_open_ = false;
+            take_.cancelled = true;
+            take_.cancel_reason = "cancelled by the producer";
             history("take " + std::to_string(take) + ": cancelled by the producer");
+            log_take_timing("cancelled");
+        } else if (take_open_ && take == take_.take_id && state_ == SessionState::Recording) {
+            // The CANCEL crossed the start (Stop pressed at the last moment): keep what was recorded.
+            port_.schedule_stop(now, true);
+            take_.stop_cmd_ns = now;
+            take_.stop_at_local_ns = now;
+            apply(SessionEvent::StopReceived, "CANCEL arrived after the local start");
+            history("take " + std::to_string(take) + ": CANCEL arrived after the local start; take stopped and saved");
         } else {
             ++duplicates_;
         }
@@ -739,6 +878,8 @@ void SessionController::performer_frame(const Frame& f) {
         }
         const std::int64_t stop_local = f.i64(Tag::StopAtNs).value_or(0) - link_->stats().theta_ns;
         port_.schedule_stop(std::max(stop_local, now), true);
+        take_.stop_cmd_ns = now;
+        take_.stop_at_local_ns = std::max(stop_local, now);
         apply(SessionEvent::StopReceived, "producer stopped take " + std::to_string(take));
         take_.stop_sent = true;  // here: "stop accepted"
         reply(MsgType::StopAck, f.msg_id, take, true, ErrorCode::Ok, "");
@@ -763,6 +904,10 @@ void SessionController::handle_port_event(const PortEvent& e) {
         take_.local_started = true;
         take_.local_first_sample_ns = e.first_sample_ns;
         take_.local_late_frames = e.late_frames;
+        take_.local_started_seen_ns = time::monotonic_ns();
+        take_.local_first_frame = e.first_frame;
+        take_.device_period_frames = e.device_period_frames;
+        take_.device_periods = e.device_periods;
         apply(SessionEvent::LocalTakeStarted, "local recording started");
         history(tag + "LOCAL recording started" +
                 (e.late_frames ? " (late by " + std::to_string(e.late_frames) + " frames)" : ""));
@@ -776,6 +921,11 @@ void SessionController::handle_port_event(const PortEvent& e) {
             send_or_queue(std::move(f));
         }
         compute_start_offset();
+        if (stop_after_start_ && cfg_.role == Role::Producer) {
+            stop_after_start_ = false;
+            std::string ignored;
+            stop_take(ignored);
+        }
         return;
     }
     // Finalised (or cancelled)
@@ -784,6 +934,7 @@ void SessionController::handle_port_event(const PortEvent& e) {
         return;
     }
     take_.local_finalised = true;
+    take_.local_finalised_ns = time::monotonic_ns();
     take_.local_status = e.status;
     take_.local_frames = e.frames;
     take_.local_file = e.file;
@@ -814,6 +965,7 @@ void SessionController::handle_port_event(const PortEvent& e) {
         f.set_str(Tag::StopReason, e.stop_reason);
         send_or_queue(std::move(f));
         take_open_ = false;
+        log_take_timing(std::string(take_status_name(e.status)));
     } else {
         maybe_complete();
     }
@@ -827,6 +979,8 @@ bool SessionController::send_stop_schedule(std::int64_t stop_at) {
     f.type = MsgType::StopSchedule;
     f.set_u32(Tag::TakeId, take_.take_id);
     f.set_i64(Tag::StopAtNs, stop_at);
+    take_.stop_cmd_ns = time::monotonic_ns();
+    take_.stop_at_local_ns = stop_at;
     take_.stop_sent = send(std::move(f));
     stop_owed_ = !take_.stop_sent;
     stop_ack_deadline_ = time::monotonic_ns() + ms(2000);
@@ -841,6 +995,7 @@ void SessionController::maybe_complete() {
     if (take_.peer_finalised || take_.peer_report_timed_out) {
         apply(SessionEvent::TakeComplete, take_.peer_finalised ? "both takes reported" : "performer report timed out");
         take_open_ = false;
+        log_take_timing(take_.peer_finalised ? "complete" : "performer report timed out");
     }
 }
 
@@ -903,6 +1058,93 @@ void SessionController::check_timers() {
     }
 }
 
+void SessionController::cancel_before_start(const std::string& why) {
+    Frame c;
+    c.type = MsgType::Cancel;
+    c.set_u32(Tag::TakeId, take_.take_id);
+    c.set_u16(Tag::ErrorCode, static_cast<std::uint16_t>(ErrorCode::Cancelled));
+    send(std::move(c));
+    port_.cancel_take();
+    take_.cancelled = true;
+    take_.cancel_reason = why;
+    history("take " + std::to_string(take_.take_id) + ": " + why + "; CANCEL sent, nothing recorded");
+    apply(SessionEvent::TakeRefused, why);
+    take_open_ = false;
+    log_take_timing("cancelled");
+}
+
+void SessionController::log_take_timing(const std::string& outcome) {
+    const TakeView& t = take_;
+    const bool producer = cfg_.role == Role::Producer;
+    std::vector<log::Field> fields{
+        {"take", std::to_string(t.take_id)},
+        {"session", session_id_},
+        {"role", producer ? "producer" : "performer"},
+        {"outcome", outcome},
+        {"start_lead_ms", std::to_string(t.start_lead_ms)},
+        {"start_at_local_ns", ns_text(t.start_at_local_ns)},
+        {"local_first_sample_ns", ns_text(t.local_first_sample_ns)},
+        {"local_first_frame", std::to_string(t.local_first_frame)},
+        {"local_late_frames", std::to_string(t.local_late_frames)},
+        {"first_sample_minus_scheduled_ms", ms_between(t.start_at_local_ns, t.local_first_sample_ns)},
+        {"local_start_seen_ns", ns_text(t.local_started_seen_ns)},
+        {"stop_cmd_ns", ns_text(t.stop_cmd_ns)},
+        {"stop_at_local_ns", ns_text(t.stop_at_local_ns)},
+        {"local_finalised_ns", ns_text(t.local_finalised_ns)},
+        {"local_status", t.local_finalised ? std::string(take_status_name(t.local_status)) : std::string("none")},
+        {"local_frames", std::to_string(t.local_frames)},
+        {"device_period_frames", std::to_string(t.device_period_frames)},
+        {"device_periods", std::to_string(t.device_periods)},
+        {"theta_ns", ns_text(t.theta_ns)},
+        {"theta_uncertainty_ns", ns_text(t.theta_unc_ns)},
+        {"offset_samples", std::to_string(t.offset_samples)},
+    };
+    if (producer) {
+        fields.insert(fields.end(), {
+            {"arm_sent_ns", ns_text(t.arm_sent_ns)},
+            {"arm_ack_rx_ns", ns_text(t.arm_ack_rx_ns)},
+            {"schedule_sent_ns", ns_text(t.schedule_sent_ns)},
+            {"start_ack_rx_ns", ns_text(t.start_ack_rx_ns)},
+            {"arm_to_ack_ms", ms_between(t.arm_sent_ns, t.arm_ack_rx_ns)},
+            {"schedule_to_ack_ms", ms_between(t.schedule_sent_ns, t.start_ack_rx_ns)},
+            {"ack_margin_before_start_ms", ms_between(t.start_ack_rx_ns, t.start_at_local_ns)},
+            {"peer_planned_start_ns", ns_text(t.peer_planned_start_ns)},
+            {"peer_first_sample_ns", ns_text(t.peer_first_sample_ns)},
+            {"peer_first_frame", std::to_string(t.peer_first_frame)},
+            {"peer_late_frames", std::to_string(t.peer_late_frames)},
+            {"peer_started_rx_ns", ns_text(t.peer_started_rx_ns)},
+            {"stop_ack_rx_ns", ns_text(t.stop_ack_rx_ns)},
+            {"peer_finalised_rx_ns", ns_text(t.peer_finalised_rx_ns)},
+            {"peer_status", t.peer_finalised ? std::string(take_status_name(t.peer_status)) : std::string("unknown")},
+            {"peer_frames", std::to_string(t.peer_frames)},
+            {"start_offset_estimate_ms", t.has_start_offset ? ms_value(t.start_offset_ms) : "n/a"},
+            {"start_offset_uncertainty_ms", t.has_start_offset ? ms_value(t.start_offset_unc_ms) : "n/a"},
+        });
+    } else {
+        fields.insert(fields.end(), {
+            {"arm_rx_ns", ns_text(t.arm_rx_ns)},
+            {"schedule_rx_ns", ns_text(t.schedule_rx_ns)},
+            {"start_ack_sent_ns", ns_text(t.start_ack_sent_ns)},
+            {"schedule_rx_to_start_ms", ms_between(t.schedule_rx_ns, t.start_at_local_ns)},
+        });
+    }
+    if (t.cancelled) {
+        fields.push_back({"cancel_reason", t.cancel_reason});
+    }
+    log::Record r;
+    r.mono_ns = time::monotonic_ns();
+    r.utc_ms = time::utc_now_ms();
+    r.level = log::Level::Info;
+    r.component = "session";
+    r.event = "take_timing";
+    r.message = "take timing record (monotonic ns of this PC)";
+    r.fields = std::move(fields);
+    log_.submit(std::move(r));
+    history("take " + std::to_string(t.take_id) + " timing: first sample " +
+            ms_between(t.start_at_local_ns, t.local_first_sample_ns) + " ms after the scheduled time (" +
+            std::to_string(t.local_late_frames) + " late frames), " + std::to_string(t.local_frames) + " frames, " + outcome);
+}
+
 ControllerSnapshot SessionController::snapshot() const {
     ControllerSnapshot s;
     s.role = cfg_.role;
@@ -925,6 +1167,10 @@ ControllerSnapshot SessionController::snapshot() const {
     s.peer_ready = peer_ready_;
     s.peer_consent = peer_consent_;
     s.peer_reasons = peer_reasons_;
+    s.local_checks = local_checks_;
+    s.peer_checks = peer_checks_;
+    s.start_lead_ms = cfg_.timing.start_lead_ms;
+    s.min_start_lead_ms = cfg_.role == Role::Producer ? min_start_lead_ms() : 0;
     s.take = take_;
     s.last_error = last_error_;
     s.invalid_events = invalid_events_;

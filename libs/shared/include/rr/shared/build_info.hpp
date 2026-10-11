@@ -7,7 +7,7 @@ namespace rr {
 
 // Control/media protocol version (PROTOCOL_OVERVIEW.md §7). Major must match between peers.
 inline constexpr std::uint16_t kProtocolMajor = 1;
-inline constexpr std::uint16_t kProtocolMinor = 0;
+inline constexpr std::uint16_t kProtocolMinor = 1;  // 1.1 (Stage 9): optional ReadyChecks, SessionId on commands
 
 struct BuildInfo {
     std::string version;              // "0.1.0"

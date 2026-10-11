@@ -73,6 +73,9 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Outgoing stream (tap -> Opus -> datagrams, send mute) / incoming stream (arrival, queue, jitter buffer, decode, receive mute) | `libs/media/.../outgoing_stream.hpp`, `incoming_stream.hpp` | Implemented, tested |
 | One-page live report, per-direction status texts | `libs/media/.../live_report.hpp` | Implemented, used by the probe; app export unverified (Qt) |
 | Two-way analysis (own/remote tone share, burst round trip) | `tools/audit/analyse_live_duplex.py` | Implemented, used for the Stage 8 evidence |
+| Readiness checklist items, encoding (ADR-019) | `libs/control/.../readiness.hpp` | Implemented, tested |
+| Coordinated take hardening: session id check, start-lead minimum, stop-before-start, timing record | `libs/control/src/session_controller.cpp` | Implemented, tested, real-device runs on one PC |
+| Take timing analysis; WAV verification (independent reader; Windows MCI open check) | `tools/audit/analyse_take_timing.py`, `verify_take_wav.py`, `mci_open_check.c` | Implemented, used for the Stage 9 evidence |
 | UDP clock probes (ADR-010) | - | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |

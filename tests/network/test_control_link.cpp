@@ -145,7 +145,7 @@ TEST_CASE("an unsupported protocol major version fails safely", "[network][link]
     bool version = false;
     for (const auto& e : events) {
         if (e.kind == LinkEventKind::JoinRejected) {
-            version = e.code == rr::ErrorCode::VersionUnsupported && e.text.find("1.0") != std::string::npos;
+            version = e.code == rr::ErrorCode::VersionUnsupported && e.text.find("1.1") != std::string::npos;
         }
     }
     CHECK(version);

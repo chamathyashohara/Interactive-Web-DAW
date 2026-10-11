@@ -1,5 +1,6 @@
 #include "rr/control/recorder_port.hpp"
 
+#include <fstream>
 #include <system_error>
 
 #include "rr/audio/audio_engine.hpp"
@@ -17,26 +18,67 @@ AudioRecorderPort::AudioRecorderPort(audio::AudioEngine& engine, std::filesystem
 
 LocalReadiness AudioRecorderPort::readiness() {
     LocalReadiness r;
-    if (!engine_.capture_open()) {
-        r.reasons.emplace_back("input device not open");
+    auto add = [&r](ReadyItem item, bool ok, std::string detail) {
+        r.checks.push_back(ReadinessCheck{item, ok, true, detail});
+        if (!ok) {
+            r.reasons.push_back(std::string(ready_item_label(item)) + ": " + detail);
+        }
+    };
+    const bool open = engine_.capture_open();
+    add(ReadyItem::InputDevice, open, open ? engine_.capture_description().device_name : "no input device open");
+
+    // Healthy: callbacks arrived within the last 500 ms, no device fault, required rate.
+    std::string engine_detail;
+    bool engine_ok = false;
+    if (!open) {
+        engine_detail = "no input device";
     } else {
-        if (engine_.capture_fault() != audio::DeviceFault::None) {
-            r.reasons.emplace_back("input device fault");
-        }
         const auto& d = engine_.capture_description();
-        const std::uint64_t needed = static_cast<std::uint64_t>(config_.timing.max_take_seconds) * d.sample_rate *
-                                         d.channels * 4ULL + (1ULL << 20);
-        std::error_code ec;
-        std::filesystem::create_directories(root_, ec);
-        const std::uint64_t free_bytes = audio::available_disk_bytes(root_);
-        if (free_bytes < needed) {
-            r.reasons.emplace_back("not enough disk space (" + std::to_string(free_bytes >> 20) + " MB free, " +
-                                   std::to_string(needed >> 20) + " MB needed)");
-        }
-        if (auto* rec = engine_.recorder(); rec != nullptr && rec->status().state != audio::RecorderState::Idle) {
-            r.reasons.emplace_back("a local take is still active");
+        const audio::IngestStats st = engine_.ingest()->stats();
+        const std::int64_t age_ns = st.last_callback_ns == 0 ? -1 : time::monotonic_ns() - st.last_callback_ns;
+        if (engine_.capture_fault() != audio::DeviceFault::None) {
+            engine_detail = "device fault (stopped or rerouted)";
+        } else if (age_ns < 0 || age_ns > 500'000'000) {
+            engine_detail = "no capture callbacks in the last 500 ms";
+        } else if (d.sample_rate != config_.audio.required_sample_rate_hz) {
+            engine_detail = "input at " + std::to_string(d.sample_rate) + " Hz, " +
+                            std::to_string(config_.audio.required_sample_rate_hz) + " Hz required";
+        } else {
+            engine_ok = true;
+            engine_detail = std::to_string(d.sample_rate) + " Hz, " + std::to_string(d.channels) + " ch, last callback " +
+                            std::to_string(age_ns / 1'000'000) + " ms ago, record-ring overruns " +
+                            std::to_string(st.overrun_events);
         }
     }
+    add(ReadyItem::EngineHealthy, engine_ok, engine_detail);
+
+    // Writable: create the folder and write + delete a small probe file.
+    std::error_code ec;
+    std::filesystem::create_directories(root_, ec);
+    const std::filesystem::path probe = root_ / ".rr_write_test";
+    bool writable = false;
+    {
+        std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+        out << "rr";
+        writable = static_cast<bool>(out);
+    }
+    std::filesystem::remove(probe, ec);
+    add(ReadyItem::FolderWritable, writable,
+        (writable ? "" : "cannot write in ") + audio::path_to_utf8(root_));
+
+    // Disk policy: the longest allowed take at the device format (48 kHz stereo if no device) + 1 MB.
+    const std::uint64_t rate = open ? engine_.capture_description().sample_rate : 48000;
+    const std::uint64_t channels = open ? engine_.capture_description().channels : 2;
+    const std::uint64_t needed = static_cast<std::uint64_t>(config_.timing.max_take_seconds) * rate * channels * 4ULL +
+                                 (1ULL << 20);
+    const std::uint64_t free_bytes = audio::available_disk_bytes(root_);
+    add(ReadyItem::DiskSpace, free_bytes >= needed,
+        std::to_string(free_bytes >> 20) + " MB free, " + std::to_string(needed >> 20) + " MB needed for " +
+            std::to_string(config_.timing.max_take_seconds) + " s");
+
+    const bool active = open && engine_.recorder() != nullptr &&
+                        engine_.recorder()->status().state != audio::RecorderState::Idle;
+    add(ReadyItem::NoActiveRecording, !active, active ? "a local take is still active" : "idle");
     r.ok = r.reasons.empty();
     return r;
 }
@@ -94,6 +136,8 @@ std::vector<PortEvent> AudioRecorderPort::poll() {
         e.first_frame = s.first_frame;
         e.first_sample_ns = s.first_sample_ns;
         e.late_frames = s.late_frames;
+        e.device_period_frames = engine_.capture_description().device_period_frames;
+        e.device_periods = engine_.capture_description().device_periods;
         out.push_back(e);
     }
     for (const auto& m : rec->take_finished()) {
@@ -125,6 +169,12 @@ void TestRecorderPort::set_ready(bool ready, const std::string& reason) {
 
 LocalReadiness TestRecorderPort::readiness() {
     LocalReadiness r;
+    // TEST RECORDER: the device-side items are simulated (labelled in the detail text).
+    r.checks.push_back(ReadinessCheck{ReadyItem::InputDevice, ready_, true, ready_ ? "TEST RECORDER" : not_ready_reason_});
+    r.checks.push_back(ReadinessCheck{ReadyItem::EngineHealthy, true, true, "TEST RECORDER"});
+    r.checks.push_back(ReadinessCheck{ReadyItem::FolderWritable, true, true, "TEST RECORDER (nothing is written)"});
+    r.checks.push_back(ReadinessCheck{ReadyItem::DiskSpace, true, true, "TEST RECORDER (nothing is written)"});
+    r.checks.push_back(ReadinessCheck{ReadyItem::NoActiveRecording, !active_, true, active_ ? "a local take is still active" : "idle"});
     if (!ready_) {
         r.reasons.push_back(not_ready_reason_);
     }

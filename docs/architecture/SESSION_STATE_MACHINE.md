@@ -214,3 +214,9 @@ Performer: no SCHEDULE_START within 5 s of ARM → disarm.
 ### 7.4 UI mapping in Stage 6
 - The main window's status box now comes from the controller snapshot (`SessionPanel::status_snapshot`).
 - The Stage 4 "Record (local test)" button, and the producer's local Record, are **disabled while a session is active** (SES-08). Session takes are started only with the producer's "Record (both)".
+
+## 8. Stage 9 notes (ADR-019)
+- **Stop before the start (producer):** Armed/Scheduled → *TakeRefused* → NotReady → Ready, after CANCEL is sent and the local schedule is cancelled. This uses the existing transition; the table is unchanged.
+- **Performer, CANCEL while Recording** (the CANCEL crossed the start): handled as *StopReceived* (Recording → Stopping), so the take is saved.
+- **Producer, Stop while Stopping/Finalising:** refused before reaching the table; nothing changes.
+- **Readiness** is now an itemised checklist (`ReadinessCheck`). NotReady ⇄ Ready still follows "all mandatory items pass".

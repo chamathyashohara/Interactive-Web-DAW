@@ -6,6 +6,7 @@
 #include <functional>
 #include <thread>
 
+#include "rr/control/readiness.hpp"
 #include "rr/control/session_controller.hpp"
 #include "rr/shared/clock.hpp"
 
@@ -216,6 +217,10 @@ TEST_CASE("losing the link before the scheduled start cancels the take on both s
     p.run_until([] { return false; }, 700ms);
     CHECK_FALSE(p.performer.snapshot().take.local_started);
     CHECK(p.performer.snapshot().session != SessionState::Recording);
+    // Both sides mark the take cancelled, so no panel can show a stale "SCHEDULED" row (D-76).
+    CHECK(p.performer.snapshot().take.cancelled);
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.cancelled; }, 2000ms));
+    CHECK_FALSE(p.producer.snapshot().take.local_started);
 }
 
 TEST_CASE("the performer's own Stop & save is reported to the producer", "[control]") {
@@ -326,4 +331,228 @@ TEST_CASE("after a refused join the performer can join again with the right code
     REQUIRE(p.run_until([&] {
         return p.producer.snapshot().session == SessionState::Ready && p.performer.snapshot().session == SessionState::Ready;
     }));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage 9: coordinated recording state and scheduled start/stop
+
+namespace {
+
+bool has_check(const std::vector<ReadinessCheck>& checks, ReadyItem item, bool ok) {
+    for (const auto& c : checks) {
+        if (c.item == item) {
+            return c.ok == ok;
+        }
+    }
+    return false;
+}
+
+rr::net::Frame raw(rr::net::MsgType type, std::uint32_t take) {
+    rr::net::Frame f;
+    f.type = type;
+    f.set_u32(rr::net::Tag::TakeId, take);
+    return f;
+}
+
+}  // namespace
+
+TEST_CASE("Stage 9: both readiness checklists are complete and the producer sees the performer's", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    const auto prod = p.producer.snapshot();
+    for (const auto item : {ReadyItem::InputDevice, ReadyItem::EngineHealthy, ReadyItem::FolderWritable,
+                            ReadyItem::DiskSpace, ReadyItem::NoActiveRecording, ReadyItem::Consent, ReadyItem::Connected}) {
+        INFO(ready_item_id(item));
+        CHECK(has_check(prod.local_checks, item, true));
+    }
+    REQUIRE(p.run_until([&] { return has_check(p.producer.snapshot().peer_checks, ReadyItem::ClockOffset, true); }));
+    CHECK(has_check(p.producer.snapshot().peer_checks, ReadyItem::Consent, true));
+    CHECK(encode_checks(p.performer.snapshot().local_checks).size() < 256);  // fits one TLV string
+
+    // The performer withdraws consent: the producer sees the item fail and Record is refused.
+    p.performer.set_consent(false);
+    REQUIRE(p.run_until([&] { return has_check(p.producer.snapshot().peer_checks, ReadyItem::Consent, false); }));
+    std::string error;
+    CHECK_FALSE(p.producer.start_take(error));
+    CHECK(error.find("performer has not consented") != std::string::npos);
+    // A local device problem is an item too.
+    p.performer.set_consent(true);
+    p.performer_port.set_ready(false, "test: input device unplugged");
+    REQUIRE(p.run_until([&] { return has_check(p.producer.snapshot().peer_checks, ReadyItem::InputDevice, false); }));
+    CHECK_FALSE(p.producer.start_take(error));
+}
+
+TEST_CASE("Stage 9: the checklist encoding round-trips and skips unknown items", "[control][stage9]") {
+    std::vector<ReadinessCheck> c{{ReadyItem::InputDevice, true, true, ""}, {ReadyItem::DiskSpace, false, true, ""},
+                                  {ReadyItem::ClockOffset, true, true, ""}};
+    const std::string text = encode_checks(c);
+    CHECK(text == "input=1,disk=0,clock=1");
+    const auto back = decode_checks(text + ",future_item=1");
+    REQUIRE(back.size() == 3);
+    CHECK(back[1].item == ReadyItem::DiskSpace);
+    CHECK_FALSE(back[1].ok);
+    CHECK_FALSE(all_mandatory_ok(back));
+}
+
+TEST_CASE("Stage 9: Stop before the start cancels the take on both PCs; nothing is recorded", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Scheduled &&
+               p.performer.snapshot().session == SessionState::Scheduled;
+    }));
+    REQUIRE(p.producer.stop_take(error));  // about 350 ms before the start
+    CHECK(p.producer.snapshot().take.cancelled);
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Ready && p.performer.snapshot().session == SessionState::Ready &&
+               p.performer.snapshot().take.cancelled;
+    }));
+    p.run_until([] { return false; }, 600ms);  // past the original start time
+    CHECK_FALSE(p.producer.snapshot().take.local_started);
+    CHECK_FALSE(p.performer.snapshot().take.local_started);
+    // A new take works afterwards.
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_started; }));
+}
+
+TEST_CASE("Stage 9: Stop during stopping/finalisation is refused and changes nothing", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_started; }));
+    REQUIRE(p.producer.stop_take(error));
+    CHECK(p.producer.snapshot().session == SessionState::Stopping);
+    std::string again;
+    CHECK_FALSE(p.producer.stop_take(again));
+    CHECK(again.find("already stopping") != std::string::npos);
+    REQUIRE(p.run_until([&] {
+        auto a = p.producer.snapshot();
+        return a.session == SessionState::Ready && a.take.peer_finalised;
+    }));
+    CHECK(p.producer.snapshot().take.local_status == rr::TakeStatus::Complete);
+    CHECK(p.producer.snapshot().take.peer_status == rr::TakeStatus::Complete);
+}
+
+TEST_CASE("Stage 9: a late SCHEDULE_START (start already past) is refused; nothing records", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    auto arm = raw(rr::net::MsgType::Arm, 40);
+    arm.set_u32(rr::net::Tag::MaxTakeSeconds, 60);
+    REQUIRE(p.producer.link()->send(arm));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().session == SessionState::Armed; }));
+    auto late = raw(rr::net::MsgType::ScheduleStart, 40);
+    late.set_i64(rr::net::Tag::StartAtNs, rr::time::monotonic_ns() - 200'000'000);  // in the past
+    REQUIRE(p.producer.link()->send(late));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().session == SessionState::Ready; }));
+    p.run_until([] { return false; }, 300ms);
+    CHECK_FALSE(p.performer.snapshot().take.local_started);
+    CHECK(p.performer.snapshot().refused_messages >= 1);
+}
+
+TEST_CASE("Stage 9: a command carrying another session id is refused", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    auto arm = raw(rr::net::MsgType::Arm, 41);
+    arm.set_u32(rr::net::Tag::MaxTakeSeconds, 60);
+    arm.set_str(rr::net::Tag::SessionId, "deadbeef");
+    REQUIRE(p.producer.link()->send(arm));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().refused_messages >= 1; }));
+    CHECK(p.performer.snapshot().session == SessionState::Ready);
+    // The same command with the right session id is accepted.
+    arm.set_str(rr::net::Tag::SessionId, p.producer.snapshot().session_id);
+    REQUIRE(p.producer.link()->send(arm));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().session == SessionState::Armed; }));
+}
+
+TEST_CASE("Stage 9: replayed commands after a completed take start nothing", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_started; }));
+    REQUIRE(p.producer.stop_take(error));
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Ready && p.performer.snapshot().session == SessionState::Ready;
+    }));
+    const std::uint32_t take = p.producer.snapshot().take.take_id;
+    const auto before = p.performer.snapshot();
+    auto arm = raw(rr::net::MsgType::Arm, take);
+    arm.set_u32(rr::net::Tag::MaxTakeSeconds, 60);
+    auto sched = raw(rr::net::MsgType::ScheduleStart, take);
+    sched.set_i64(rr::net::Tag::StartAtNs, rr::time::monotonic_ns() + 500'000'000);
+    REQUIRE(p.producer.link()->send(arm));
+    REQUIRE(p.producer.link()->send(sched));
+    REQUIRE(p.run_until([&] {
+        auto s = p.performer.snapshot();
+        return s.refused_messages >= before.refused_messages + 2;
+    }));
+    p.run_until([] { return false; }, 700ms);
+    CHECK(p.performer.snapshot().session == SessionState::Ready);
+    CHECK(p.performer.snapshot().take.take_id == take);  // still the old, completed take
+}
+
+TEST_CASE("Stage 9: a CANCEL that crosses the start stops and saves the performer's take", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().session == SessionState::Recording; }));
+    auto cancel = raw(rr::net::MsgType::Cancel, p.producer.snapshot().take.take_id);
+    cancel.set_u16(rr::net::Tag::ErrorCode, static_cast<std::uint16_t>(rr::ErrorCode::Cancelled));
+    REQUIRE(p.producer.link()->send(cancel));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_finalised; }));
+    CHECK(p.producer.snapshot().take.peer_status == rr::TakeStatus::Complete);
+    REQUIRE(p.producer.stop_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().session == SessionState::Ready; }));
+}
+
+TEST_CASE("Stage 9: the scheduling lead has a measured minimum", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().link_stats.control_rtt_ns > 0; }));
+    p.producer.set_start_lead_ms(100);  // clamped to 300, still below 100 + 200 + 2 RTT + 2 u
+    CHECK(p.producer.snapshot().start_lead_ms == 300);
+    CHECK(p.producer.min_start_lead_ms() > 300);
+    std::string error;
+    CHECK_FALSE(p.producer.start_take(error));
+    CHECK(error.find("start lead") != std::string::npos);
+    CHECK(p.producer.snapshot().session == SessionState::Ready);
+    p.producer.set_start_lead_ms(600);
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_started; }));
+}
+
+TEST_CASE("Stage 9: the timing record is complete and ordered on both PCs", "[control][stage9]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.producer.snapshot().take.peer_started; }));
+    REQUIRE(p.producer.stop_take(error));
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Ready && p.performer.snapshot().session == SessionState::Ready;
+    }));
+    const TakeView a = p.producer.snapshot().take;
+    CHECK(a.arm_sent_ns > 0);
+    CHECK(a.arm_sent_ns <= a.arm_ack_rx_ns);
+    CHECK(a.arm_ack_rx_ns <= a.schedule_sent_ns);
+    CHECK(a.schedule_sent_ns <= a.start_ack_rx_ns);
+    CHECK(a.start_ack_rx_ns < a.start_at_local_ns);  // acknowledged before the start
+    CHECK(a.local_first_sample_ns >= a.start_at_local_ns);
+    CHECK(a.peer_started_rx_ns >= a.start_at_local_ns);
+    CHECK(a.stop_cmd_ns <= a.stop_at_local_ns);
+    CHECK(a.stop_at_local_ns <= a.local_finalised_ns);
+    CHECK(a.peer_finalised_rx_ns > 0);
+    CHECK(a.start_lead_ms == 400);
+    CHECK(a.offset_samples > 0);
+    const TakeView b = p.performer.snapshot().take;
+    CHECK(b.arm_rx_ns > 0);
+    CHECK(b.arm_rx_ns <= b.schedule_rx_ns);
+    CHECK(b.schedule_rx_ns <= b.start_ack_sent_ns);
+    CHECK(b.start_ack_sent_ns < b.start_at_local_ns);
+    CHECK(b.stop_cmd_ns > b.start_at_local_ns);
+    CHECK(b.local_finalised_ns >= b.stop_at_local_ns);
 }

@@ -80,3 +80,39 @@ Troubleshooting a failed join:
 - **"connection refused" (WSA 10061):** wrong address or port, or no session created.
 - **"timed out":** often the firewall or the Public profile. Check the profile and the rule.
 - Check the producer's address on the producer PC with `ipconfig`. It must match the address shown in the Session panel.
+
+## 4. Stage 9: coordinated recording cycle (evidence `2026-10-11_devpc_stage9_coordinated_runs.txt`)
+
+### 4.1 On one PC with real input devices (done on the development PC, 11 Oct 2026)
+Two probes, both `--audio` (the same physical input opened twice; the endpoint is muted in Windows, so the files are silent), with two-way live audio on the real output at −60 dB.
+
+| Run | Producer script | Performer script | Expect |
+|---|---|---|---|
+| C1 | `checks`; five times `record; wait-state Recording; wait 5; stop; wait-state Ready` | `checks`; `blackhole on` for 3 s during a take (live impairment) | 5 takes complete on both PCs. The live impairment changes no recording. Timing records on both sides. |
+| C2 | `record; wait-state Scheduled; stop-now` | — | Cancelled on both PCs; no file |
+| C3 | `record; wait 6` | `wait-state Scheduled; drop-link` | No recording on either PC; the link reconnects to Ready |
+
+Afterwards:
+- `tools/audit/analyse_take_timing.py p.jsonl r.jsonl --same-pc`: start offsets, measured on the shared clock;
+- `tools/audit/verify_take_wav.py`: structure, every sample, frames against the metadata;
+- `tools/audit/mci_open_check.c`: Windows opens each WAV and reports its length.
+
+### 4.2 On two PCs (NOT YET RUN): the Stage 9 acceptance test
+Preconditions: as §2. Both PCs have the input open; the input and output are at 48 kHz; headphones are on.
+1. Producer: **Create session**. Performer: **Join**.
+   - Both PCs show the **readiness checklist** with every item for both PCs.
+   - Untick consent on the performer: the producer shows "Consent: NO" for the other PC, and **Record (both)** is disabled.
+   - Tick it again.
+2. Note the start lead (default 1000 ms) and the minimum shown in the Record button's tooltip.
+3. Producer: **Record (both)**.
+   - The performer shows **"SCHEDULED - recording starts in … s, at …"** and "Session controlled by …".
+   - The producer's performer row reads "SCHEDULED (start time acknowledged)", then "RECORDING (confirmed by the performer)" only after the performer's message.
+   - The performer does **not** click anything at the start.
+4. During the take, make the live audio fail briefly (unplug the performer's network cable for 3 s, or block UDP).
+   - Both recording rows stay RECORDING.
+   - Then **Stop (both)**: both rows show "saved: complete, N frames".
+5. Repeat 3–4 five times.
+6. **Cancel before the start:** Record, then **Cancel take** within the countdown. Both PCs return to Ready and no file appears.
+7. **Disconnect before the start:** Record, then unplug the performer's cable during the countdown. Expect no recording; this is detected only if the loss is noticed before the start (≤ 3 s, ADR-019).
+8. Play every take on each PC in a media player, and run `verify_take_wav.py` on them.
+9. **Measured start offset across PCs:** play one shared click (a hand clap near both microphones, or a tone in both headsets) during a take. Measure the offset between the two files by cross-correlation (LATER-04 tool not yet built: do it by hand in an audio editor and record the method). Report it next to the app's *estimated* offset ± u, with the test conditions (network, distance of the source to each microphone, interfaces). Do not report the estimate as the measurement.
