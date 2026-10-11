@@ -53,6 +53,11 @@ struct TakeMetadata {
     std::string stopped_utc;
     std::int64_t start_mono_ns = 0;
     std::uint64_t first_capture_frame = 0;  // capture frame index of the first sample in the file
+    // Scheduling (Stage 6). Monotonic ns of THIS PC; 0 = not scheduled (started/stopped at once).
+    std::int64_t scheduled_start_ns = 0;
+    std::int64_t first_sample_ns_est = 0;   // estimated callback-time of the first sample (ADR-010)
+    std::uint64_t late_start_frames = 0;    // how far the scheduled start was missed (0 = on time)
+    std::int64_t scheduled_stop_ns = 0;
 
     bool has_gaps = false;
     bool gap_positions_complete = true;

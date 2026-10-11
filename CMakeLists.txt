@@ -50,6 +50,7 @@ add_subdirectory(libs/shared)
 add_subdirectory(libs/session)
 add_subdirectory(libs/audio)
 add_subdirectory(libs/network)
+add_subdirectory(libs/control)
 # libs/network: control transport (Stage 6, in progress).
 
 add_subdirectory(tools/rr_audio_probe)

@@ -16,6 +16,15 @@ struct GapEvent {
     std::uint32_t frames = 0;
 };
 
+// Monotonic time at the entry of a capture callback and the capture frame index just after
+// that callback's block. Used to map a scheduled time to a sample index (ADR-010). The time is
+// when the callback ran, not when the sound hit the microphone: device input latency is not
+// included (and not known).
+struct CaptureStamp {
+    std::int64_t t_ns = 0;
+    std::uint64_t frames_end = 0;
+};
+
 // Why the device is no longer delivering audio (0 = it is fine).
 enum class DeviceFault : std::uint32_t {
     None = 0,
@@ -44,6 +53,7 @@ struct IngestStats {
     std::uint64_t ring_fill_frames = 0;    // record ring fill after the latest callback
     std::uint64_t ring_max_fill_frames = 0;
     std::uint64_t ring_capacity_frames = 0;
+    std::uint64_t stamps_lost = 0;         // stamp ring full (only matters for scheduled starts)
 };
 
 // The capture-callback side of the recording path (THREADING_AND_AUDIO_CALLBACKS.md §3).
@@ -75,6 +85,7 @@ public:
     // ---- consumer side (recorder worker thread only) ----
     SpscRing<float>& samples() noexcept { return samples_; }
     SpscRing<GapEvent>& gaps() noexcept { return gaps_; }
+    SpscRing<CaptureStamp>& stamps() noexcept { return stamps_; }
 
     // ---- any thread ----
     // Peak, RMS and clip count since the previous call (then reset). The three values are
@@ -91,11 +102,13 @@ private:
     const std::uint32_t sample_rate_;
     SpscRing<float> samples_;
     SpscRing<GapEvent> gaps_;
+    SpscRing<CaptureStamp> stamps_;
     std::array<std::atomic<float>, kMaxChannels> peaks_{};
     std::array<std::atomic<double>, kMaxChannels> sum_squares_{};
     std::array<std::atomic<std::uint64_t>, kMaxChannels> level_samples_{};
     std::array<std::atomic<std::uint64_t>, kMaxChannels> clipped_per_channel_{};
     std::atomic<std::uint64_t> ring_fill_frames_{0};
+    std::atomic<std::uint64_t> stamps_lost_{0};
     std::atomic<std::uint64_t> ring_max_fill_frames_{0};
 
     std::atomic<std::uint64_t> frames_captured_{0};

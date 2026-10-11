@@ -18,11 +18,13 @@ add_executable(rr_unit_tests
     audio/test_capture_levels.cpp
     audio/test_monitor_bus.cpp
     audio/test_recorder_pipeline.cpp
+    audio/test_recorder_schedule.cpp
     audio/test_spsc_ring.cpp
     audio/test_take_naming.cpp
     audio/test_wav_format.cpp
     audio/test_wav_inspect.cpp
     audio/test_wav_writer.cpp
+    control/test_session_controller.cpp
     network/test_clock_offset.cpp
     network/test_control_link.cpp
     network/test_control_protocol.cpp
@@ -36,7 +38,7 @@ add_executable(rr_unit_tests
     shared/test_role.cpp
     session/test_states.cpp)
 
-target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network Catch2::Catch2WithMain)
+target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network rr_control Catch2::Catch2WithMain)
 target_include_directories(rr_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/audio")
 rr_set_compiler_options(rr_unit_tests)
 
@@ -57,5 +59,5 @@ endif()
 # ADR-001 boundary check: the Qt-free libraries must not include Qt headers.
 add_test(NAME core_has_no_qt_includes
     COMMAND "${CMAKE_COMMAND}"
-            "-DRR_SCAN_DIRS=${PROJECT_SOURCE_DIR}/libs/shared;${PROJECT_SOURCE_DIR}/libs/session;${PROJECT_SOURCE_DIR}/libs/audio;${PROJECT_SOURCE_DIR}/libs/network"
+            "-DRR_SCAN_DIRS=${PROJECT_SOURCE_DIR}/libs/shared;${PROJECT_SOURCE_DIR}/libs/session;${PROJECT_SOURCE_DIR}/libs/audio;${PROJECT_SOURCE_DIR}/libs/network;${PROJECT_SOURCE_DIR}/libs/control"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/check_no_qt_includes.cmake")

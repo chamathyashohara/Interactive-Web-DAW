@@ -20,7 +20,8 @@ CaptureIngest::CaptureIngest(std::uint32_t channels, std::uint32_t sample_rate, 
       sample_rate_(sample_rate),
       samples_(static_cast<std::size_t>(sample_rate) * (ring_seconds == 0 ? 1 : ring_seconds) *
                (channels == 0 ? 1 : (channels > kMaxChannels ? kMaxChannels : channels))),
-      gaps_(gap_event_capacity) {
+      gaps_(gap_event_capacity),
+      stamps_(1024) {
     for (std::size_t c = 0; c < kMaxChannels; ++c) {
         peaks_[c].store(0.0f, std::memory_order_relaxed);
         sum_squares_[c].store(0.0, std::memory_order_relaxed);
@@ -101,6 +102,10 @@ void CaptureIngest::on_block(const float* interleaved, std::uint32_t frames, std
         }
     }
     last_callback_ns_.store(now_ns, std::memory_order_relaxed);
+    const CaptureStamp stamp{now_ns, start_frame + frames};
+    if (!stamps_.try_write_all(&stamp, 1)) {
+        stamps_lost_.fetch_add(1, std::memory_order_relaxed);
+    }
     frames_captured_.store(start_frame + frames, std::memory_order_release);
     callbacks_.fetch_add(1, std::memory_order_relaxed);
 
@@ -138,6 +143,7 @@ IngestStats CaptureIngest::stats() const noexcept {
     s.ring_fill_frames = ring_fill_frames_.load(std::memory_order_relaxed);
     s.ring_max_fill_frames = ring_max_fill_frames_.load(std::memory_order_relaxed);
     s.ring_capacity_frames = ring_capacity_frames();
+    s.stamps_lost = stamps_lost_.load(std::memory_order_relaxed);
     return s;
 }
 

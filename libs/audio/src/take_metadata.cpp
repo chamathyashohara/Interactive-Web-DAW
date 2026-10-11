@@ -113,6 +113,10 @@ std::string to_json(const TakeMetadata& m) {
     root.str("stopped_utc", m.stopped_utc);
     root.inum("start_monotonic_ns", m.start_mono_ns);
     root.num("first_capture_frame", m.first_capture_frame);
+    root.inum("scheduled_start_monotonic_ns", m.scheduled_start_ns);
+    root.inum("first_sample_monotonic_ns_estimate", m.first_sample_ns_est);
+    root.num("late_start_frames", m.late_start_frames);
+    root.inum("scheduled_stop_monotonic_ns", m.scheduled_stop_ns);
 
     root.boolean("has_gaps", m.has_gaps);
     root.boolean("gap_positions_complete", m.gap_positions_complete);
