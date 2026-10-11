@@ -61,8 +61,8 @@ SessionSnapshot initial_snapshot(Role role) {
     s.link = LinkState::Disconnected;
     s.session = SessionState::NotReady;
     s.not_ready_reasons = {
-        "audio devices are not implemented in this build",
         "networking is not implemented in this build",
+        "producer-controlled session control is not implemented in this build",
     };
     return s;
 }

@@ -15,6 +15,12 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(rr_unit_tests
+    audio/test_recorder_pipeline.cpp
+    audio/test_spsc_ring.cpp
+    audio/test_take_naming.cpp
+    audio/test_wav_format.cpp
+    audio/test_wav_inspect.cpp
+    audio/test_wav_writer.cpp
     shared/test_build_info.cpp
     shared/test_clock.cpp
     shared/test_config.cpp
@@ -24,7 +30,8 @@ add_executable(rr_unit_tests
     shared/test_role.cpp
     session/test_states.cpp)
 
-target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session Catch2::Catch2WithMain)
+target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio Catch2::Catch2WithMain)
+target_include_directories(rr_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/audio")
 rr_set_compiler_options(rr_unit_tests)
 
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")

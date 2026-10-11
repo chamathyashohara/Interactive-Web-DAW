@@ -1,11 +1,19 @@
-# libs/audio: module boundary (no code yet)
+# libs/audio (`rr_audio`, Qt-free)
 
-This folder is deliberately empty at Stage 3 and has **no CMake target**. The
-stage brief says not to start later features just because the folder exists.
+Stage 4: real capture and local recording (ADR-003, ADR-007). It must never include Qt
+headers; the `core_has_no_qt_includes` test checks this.
 
-**Will contain (increment I-1/I-2, ADR-003, ADR-007):**
-- device enumeration and opening via miniaudio 0.11.25 (vendored then, with its SHA-256);
-- separate capture and playback devices by explicit ID, plus the device watchdog;
-- SPSC rings, the capture and playback callbacks, the recorder thread and the safe WAV writer.
+| File | Role | Runs on |
+|---|---|---|
+| `audio_engine.*` | miniaudio context, device enumeration, capture device by explicit ID, notifications | control thread + miniaudio threads |
+| `capture_ingest.*` | the callback-side copy into a preallocated ring, meters, counters, gap events | **real-time callback** |
+| `spsc_ring.hpp` | lock-free bounded single-producer/single-consumer ring | callback / recorder |
+| `take_recorder.*` | recorder worker: drains the ring, writes takes, fills gaps, watchdog, finalisation | recorder thread |
+| `wav_format.*`, `wav_writer.*` | float32 WAV header, `.partial` lifecycle, header refresh, no-overwrite rename | recorder thread |
+| `wav_inspect.*` | structure check, crash recovery to `.recovered.wav`, `.partial` scan | any non-real-time thread |
+| `take_naming.*`, `take_metadata.*` | session/take names, JSON metadata | any non-real-time thread |
+| `file_io.*` | exclusive create, flush-to-disk, rename-without-replace, free space | non-real-time threads |
+| `src/miniaudio_impl.c` | compiles the vendored `third_party/miniaudio/miniaudio.h` (0.11.25, unmodified) | — |
 
-**Rules:** Qt-free (ADR-001). Callbacks follow THREADING_AND_AUDIO_CALLBACKS §3–§5.
+Real-time rule (THREADING_AND_AUDIO_CALLBACKS §5): only `CaptureIngest::on_block` runs on the
+audio thread. It never allocates, locks, waits, logs or does I/O.

@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.21)
 project(RemoteRecording
     VERSION 0.1.0
     DESCRIPTION "Two-PC remote recording with local masters and live talkback (SLIIT IT4010, Component 04)"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 if(PROJECT_SOURCE_DIR STREQUAL PROJECT_BINARY_DIR)
     message(FATAL_ERROR
@@ -48,8 +48,10 @@ endif()
 # core_has_no_qt_includes test).
 add_subdirectory(libs/shared)
 add_subdirectory(libs/session)
-# libs/audio and libs/network are module boundaries only at this stage (see
-# their README files). They get targets when their increments start.
+add_subdirectory(libs/audio)
+# libs/network is a module boundary only at this stage (see its README).
+
+add_subdirectory(tools/rr_audio_probe)
 
 if(RR_BUILD_APPS)
     include(RrQt)            # stops with a clear message if Qt is missing

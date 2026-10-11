@@ -1,0 +1,78 @@
+# rr_audio_probe on the development PC, 2026-10-11T05:39:30Z
+# build: core-check-gcc (GCC 16.2, NOT the MSVC product build), commit 49fb868+uncommitted Stage 4 changes
+# NOTE: the default capture endpoint was MUTED in Windows (Core Audio IAudioEndpointVolume::GetMute = True, level 92%),
+# so all samples are digital zero (-120 dBFS). This shows the capture/recording path works on real WASAPI hardware,
+# NOT that speech was captured.
+
+$ rr_audio_probe --list
+backend: WASAPI
+
+INPUT devices:
+   0  Microphone Array (2- Realtek(R) Audio)   [default]
+   1  Headset Microphone (Oculus Virtual Audio Device)
+
+OUTPUT devices:
+   0  DELL G2722HS (NVIDIA High Definition Audio)
+   1  Speakers (2- Realtek(R) Audio)   [default]
+   2  Headphones (Oculus Virtual Audio Device)
+
+$ rr_audio_probe --record 3 --out <scratch>
+device: [0] Microphone Array (2- Realtek(R) Audio) via WASAPI
+format written: float32, 2 ch, 48000 Hz
+device internal: 32-bit IEEE Floating Point, 2 ch, 48000 Hz, period 480 frames x 3
+note: no sample-format conversion by miniaudio (device stream is float32)
+note: WASAPI shared mode: samples are the Windows audio engine's capture stream (after any driver/Windows processing), not raw converter data
+t= 1.1s state=recording frames=50400 peak dBFS: ch1 -120.0 ch2 -120.0
+t= 2.0s state=recording frames=97440 peak dBFS: ch1 -120.0 ch2 -120.0
+t= 3.0s state=recording frames=146400 peak dBFS: ch1 -120.0 ch2 -120.0
+
+result: status=complete finalised=yes stop=user frames=146400 duration=3.050s has_gaps=no
+capture stats: callbacks=306 frames=146880 overruns=0 (frames 0) timing_anomalies=0 clipped=0 max_callback_us=149.3
+metadata: <scratch>/real_capture2\20261011-053931_44b2b559\take01_producer_44b2b559.json
+file: <scratch>/real_capture2\20261011-053931_44b2b559\take01_producer_44b2b559.wav
+  valid finished float32 WAV: YES
+  format tag 3, 2 ch, 48000 Hz, 32 bits, block 8
+  file 1171258 bytes, data offset 58, data in header 1171200, data present 1171200
+  frames 146400 (fact 146400), duration 3.050 s
+frames in file == metadata: yes
+exit=0
+
+$ type take01_producer_*.json
+{
+  "schema": "rr.take.v1",
+  "take": 1,
+  "role": "producer",
+  "session_id": "44b2b559",
+  "app_version": "0.1.0 (rr_audio_probe)",
+  "status": "complete",
+  "finalised": true,
+  "stop_reason": "user",
+  "error": "",
+  "file": "take01_producer_44b2b559.wav",
+  "partial_file": "take01_producer_44b2b559.wav.partial",
+  "sample_format": "float32 (IEEE 754), little-endian, interleaved",
+  "wav_format_tag": 3,
+  "sample_rate": 48000,
+  "channels": 2,
+  "frames": 146400,
+  "duration_s": 3.050000,
+  "capture": {
+    "source_kind": "device",
+    "backend": "WASAPI",
+    "device_name": "Microphone Array (2- Realtek(R) Audio)",
+    "device_internal_format": "32-bit IEEE Floating Point",
+    "device_internal_rate": 48000,
+    "device_internal_channels": 2,
+    "device_period_frames": 480,
+    "device_periods": 3,
+    "conversion_notes": ["no sample-format conversion by miniaudio (device stream is float32)", "WASAPI shared mode: samples are the Windows audio engine's capture stream (after any driver/Windows processing), not raw converter data"]
+  },
+  "started_utc": "2026-10-11T05:39:31.626Z",
+  "stopped_utc": "2026-10-11T05:39:34.663Z",
+  "start_monotonic_ns": 56239715154500,
+  "first_capture_frame": 0,
+  "has_gaps": false,
+  "gap_positions_complete": true,
+  "gaps": [],
+  "callback_timing_anomalies": 0
+}

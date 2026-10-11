@@ -14,12 +14,14 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QStringList>
 #include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "audio_panel.hpp"
 #include "rr/shared/build_info.hpp"
 
 namespace rr::ui {
@@ -34,8 +36,9 @@ const char* const kSecurityNotice =
     "network (ADR-012).";
 
 const char* const kStageNotice =
-    "Stage 3 foundation build: audio devices, recording and networking are not "
-    "implemented yet. Nothing is being recorded, sent or received.";
+    "Stage 4 build: the input device, meters and LOCAL recording work. Networking, live "
+    "talkback and producer-controlled sessions are not implemented yet: nothing is sent or "
+    "received, and the connection/session status above stays 'Not connected / Not ready'.";
 
 }  // namespace
 
@@ -74,7 +77,10 @@ MainWindow::MainWindow(DiagnosticsSources sources, rr::log::Logger& logger, QWid
 }
 
 QWidget* MainWindow::build_session_tab() {
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
     auto* page = new QWidget;
+    scroll->setWidget(page);
     auto* layout = new QVBoxLayout(page);
 
     role_banner_ = new QLabel(qs(rr::role_display_name(sources_.role)));
@@ -100,6 +106,9 @@ QWidget* MainWindow::build_session_tab() {
     form->addRow(tr("Session:"), session_value_);
     layout->addWidget(status_box);
 
+    audio_panel_ = new AudioPanel(sources_.role, *sources_.config, logger_);
+    layout->addWidget(audio_panel_);
+
     auto* stage = new QLabel(QString::fromUtf8(kStageNotice));
     stage->setWordWrap(true);
     layout->addWidget(stage);
@@ -110,7 +119,7 @@ QWidget* MainWindow::build_session_tab() {
     layout->addWidget(security);
 
     layout->addStretch(1);
-    return page;
+    return scroll;
 }
 
 QWidget* MainWindow::build_diagnostics_tab() {
@@ -144,7 +153,9 @@ void MainWindow::render_snapshot() {
 void MainWindow::refresh_diagnostics() {
     QScrollBar* bar = diagnostics_view_->verticalScrollBar();
     const int position = bar->value();
-    diagnostics_view_->setPlainText(diagnostics_text(sources_));
+    diagnostics_view_->setPlainText(diagnostics_text(sources_) + QLatin1Char('
+') +
+                                    (audio_panel_ ? audio_panel_->diagnostics_text() : QString()));
     bar->setValue(position);
 }
 
@@ -194,8 +205,20 @@ MainWindow::SelfCheck MainWindow::run_self_check() const {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    // Nothing can be recording in this build, so closing needs no confirmation yet
-    // (ERR-05a adds it once takes exist).
+    // ERR-05a: closing during a take asks first; confirming finalises the take properly.
+    if (audio_panel_ && audio_panel_->recording_active()) {
+        const auto answer = QMessageBox::question(
+            this, tr("Recording in progress"),
+            tr("A take is being recorded. Stop the recording, save it and quit?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+    }
+    if (audio_panel_) {
+        audio_panel_->shut_down_audio();
+    }
     logger_.log(rr::log::Level::Info, "ui", "main_window_close", "main window closing");
     event->accept();
 }

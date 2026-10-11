@@ -62,8 +62,9 @@ struct SessionSnapshot {
     std::vector<std::string> not_ready_reasons;
 };
 
-// The state every app starts in: not connected, not ready, with the reasons. In the
-// Stage 3 build nothing can change it, because audio and networking do not exist yet.
+// The state every app starts in: not connected, not ready, with the reasons. Until
+// networking and session control exist nothing changes it. Local test recordings (Stage 4)
+// are not session takes and do not change this state.
 SessionSnapshot initial_snapshot(Role role);
 
 // One-line session status for the UI, e.g. "Not ready: audio devices not set up".

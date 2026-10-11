@@ -13,14 +13,25 @@ v2 §4.1).
 
 ## Status
 
-**Stage 3 (buildable two-application foundation) is in place.** Version 0.1.0.
+**Stage 4 (real local audio capture and WAV recording) is implemented.** Version 0.1.0.
 
-- **Implemented:** CMake build with presets, two Qt Widgets apps that identify their role and show "Not connected / Not ready", Qt-free shared and session libraries, structured logging, diagnostics tab, 26 unit and boundary tests.
-- **Not implemented** (by design at this stage): audio devices, recording, networking.
-- **Verified on the development PC:** the Qt-free libraries build with GCC 16.2 with 0 warnings, and 26/26 tests pass. Configuration fails with clear messages when the toolchain or Qt is missing.
-- **Not verified:** the MSVC build and the two Qt apps. MSVC v143 and Qt are not installed on the development PC.
+- **Implemented:**
+  - audio engine (miniaudio 0.11.25, WASAPI, explicit device IDs, native rate and channels);
+  - a lock-free capture path;
+  - a recorder worker that writes float32 WAV `.partial` files, finalises them and never overwrites;
+  - gap, device-loss and disk-error handling;
+  - crash recovery;
+  - JSON take metadata;
+  - an audio panel in both apps;
+  - the `rr_audio_probe` CLI.
+- **Verified on the development PC** (GCC 16.2 build):
+  - 52/52 tests pass, 0 warnings, stable over 15 repeats;
+  - a real WASAPI capture of 4.07 s gives a finalised WAV whose header matches the file, and Windows' media pipeline opens it.
+- **Not verified:**
+  - **audible signal content**: the PC's microphone endpoint is muted in Windows, so all samples were 0;
+  - the MSVC build and the Qt apps, because MSVC v143 and Qt are not installed.
 
-See [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md) and [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
+See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md`, [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md) and [docs/STAGE_PLAN.md](docs/STAGE_PLAN.md).
 
 ## Build (Windows, MSVC 2022, Qt 6.11.3)
 
@@ -40,11 +51,13 @@ Prerequisites, offline use and troubleshooting: [docs/build/WINDOWS_BUILD.md](do
 | `libs/shared` | Qt-free: roles, version/build info, error codes, configuration, clock, logging |
 | `libs/session` | Qt-free: link/session state definitions and the initial snapshot |
 | `libs/ui_common` | Qt Widgets code shared by both apps: start-up/shutdown, main window, diagnostics |
-| `libs/audio`, `libs/network` | Module boundaries only (README). Code comes in later increments. |
+| `libs/audio` | Qt-free: capture engine, ring, recorder worker, WAV writer/inspector, take naming/metadata |
+| `libs/network` | Module boundary only (README) |
+| `tools/rr_audio_probe` | CLI device and recording check (no Qt) |
 | `tests/` | Catch2 unit tests and the no-Qt-in-core boundary check |
 | `cmake/` | Toolchain/Qt checks, version generation, compiler options |
 | `scripts/build-windows.ps1` | Configure + build + test with the presets |
-| `third_party/` | Dependency policy (nothing vendored yet) |
+| `third_party/` | Dependency policy. miniaudio 0.11.25 vendored. |
 | `docs/` | Research index, audit, requirements, architecture, ADRs, build guide |
 
 Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE_MAP.md).

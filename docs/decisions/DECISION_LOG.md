@@ -45,3 +45,14 @@ until the architecture review.
 | D-23 | 2026-10-11 | ADR-001's `rr_core` is split into the Qt-free folders `libs/shared` and `libs/session` (and later `libs/audio`, `libs/network`). `rr_app` becomes `libs/ui_common` (`rr_ui`). | Follows the Stage 3 brief's suggested layout. Module boundaries are visible in the file system. The Qt-free rule is enforced by a test. | Implemented |
 | D-24 | 2026-10-11 | Catch2 fetched by URL with a pinned SHA-256. Offline override documented. Nothing vendored yet. | Reproducible without committing third-party code | Implemented. Fetch verified. |
 | D-25 | 2026-10-11 | AUTOMOC per Qt target instead of `qt_standard_project_setup()` | Keeps moc away from the Qt-free libraries and the tests | Implemented. Not run with Qt. |
+
+## Stage 4 (11 Oct 2026): local capture and recording
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-26 | 2026-10-11 | When the capture ring overflows, the missing frames are **filled with silence** in the file, and each gap's position and length are written to the take JSON (`gaps`, `has_gaps`). The UI shows a warning. | Keeps the take's timeline (sample positions) correct for later alignment. Dropping frames would silently shift everything after them. The inserted silence is documented, never hidden. | Implemented, tested (test signal) |
+| D-27 | 2026-10-11 | Proposed amendment A-1 applied: the master records the device's **native channel count** (1–8). Float WAV tag 3 for ≤ 2 ch, WAVE_FORMAT_EXTENSIBLE above that. | Avoids a hidden miniaudio down-mix. The development PC's mic array delivers 2 channels. | Implemented. Needs the researcher's confirmation (A-1). |
+| D-28 | 2026-10-11 | The performer app gets a clearly labelled **"Record (local test)"** button in Stage 4 | The Stage 4 brief requires both apps to record independently. SES-08 (the performer cannot start session takes) applies from the session stage and will gate this button then. | Implemented. Temporary. |
+| D-29 | 2026-10-11 | A device that is stopped, rerouted, or silent for 500 ms (no callbacks) while recording ends the take as `incomplete_device`. The audio captured so far is finalised. | ERR-06. Never present a truncated take as complete. Rerouting is disabled (ADR-003), so any reroute is treated as a fault. | Implemented, tested (test signal) |
+| D-30 | 2026-10-11 | WAV writing is in-house (`WavWriter`), not `ma_encoder`. The `.partial` file is created exclusively (`wbx`), the header refreshed every 5 s, then flush + `MoveFileExW` without replace. | ADR-007 requirements: crash-recoverable, no overwrite, explicit failure states | Implemented, tested |
+| D-31 | 2026-10-11 | miniaudio 0.11.25 vendored unmodified (`third_party/miniaudio`, SHA-256 recorded). Only device I/O compiled (`MA_NO_DECODING`, `MA_NO_ENCODING`, …), WASAPI only on Windows. | ADR-003. Smallest build surface. | Implemented |

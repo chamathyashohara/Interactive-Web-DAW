@@ -7,6 +7,7 @@
 #include "rr/session/states.hpp"
 
 class QLabel;
+namespace rr::ui { class AudioPanel; }
 class QPlainTextEdit;
 class QTabWidget;
 class QTimer;
@@ -50,6 +51,7 @@ private:
     QLabel* session_value_ = nullptr;
     QPlainTextEdit* diagnostics_view_ = nullptr;
     QTimer* diagnostics_timer_ = nullptr;
+    AudioPanel* audio_panel_ = nullptr;
 };
 
 }  // namespace rr::ui
