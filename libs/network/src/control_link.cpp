@@ -487,6 +487,22 @@ void ControlLink::run() {
                 TcpSocket::wait({}, {&conn_}, 20);
             }
         }
+        // Graceful close: closing with unread data in the receive buffer (e.g. the peer's
+        // heartbeats) makes Windows send a reset, which can destroy SESSION_CLOSED before the
+        // peer reads it. Half-close, then drain until the peer closes or 500 ms pass.
+        conn_.shutdown_send();
+        const std::int64_t drain_until = time::monotonic_ns() + 500'000'000;
+        while (time::monotonic_ns() < drain_until) {
+            std::string ignored;
+            std::uint8_t sink[512];
+            const long n = conn_.recv_some(sink, sizeof sink, ignored);
+            if (n < 0) {
+                break;  // peer closed (-2) or error
+            }
+            if (n == 0) {
+                TcpSocket::wait({&conn_}, {}, 20);
+            }
+        }
     }
     conn_.close();
     listener_.close();

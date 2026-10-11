@@ -1,0 +1,532 @@
+Stage 6 - two-instance session control runs on ONE development PC (2026-10-11)
+=============================================================================
+Tool: build/core-check-gcc/bin/rr_session_probe.exe (MinGW g++ 16.2 core-check build, NOT the MSVC
+product build). Both "producer" and "performer" are separate processes on the SAME PC.
+These runs are NOT two-PC tests and say nothing about Wi-Fi/LAN latency between machines.
+"Wi-Fi bound" runs bind the producer to the Wi-Fi adapter address 192.168.1.222, but traffic between
+two processes on one PC never leaves the machine.
+
+Pairing codes printed on the producer console were replaced with <redacted-in-evidence> in this
+copy. The JSONL logs were checked for the real codes: 0 occurrences in every run (the logs carry
+"<redacted>" instead).
+
+Recorder: "TEST RECORDER" = no audio, nothing written (TestRecorderPort), unless stated "--audio".
+
+Interfaces reported by `rr_session_probe --interfaces`:
+  192.168.1.222    Wi-Fi 2                                  private LAN
+  127.0.0.1        Loopback Pseudo-Interface 1              loopback
+
+Results overview
+  A  loopback, full take (test recorder)                          PASS
+  B  wrong pairing code                                           PASS (refused E_BAD_PAIRING_CODE)
+  C  --audio on both, link dropped while recording, reconnect     PASS (2 WAVs, 250791 frames each)
+  D  performer announces protocol major 2                         PASS (refused E_VERSION_UNSUPPORTED)
+  E  Wi-Fi bound, Stop pressed while link down                    FAIL -> defect found (see below)
+  E2 same as E after the fix                                      PASS
+  F  nothing listening on the port                                PASS (WSA 10061 reported, Disconnected)
+  G  producer closes the session mid-take                         PASS after fix (performer stops+saves)
+
+Defects found by these runs and fixed in the same change:
+  1. (E) Producer: a STOP_SCHEDULE that could not be sent because the link was down was never
+     re-sent; the performer kept recording until the session closed. Fix: the stop is "owed" and
+     re-sent with a new stop time when the performer reconnects (performer take ends later; E2
+     shows producer 155962 frames vs performer 163405 frames, reported honestly).
+  2. (E) Performer: SESSION_CLOSED while Recording left the take open. Fix: when the link ends for
+     good (Disconnected) during Recording, the performer stops and saves its own take.
+  3. (G, found by a new unit test) ControlLink::stop closed the socket right after SESSION_CLOSED;
+     with unread heartbeats in the receive buffer Windows sends RST (WSA 10054), destroying
+     SESSION_CLOSED. Fix: half-close + drain up to 500 ms before closing.
+
+Run C take files (scratchpad only, not committed; microphone muted -> silent):
+  take01_performer_04c84333.wav fmt 3 48000 Hz 2 ch 32 bit 250791 frames 5.225 s peak 0.000000
+  take01_producer_04c84333.wav  fmt 3 48000 Hz 2 ch 32 bit 250791 frames 5.225 s peak 0.000000
+  performer json: status complete, stop_reason producer_stop, late_start_frames 0
+  producer json:  status complete, stop_reason user,          late_start_frames 0
+  Both processes captured the SAME device on the SAME PC, so equal frame counts prove only that the
+  scheduled start/stop machinery agrees with itself; they are not a two-PC synchronisation result.
+
+
+----- run A: producer.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session da04b3b2 on 127.0.0.1:52000  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait-ready
+[producer] 07:30:20.593  session da04b3b2 created on 127.0.0.1:52000
+[producer] 07:30:20.593  consent given
+[producer] 07:30:20.593  link Listening: listening on 127.0.0.1:52000
+[producer] 07:30:20.625  link Handshaking: connection from 127.0.0.1
+[producer] 07:30:20.625  link Connected: performer joined
+[producer] 07:30:20.625  connected (Probe performer at 127.0.0.1)
+[producer] 07:30:22.727  state NotReady -> Ready (all readiness conditions hold)
+[producer] > record
+[producer] > wait 3
+[producer] 07:30:22.727  state Ready -> Armed (producer pressed Record)
+[producer] 07:30:22.727  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 07:30:22.806  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 07:30:22.868  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 07:30:22.868  take 1: START_ACK received; both scheduled
+[producer] 07:30:23.821  state Scheduled -> Recording (local recording started)
+[producer] 07:30:23.821  take 1: LOCAL recording started
+[producer] 07:30:23.868  take 1: performer CONFIRMED its recording started
+[producer] 07:30:23.868  take 1: estimated recording-start offset (performer - producer) -0.010 ms +/- 0.015 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > stop
+[producer] > wait-state Ready 10
+[producer] 07:30:25.736  state Recording -> Stopping (producer pressed Stop)
+[producer] 07:30:25.736  take 1: STOP_SCHEDULE sent
+[producer] 07:30:25.798  take 1: STOP_ACK received
+[producer] 07:30:26.049  state Stopping -> Finalising (local take complete)
+[producer] 07:30:26.049  take 1: LOCAL take complete (finalised), 107037 frames
+[producer] 07:30:26.081  take 1: performer's take complete, 107037 frames
+[producer] 07:30:26.081  state Finalising -> Completed (both takes reported)
+[producer] 07:30:26.081  state Completed -> Ready (all readiness conditions hold)
+[producer] > wait 1
+[producer] > quit
+
+[producer] SUMMARY
+  link Connected, session Ready, session id da04b3b2, peer 'Probe performer' at 127.0.0.1
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.156 ms, clock offset (peer - local) 0.004 ms +/- 0.015 ms from 7 samples
+  frames sent 30 received 30, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 107037 frames, (test recorder: no file))
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+  estimated recording-start offset (performer - producer): -0.010 ms +/- 0.015 ms (clock-offset uncertainty only; device input latency not included)
+
+----- run A: performer.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait-ready 30
+[performer] 07:30:20.611  joining 127.0.0.1:52000
+[performer] 07:30:20.611  consent given
+[performer] 07:30:20.625  link Connecting: connecting to 127.0.0.1:52000
+[performer] 07:30:20.625  link Handshaking: connected, checking versions
+[performer] 07:30:20.625  link Connected: joined the producer's session
+[performer] 07:30:20.625  connected (Probe producer at 127.0.0.1)
+[performer] 07:30:22.681  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-closed
+[performer] 07:30:22.774  state Ready -> Armed (producer armed take 1)
+[performer] 07:30:22.774  take 1: ARM accepted
+[performer] 07:30:22.837  state Armed -> Scheduled (start scheduled)
+[performer] 07:30:22.837  take 1: start scheduled in 968 ms (clock offset 5 us +/- 16 us)
+[performer] 07:30:23.821  state Scheduled -> Recording (local recording started)
+[performer] 07:30:23.821  take 1: LOCAL recording started
+[performer] 07:30:25.766  state Recording -> Stopping (producer stopped take 1)
+[performer] 07:30:25.766  take 1: stop scheduled by the producer
+[performer] 07:30:26.049  state Stopping -> Completed (local take complete)
+[performer] 07:30:26.049  state Completed -> Ready (all readiness conditions hold)
+[performer] 07:30:26.049  take 1: LOCAL take complete (finalised), 107037 frames
+[performer] 07:30:27.143  the other side closed the session (E_SHUTDOWN)
+[performer] 07:30:27.143  link Disconnected: the other side closed the session (E_SHUTDOWN)
+[performer] 07:30:27.143  state Ready -> NotReady (control link lost)
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id da04b3b2, peer 'Probe producer' at 127.0.0.1
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.159 ms, clock offset (peer - local) 0.006 ms +/- 0.017 ms from 7 samples
+  frames sent 30 received 31, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 107037 frames, (test recorder: no file))
+
+----- run B: b_prod.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session d544ccd3 on 127.0.0.1:52001  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait 3
+[producer] 07:30:55.355  session d544ccd3 created on 127.0.0.1:52001
+[producer] 07:30:55.355  consent given
+[producer] 07:30:55.355  link Listening: listening on 127.0.0.1:52001
+[producer] 07:30:55.798  link Handshaking: connection from 127.0.0.1
+[producer] 07:30:55.798  link Listening: peer refused
+[producer] > quit
+
+[producer] SUMMARY
+  link Listening, session NotReady, session id d544ccd3, peer '' at 
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT -0.000 ms, clock offset (peer - local) 0.000 ms +/- -0.000 ms from 0 samples
+  frames sent 2 received 2, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+
+----- run B: b_perf.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait 2
+[performer] 07:30:55.796  joining 127.0.0.1:52001
+[performer] 07:30:55.796  consent given
+[performer] 07:30:55.814  link Connecting: connecting to 127.0.0.1:52001
+[performer] 07:30:55.814  link Handshaking: connected, checking versions
+[performer] 07:30:55.814  join refused: wrong pairing code
+[performer] 07:30:55.814  link Disconnected: join refused: E_BAD_PAIRING_CODE - wrong pairing code
+[performer] > quit
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id , peer '' at 
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT -0.000 ms, clock offset (peer - local) 0.000 ms +/- -0.000 ms from 0 samples
+  frames sent 2 received 2, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last error: wrong pairing code
+
+----- run C: c_prod.out -----
+[producer] recorder: audio input: Microphone Array (2- Realtek(R) Audio)
+[producer] session 04c84333 on 127.0.0.1:52002  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait-ready 30
+[producer] 07:30:58.915  session 04c84333 created on 127.0.0.1:52002
+[producer] 07:30:58.919  consent given
+[producer] 07:30:58.920  link Listening: listening on 127.0.0.1:52002
+[producer] 07:30:59.019  link Handshaking: connection from 127.0.0.1
+[producer] 07:30:59.019  link Connected: performer joined
+[producer] 07:30:59.019  connected (Probe performer at 127.0.0.1)
+[producer] 07:31:01.085  state NotReady -> Ready (all readiness conditions hold)
+[producer] > record
+[producer] > wait 6
+[producer] 07:31:01.085  state Ready -> Armed (producer pressed Record)
+[producer] 07:31:01.085  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 07:31:01.163  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 07:31:01.227  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 07:31:01.227  take 1: START_ACK received; both scheduled
+[producer] 07:31:02.187  state Scheduled -> Recording (local recording started)
+[producer] 07:31:02.187  take 1: LOCAL recording started
+[producer] 07:31:02.218  take 1: performer CONFIRMED its recording started
+[producer] 07:31:02.218  take 1: estimated recording-start offset (performer - producer) -0.004 ms +/- 0.011 ms (clock-offset uncertainty only; device input latency not included)
+[producer] 07:31:03.248  link LinkLost: the other side closed the connection
+[producer] 07:31:05.270  link Connected: performer reconnected
+[producer] 07:31:05.270  reconnected (Probe performer at 127.0.0.1)
+[producer] > stop
+[producer] > wait-state Ready 15
+[producer] 07:31:07.088  state Recording -> Stopping (producer pressed Stop)
+[producer] 07:31:07.088  take 1: STOP_SCHEDULE sent
+[producer] 07:31:07.167  take 1: STOP_ACK received
+[producer] 07:31:07.433  state Stopping -> Finalising (local take complete)
+[producer] 07:31:07.433  take 1: LOCAL take complete (finalised), 250791 frames
+[producer] 07:31:07.480  take 1: performer's take complete, 250791 frames
+[producer] 07:31:07.480  state Finalising -> Completed (both takes reported)
+[producer] 07:31:07.480  state Completed -> Ready (all readiness conditions hold)
+[producer] > wait 1
+[producer] > quit
+
+[producer] SUMMARY
+  link Connected, session Ready, session id 04c84333, peer 'Probe performer' at 127.0.0.1
+  recorder: audio input: Microphone Array (2- Realtek(R) Audio)
+  control RTT 0.293 ms, clock offset (peer - local) 0.002 ms +/- 0.011 ms from 9 samples
+  frames sent 38 received 38, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 250791 frames, C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\sess_runs\takes\20261011-073101_04c84333\take01_producer_04c84333.wav)
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+  estimated recording-start offset (performer - producer): -0.004 ms +/- 0.011 ms (clock-offset uncertainty only; device input latency not included)
+
+----- run C: c_perf.out -----
+[performer] recorder: audio input: Microphone Array (2- Realtek(R) Audio)
+[performer] > wait-ready 30
+[performer] 07:30:59.008  joining 127.0.0.1:52002
+[performer] 07:30:59.008  consent given
+[performer] 07:30:59.019  link Connecting: connecting to 127.0.0.1:52002
+[performer] 07:30:59.019  link Handshaking: connected, checking versions
+[performer] 07:30:59.019  link Connected: joined the producer's session
+[performer] 07:30:59.019  connected (Probe producer at 127.0.0.1)
+[performer] 07:31:01.055  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-state Recording 10
+[performer] 07:31:01.131  state Ready -> Armed (producer armed take 1)
+[performer] 07:31:01.131  take 1: ARM accepted
+[performer] 07:31:01.196  state Armed -> Scheduled (start scheduled)
+[performer] 07:31:01.196  take 1: start scheduled in 968 ms (clock offset 1 us +/- 13 us)
+[performer] 07:31:02.187  state Scheduled -> Recording (local recording started)
+[performer] 07:31:02.187  take 1: LOCAL recording started
+[performer] > wait 1
+[performer] > drop-link
+[performer] > wait-link Connected 10
+[performer] > wait-closed
+[performer] 07:31:03.248  link LinkLost: test: connection dropped
+[performer] 07:31:05.270  link Connected: reconnected to the producer
+[performer] 07:31:05.270  reconnected (Probe producer at 127.0.0.1)
+[performer] 07:31:07.135  state Recording -> Stopping (producer stopped take 1)
+[performer] 07:31:07.135  take 1: stop scheduled by the producer
+[performer] 07:31:07.433  state Stopping -> Completed (local take complete)
+[performer] 07:31:07.433  state Completed -> Ready (all readiness conditions hold)
+[performer] 07:31:07.433  take 1: LOCAL take complete (finalised), 250791 frames
+[performer] 07:31:08.539  the other side closed the session (E_SHUTDOWN)
+[performer] 07:31:08.539  link Disconnected: the other side closed the session (E_SHUTDOWN)
+[performer] 07:31:08.539  state Ready -> NotReady (control link lost)
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id 04c84333, peer 'Probe producer' at 127.0.0.1
+  recorder: audio input: Microphone Array (2- Realtek(R) Audio)
+  control RTT 0.429 ms, clock offset (peer - local) 0.002 ms +/- 0.014 ms from 9 samples
+  frames sent 38 received 39, stale dropped 0, protocol errors 0, reconnect attempts 1
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 250791 frames, C:\Users\ASUS\AppData\Local\Temp\claude\d--DAW-RESEARCH-PP1-TEST\1047a2c3-f226-4b6e-8f31-0aa4e4cda5bd\scratchpad\sess_runs\takes\20261011-073101_04c84333\take01_performer_04c84333.wav)
+
+----- run D: d_prod.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session 2bb0b08e on 127.0.0.1:52003  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait 3
+[producer] 07:33:06.505  session 2bb0b08e created on 127.0.0.1:52003
+[producer] 07:33:06.506  consent given
+[producer] 07:33:06.506  link Listening: listening on 127.0.0.1:52003
+[producer] 07:33:06.533  link Handshaking: connection from 127.0.0.1
+[producer] 07:33:06.533  link Listening: peer refused
+[producer] > quit
+
+[producer] SUMMARY
+  link Listening, session NotReady, session id 2bb0b08e, peer '' at 
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT -0.000 ms, clock offset (peer - local) 0.000 ms +/- -0.000 ms from 0 samples
+  frames sent 1 received 1, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+
+----- run D: d_perf.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait 2
+[performer] 07:33:06.521  joining 127.0.0.1:52003
+[performer] 07:33:06.521  consent given
+[performer] 07:33:06.533  link Connecting: connecting to 127.0.0.1:52003
+[performer] 07:33:06.533  link Handshaking: connected, checking versions
+[performer] 07:33:06.533  join refused: producer speaks protocol 1.0, performer offered 2.0
+[performer] 07:33:06.534  link Disconnected: join refused: E_VERSION_UNSUPPORTED - producer speaks protocol 1.0, performer offered 2.0
+[performer] > quit
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id , peer '' at 
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT -0.000 ms, clock offset (peer - local) 0.000 ms +/- -0.000 ms from 0 samples
+  frames sent 1 received 1, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last error: producer speaks protocol 1.0, performer offered 2.0
+
+----- run E: e_prod.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session 2e43f424 on 192.168.1.222:52004  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait-ready 30
+[producer] 07:33:09.597  session 2e43f424 created on 192.168.1.222:52004
+[producer] 07:33:09.598  consent given
+[producer] 07:33:09.598  link Listening: listening on 192.168.1.222:52004
+[producer] 07:33:10.140  link Handshaking: connection from 192.168.1.222
+[producer] 07:33:10.140  link Connected: performer joined
+[producer] 07:33:10.140  connected (Probe performer at 192.168.1.222)
+[producer] 07:33:12.227  state NotReady -> Ready (all readiness conditions hold)
+[producer] > record
+[producer] > wait 4
+[producer] 07:33:12.227  state Ready -> Armed (producer pressed Record)
+[producer] 07:33:12.227  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 07:33:12.289  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 07:33:12.351  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 07:33:12.351  take 1: START_ACK received; both scheduled
+[producer] 07:33:13.299  state Scheduled -> Recording (local recording started)
+[producer] 07:33:13.299  take 1: LOCAL recording started
+[producer] 07:33:13.346  take 1: performer CONFIRMED its recording started
+[producer] 07:33:13.346  take 1: estimated recording-start offset (performer - producer) -0.011 ms +/- 0.019 ms (clock-offset uncertainty only; device input latency not included)
+[producer] 07:33:14.343  link LinkLost: the other side closed the connection
+[producer] > stop
+[producer] > wait-state Ready 15
+[producer] 07:33:16.241  state Recording -> Stopping (producer pressed Stop)
+[producer] 07:33:16.241  take 1: STOP_SCHEDULE sent FAILED (no connection): the performer keeps recording until it reconnects or stops
+[producer] 07:33:16.382  link Connected: performer reconnected
+[producer] 07:33:16.382  reconnected (Probe performer at 192.168.1.222)
+[producer] 07:33:16.552  state Stopping -> Finalising (local take complete)
+[producer] 07:33:16.552  take 1: LOCAL take complete (finalised), 156069 frames
+[producer] 07:33:26.552  take 1: no report from the performer: its take status is UNKNOWN
+[producer] 07:33:26.552  state Finalising -> Completed (performer report timed out)
+[producer] 07:33:26.552  state Completed -> NotReady (not ready: performer not ready: a local take is still active)
+[producer] STEP FAILED: wait-state Ready 15 
+
+[producer] SUMMARY
+  link Connected, session NotReady, session id 2e43f424, peer 'Probe performer' at 192.168.1.222
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.134 ms, clock offset (peer - local) -0.001 ms +/- 0.033 ms from 16 samples
+  frames sent 64 received 63, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 156069 frames, (test recorder: no file))
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK no, TAKE_FINALISED no (timed out: UNKNOWN)
+  estimated recording-start offset (performer - producer): -0.011 ms +/- 0.019 ms (clock-offset uncertainty only; device input latency not included)
+
+----- run E: e_perf.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait-ready 30
+[performer] 07:33:10.131  joining 192.168.1.222:52004
+[performer] 07:33:10.131  consent given
+[performer] 07:33:10.155  link Connecting: connecting to 192.168.1.222:52004
+[performer] 07:33:10.155  link Handshaking: connected, checking versions
+[performer] 07:33:10.155  link Connected: joined the producer's session
+[performer] 07:33:10.155  connected (Probe producer at 192.168.1.222)
+[performer] 07:33:12.194  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-state Recording 10
+[performer] 07:33:12.257  state Ready -> Armed (producer armed take 1)
+[performer] 07:33:12.257  take 1: ARM accepted
+[performer] 07:33:12.320  state Armed -> Scheduled (start scheduled)
+[performer] 07:33:12.320  take 1: start scheduled in 969 ms (clock offset 6 us +/- 18 us)
+[performer] 07:33:13.299  state Scheduled -> Recording (local recording started)
+[performer] 07:33:13.299  take 1: LOCAL recording started
+[performer] > wait 1
+[performer] > drop-link
+[performer] > wait-link Connected 10
+[performer] > wait-closed
+[performer] 07:33:14.342  link LinkLost: test: connection dropped
+[performer] 07:33:16.381  link Connected: reconnected to the producer
+[performer] 07:33:16.381  reconnected (Probe producer at 192.168.1.222)
+[performer] 07:33:31.279  the other side closed the session (E_SHUTDOWN)
+[performer] 07:33:31.280  link Disconnected: the other side closed the session (E_SHUTDOWN)
+
+[performer] SUMMARY
+  link Disconnected, session Recording, session id 2e43f424, peer 'Probe producer' at 192.168.1.222
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.149 ms, clock offset (peer - local) 0.031 ms +/- 0.045 ms from 16 samples
+  frames sent 63 received 65, stale dropped 0, protocol errors 0, reconnect attempts 1
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (not finalised, 0 frames)
+
+----- run E2: e2_prod.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session 8de8a63b on 192.168.1.222:52005  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait-ready 30
+[producer] 07:38:22.460  session 8de8a63b created on 192.168.1.222:52005
+[producer] 07:38:22.460  consent given
+[producer] 07:38:22.460  link Listening: listening on 192.168.1.222:52005
+[producer] 07:38:22.485  link Handshaking: connection from 192.168.1.222
+[producer] 07:38:22.485  link Connected: performer joined
+[producer] 07:38:22.485  connected (Probe performer at 192.168.1.222)
+[producer] 07:38:24.571  state NotReady -> Ready (all readiness conditions hold)
+[producer] > record
+[producer] > wait 4
+[producer] 07:38:24.571  state Ready -> Armed (producer pressed Record)
+[producer] 07:38:24.571  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 07:38:24.634  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 07:38:24.696  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 07:38:24.696  take 1: START_ACK received; both scheduled
+[producer] 07:38:25.635  state Scheduled -> Recording (local recording started)
+[producer] 07:38:25.635  take 1: LOCAL recording started
+[producer] 07:38:25.667  take 1: performer CONFIRMED its recording started
+[producer] 07:38:25.667  take 1: estimated recording-start offset (performer - producer) -0.002 ms +/- 0.011 ms (clock-offset uncertainty only; device input latency not included)
+[producer] 07:38:26.697  link LinkLost: the other side closed the connection
+[producer] > stop
+[producer] > wait-state Ready 15
+[producer] 07:38:28.583  state Recording -> Stopping (producer pressed Stop)
+[producer] 07:38:28.583  take 1: STOP_SCHEDULE sent FAILED (no connection): the performer keeps recording; STOP is re-sent when it reconnects
+[producer] 07:38:28.738  link Connected: performer reconnected
+[producer] 07:38:28.738  reconnected (Probe performer at 192.168.1.222)
+[producer] 07:38:28.738  take 1: STOP_SCHEDULE re-sent after reconnecting (the performer's take ends later than the producer's)
+[producer] 07:38:28.800  take 1: STOP_ACK received
+[producer] 07:38:28.894  state Stopping -> Finalising (local take complete)
+[producer] 07:38:28.894  take 1: LOCAL take complete (finalised), 155962 frames
+[producer] 07:38:29.080  take 1: performer's take complete, 163405 frames
+[producer] 07:38:29.080  state Finalising -> Completed (both takes reported)
+[producer] 07:38:29.080  state Completed -> Ready (all readiness conditions hold)
+[producer] > wait 1
+[producer] > quit
+
+[producer] SUMMARY
+  link Connected, session Ready, session id 8de8a63b, peer 'Probe performer' at 192.168.1.222
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.160 ms, clock offset (peer - local) 0.002 ms +/- 0.011 ms from 7 samples
+  frames sent 33 received 34, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 155962 frames, (test recorder: no file))
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+  estimated recording-start offset (performer - producer): -0.002 ms +/- 0.011 ms (clock-offset uncertainty only; device input latency not included)
+
+----- run E2: e2_perf.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait-ready 30
+[performer] 07:38:22.472  joining 192.168.1.222:52005
+[performer] 07:38:22.472  consent given
+[performer] 07:38:22.485  link Connecting: connecting to 192.168.1.222:52005
+[performer] 07:38:22.485  link Handshaking: connected, checking versions
+[performer] 07:38:22.485  link Connected: joined the producer's session
+[performer] 07:38:22.485  connected (Probe producer at 192.168.1.222)
+[performer] 07:38:24.539  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-state Recording 10
+[performer] 07:38:24.602  state Ready -> Armed (producer armed take 1)
+[performer] 07:38:24.602  take 1: ARM accepted
+[performer] 07:38:24.666  state Armed -> Scheduled (start scheduled)
+[performer] 07:38:24.666  take 1: start scheduled in 967 ms (clock offset 0 us +/- 15 us)
+[performer] 07:38:25.635  state Scheduled -> Recording (local recording started)
+[performer] 07:38:25.635  take 1: LOCAL recording started
+[performer] > wait 1
+[performer] > drop-link
+[performer] > wait-link Connected 10
+[performer] > wait-closed
+[performer] 07:38:26.697  link LinkLost: test: connection dropped
+[performer] 07:38:28.738  link Connected: reconnected to the producer
+[performer] 07:38:28.738  reconnected (Probe producer at 192.168.1.222)
+[performer] 07:38:28.769  state Recording -> Stopping (producer stopped take 1)
+[performer] 07:38:28.769  take 1: stop scheduled by the producer
+[performer] 07:38:29.049  state Stopping -> Completed (local take complete)
+[performer] 07:38:29.049  state Completed -> Ready (all readiness conditions hold)
+[performer] 07:38:29.049  take 1: LOCAL take complete (finalised), 163405 frames
+[performer] 07:38:30.134  the other side closed the session (E_SHUTDOWN)
+[performer] 07:38:30.134  link Disconnected: the other side closed the session (E_SHUTDOWN)
+[performer] 07:38:30.134  state Ready -> NotReady (control link lost)
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id 8de8a63b, peer 'Probe producer' at 192.168.1.222
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.167 ms, clock offset (peer - local) -0.000 ms +/- 0.015 ms from 7 samples
+  frames sent 34 received 34, stale dropped 0, protocol errors 0, reconnect attempts 1
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 163405 frames, (test recorder: no file))
+
+----- run G: g_prod.out -----
+[producer] recorder: TEST RECORDER (no audio, nothing is written)
+[producer] session 234663e9 on 127.0.0.1:52006  PAIRING CODE <redacted-in-evidence> (shown to the user only; never logged)
+[producer] > wait-ready 30
+[producer] 07:38:30.347  session 234663e9 created on 127.0.0.1:52006
+[producer] 07:38:30.348  consent given
+[producer] 07:38:30.348  link Listening: listening on 127.0.0.1:52006
+[producer] 07:38:30.790  link Handshaking: connection from 127.0.0.1
+[producer] 07:38:30.790  link Connected: performer joined
+[producer] 07:38:30.790  connected (Probe performer at 127.0.0.1)
+[producer] 07:38:32.874  state NotReady -> Ready (all readiness conditions hold)
+[producer] > record
+[producer] > wait 3
+[producer] 07:38:32.874  state Ready -> Armed (producer pressed Record)
+[producer] 07:38:32.874  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 07:38:32.935  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 07:38:32.999  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 07:38:32.999  take 1: START_ACK received; both scheduled
+[producer] 07:38:33.948  state Scheduled -> Recording (local recording started)
+[producer] 07:38:33.948  take 1: LOCAL recording started
+[producer] 07:38:33.995  take 1: performer CONFIRMED its recording started
+[producer] 07:38:33.995  take 1: estimated recording-start offset (performer - producer) -0.007 ms +/- 0.013 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > quit
+
+[producer] SUMMARY
+  link Connected, session Recording, session id 234663e9, peer 'Probe performer' at 127.0.0.1
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.191 ms, clock offset (peer - local) 0.004 ms +/- 0.013 ms from 5 samples
+  frames sent 22 received 22, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (not finalised, 0 frames)
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK no, TAKE_FINALISED no
+  estimated recording-start offset (performer - producer): -0.007 ms +/- 0.013 ms (clock-offset uncertainty only; device input latency not included)
+
+----- run G: g_perf.out -----
+[performer] recorder: TEST RECORDER (no audio, nothing is written)
+[performer] > wait-ready 30
+[performer] 07:38:30.784  joining 127.0.0.1:52006
+[performer] 07:38:30.784  consent given
+[performer] 07:38:30.805  link Connecting: connecting to 127.0.0.1:52006
+[performer] 07:38:30.805  link Handshaking: connected, checking versions
+[performer] 07:38:30.805  link Connected: joined the producer's session
+[performer] 07:38:30.805  connected (Probe producer at 127.0.0.1)
+[performer] 07:38:32.843  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-closed
+[performer] 07:38:32.905  state Ready -> Armed (producer armed take 1)
+[performer] 07:38:32.905  take 1: ARM accepted
+[performer] 07:38:32.968  state Armed -> Scheduled (start scheduled)
+[performer] 07:38:32.968  take 1: start scheduled in 967 ms (clock offset 3 us +/- 16 us)
+[performer] 07:38:33.948  state Scheduled -> Recording (local recording started)
+[performer] 07:38:33.948  take 1: LOCAL recording started
+[performer] 07:38:35.923  the other side closed the session (E_SHUTDOWN)
+[performer] 07:38:35.923  link Disconnected: the other side closed the session (E_SHUTDOWN)
+[performer] 07:38:35.923  state Recording -> Stopping (session ended while recording)
+[performer] 07:38:35.923  take 1: session ended while recording; local take stopped and saved
+[performer] 07:38:35.923  state Stopping -> Completed (local take complete)
+[performer] 07:38:35.923  state Completed -> NotReady (not ready: not connected to the producer)
+[performer] 07:38:35.923  take 1: LOCAL take complete (finalised), 95387 frames
+[performer] > wait 1
+
+[performer] SUMMARY
+  link Disconnected, session NotReady, session id 234663e9, peer 'Probe producer' at 127.0.0.1
+  recorder: TEST RECORDER (no audio, nothing is written)
+  control RTT 0.115 ms, clock offset (peer - local) 0.004 ms +/- 0.017 ms from 5 samples
+  frames sent 24 received 24, stale dropped 0, protocol errors 0, reconnect attempts 0
+  invalid events 0, refused messages 0, duplicates 0
+  last take 1: local started (complete, 95387 frames, (test recorder: no file))
+
+----- run F: performer, nothing listening on 127.0.0.1:52099 -----
+[performer] link Connecting: connecting to 127.0.0.1:52099
+[performer] link Disconnected: could not connect: connection refused or unreachable: No connection could be made because the target machine actively refused it (WSA 10061)

@@ -36,6 +36,7 @@ struct ControllerConfig {
     std::uint32_t arm_to_schedule_timeout_ms = 5000;  // performer: SCHEDULE_START must follow ARM
     std::uint32_t status_interval_ms = 2000;
     std::uint32_t min_offset_samples = 3;              // performer: before it can accept a schedule
+    std::uint16_t test_protocol_major = 0;             // TEST ONLY: non-zero announces this major in HELLO
 };
 
 // Everything the UI shows about one take. Producer: "peer_*" flags are set only by the
@@ -139,6 +140,7 @@ private:
     void check_timers();
     void maybe_complete();
     void compute_start_offset();
+    bool send_stop_schedule(std::int64_t stop_at);
 
     ControllerConfig cfg_;
     RecorderPort& port_;
@@ -169,6 +171,7 @@ private:
     std::int64_t peer_report_deadline_ = 0;
     std::int64_t stop_ack_deadline_ = 0;
     std::uint32_t arm_msg_id_ = 0;
+    bool stop_owed_ = false;            // producer: STOP_SCHEDULE could not be sent; re-sent on reconnect
     std::deque<net::Frame> report_queue_;  // performer reports waiting for a connection
 
     std::uint64_t invalid_events_ = 0;

@@ -259,3 +259,51 @@ TEST_CASE("a local recorder fault on the producer ends the performer's take too"
     CHECK(p.producer.snapshot().take.local_status == rr::TakeStatus::IncompleteDevice);
     CHECK(p.producer.snapshot().take.peer_status == rr::TakeStatus::Complete);
 }
+
+TEST_CASE("a Stop pressed while the link is down is re-sent when the performer reconnects", "[control]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] {
+        return p.producer.snapshot().session == SessionState::Recording &&
+               p.performer.snapshot().session == SessionState::Recording;
+    }));
+    p.performer.link()->test_drop_connection();
+    // Press Stop the moment the producer sees the link go down (before the performer is back).
+    bool stopped = false;
+    REQUIRE(p.run_until([&] {
+        if (!stopped && p.producer.snapshot().link != LinkState::Connected) {
+            stopped = p.producer.stop_take(error);
+        }
+        return stopped;
+    }, 2000ms));
+    REQUIRE(p.run_until([&] {
+        auto a = p.producer.snapshot();
+        return a.take.peer_finalised && a.take.local_finalised && p.performer.snapshot().take.local_finalised;
+    }, 6000ms));
+    CHECK(p.performer.snapshot().session != SessionState::Recording);
+    CHECK(p.producer.snapshot().take.peer_status == rr::TakeStatus::Complete);
+    CHECK_FALSE(p.producer.snapshot().take.peer_report_timed_out);
+}
+
+TEST_CASE("the performer stops and saves its take when the producer closes the session mid-take", "[control]") {
+    Pair p;
+    p.connect_and_ready();
+    std::string error;
+    REQUIRE(p.producer.start_take(error));
+    REQUIRE(p.run_until([&] { return p.performer.snapshot().session == SessionState::Recording; }));
+    p.producer.shutdown();
+    const bool ended = p.run_until([&] {
+        auto s = p.performer.snapshot();
+        return s.link == LinkState::Disconnected && s.take.local_finalised;
+    });
+    if (!ended) {
+        for (const auto& line : p.performer.take_history()) {
+            UNSCOPED_INFO(line);
+        }
+    }
+    REQUIRE(ended);
+    CHECK(p.performer.snapshot().session != SessionState::Recording);
+    CHECK(p.performer.snapshot().take.local_status == rr::TakeStatus::Complete);
+}

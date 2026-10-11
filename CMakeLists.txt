@@ -54,6 +54,7 @@ add_subdirectory(libs/control)
 # libs/network: control transport (Stage 6, in progress).
 
 add_subdirectory(tools/rr_audio_probe)
+add_subdirectory(tools/rr_session_probe)
 
 if(RR_BUILD_APPS)
     include(RrQt)            # stops with a clear message if Qt is missing

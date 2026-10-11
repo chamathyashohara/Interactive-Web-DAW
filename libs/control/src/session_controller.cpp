@@ -96,6 +96,9 @@ bool SessionController::create_session(const std::string& bind_address, std::uin
     p.max_take_seconds = cfg_.timing.max_take_seconds;
     p.timings = cfg_.link;
     link_ = net::ControlLink::server(p);
+    if (cfg_.test_protocol_major != 0) {
+        link_->test_set_protocol_major(cfg_.test_protocol_major);
+    }
     if (!link_->start(error)) {
         link_.reset();
         session_id_.clear();
@@ -138,6 +141,9 @@ bool SessionController::join(const std::string& host, std::uint16_t port, const 
     p.app_version = cfg_.app_version;
     p.timings = cfg_.link;
     link_ = net::ControlLink::client(p);
+    if (cfg_.test_protocol_major != 0) {
+        link_->test_set_protocol_major(cfg_.test_protocol_major);
+    }
     if (!link_->start(error)) {
         link_.reset();
         return false;
@@ -300,6 +306,7 @@ bool SessionController::start_take(std::string& error) {
     }
     take_ = TakeView{};
     take_open_ = true;
+    stop_owed_ = false;
     take_.take_id = ++last_take_id_;
     Frame f;
     f.type = MsgType::Arm;
@@ -322,17 +329,12 @@ bool SessionController::stop_take(std::string& error) {
         return false;
     }
     const std::int64_t stop_at = time::monotonic_ns() + ms(cfg_.timing.stop_lead_ms);
-    Frame f;
-    f.type = MsgType::StopSchedule;
-    f.set_u32(Tag::TakeId, take_.take_id);
-    f.set_i64(Tag::StopAtNs, stop_at);
-    take_.stop_sent = send(std::move(f));
+    send_stop_schedule(stop_at);
     port_.schedule_stop(stop_at, false);
     apply(SessionEvent::UserStop, "producer pressed Stop");
-    stop_ack_deadline_ = time::monotonic_ns() + ms(2000);
-    peer_report_deadline_ = stop_at + ms(cfg_.timing.finalise_report_wait_ms);
     history("take " + std::to_string(take_.take_id) + ": STOP_SCHEDULE sent" +
-            (take_.stop_sent ? "" : " FAILED (no connection): the performer keeps recording until it reconnects or stops"));
+            (take_.stop_sent ? ""
+                             : " FAILED (no connection): the performer keeps recording; STOP is re-sent when it reconnects"));
     return true;
 }
 
@@ -390,6 +392,14 @@ void SessionController::handle_link_event(const net::LinkEvent& e) {
                 take_open_ = take_open_ && take_.local_started;
             }
         }
+        if (cfg_.role == Role::Performer && e.state == LinkState::Disconnected && state_ == SessionState::Recording) {
+            // The session is over for good (closed by the producer, or reconnecting gave up): nobody
+            // can send STOP any more, so stop and save the local take now rather than leave it open.
+            port_.schedule_stop(time::monotonic_ns(), true);
+            apply(SessionEvent::StopReceived, "session ended while recording");
+            history("take " + std::to_string(take_.take_id) +
+                    ": session ended while recording; local take stopped and saved");
+        }
         break;
     }
     case net::LinkEventKind::Joined: {
@@ -403,6 +413,14 @@ void SessionController::handle_link_event(const net::LinkEvent& e) {
         history(std::string(e.resumed ? "reconnected" : "connected") + " (" + info.peer_name + " at " + info.peer_address + ")");
         last_status_payload_.clear();
         send_status(true);
+        if (cfg_.role == Role::Producer && stop_owed_ && take_.take_id != 0 && !take_.peer_finalised) {
+            const bool sent = send_stop_schedule(time::monotonic_ns() + ms(cfg_.timing.stop_lead_ms));
+            history("take " + std::to_string(take_.take_id) + ": STOP_SCHEDULE " +
+                    (sent ? "re-sent after reconnecting (the performer's take ends later than the producer's)"
+                          : "still could not be sent"));
+            log_.log(log::Level::Warn, "session", "stop_resent", "STOP_SCHEDULE re-sent after reconnecting",
+                     {{"take", std::to_string(take_.take_id)}, {"sent", sent ? "true" : "false"}});
+        }
         while (!report_queue_.empty()) {  // performer: reports made while disconnected
             if (!send(report_queue_.front())) {
                 break;
@@ -541,7 +559,8 @@ void SessionController::producer_frame(const Frame& f) {
         compute_start_offset();
         return;
     case MsgType::StopAck:
-        if (!current || take_.peer_stop_ack) {
+        // A re-sent STOP can be acknowledged after the take was completed here (report timed out).
+        if (take == 0 || take != take_.take_id || take_.peer_stop_ack) {
             ++duplicates_;
             return;
         }
@@ -557,6 +576,7 @@ void SessionController::producer_frame(const Frame& f) {
             return;
         }
         take_.peer_finalised = true;
+        stop_owed_ = false;
         take_.peer_status = static_cast<TakeStatus>(f.u8(Tag::Status).value_or(0));
         take_.peer_frames = f.u64(Tag::Frames).value_or(0);
         history(tag + "performer's take " + std::string(take_status_name(take_.peer_status)) + ", " +
@@ -752,13 +772,7 @@ void SessionController::handle_port_event(const PortEvent& e) {
         apply(SessionEvent::LocalFault, "local take ended early: " + e.stop_reason);
         if (cfg_.role == Role::Producer) {
             // Make the performer stop too, so both takes cover the same span.
-            const std::int64_t stop_at = time::monotonic_ns() + ms(cfg_.timing.stop_lead_ms);
-            Frame f;
-            f.type = MsgType::StopSchedule;
-            f.set_u32(Tag::TakeId, take_.take_id);
-            f.set_i64(Tag::StopAtNs, stop_at);
-            take_.stop_sent = send(std::move(f));
-            peer_report_deadline_ = stop_at + ms(cfg_.timing.finalise_report_wait_ms);
+            send_stop_schedule(time::monotonic_ns() + ms(cfg_.timing.stop_lead_ms));
         } else {
             Frame f;
             f.type = MsgType::LocalStop;
@@ -782,6 +796,21 @@ void SessionController::handle_port_event(const PortEvent& e) {
     } else {
         maybe_complete();
     }
+}
+
+// Producer: tell the performer to stop the current take at stop_at (this PC's clock). If there is
+// no connection the stop is owed and re-sent, with a new stop time, when the performer reconnects;
+// the performer's take is then longer than the producer's, which its report shows.
+bool SessionController::send_stop_schedule(std::int64_t stop_at) {
+    Frame f;
+    f.type = MsgType::StopSchedule;
+    f.set_u32(Tag::TakeId, take_.take_id);
+    f.set_i64(Tag::StopAtNs, stop_at);
+    take_.stop_sent = send(std::move(f));
+    stop_owed_ = !take_.stop_sent;
+    stop_ack_deadline_ = time::monotonic_ns() + ms(2000);
+    peer_report_deadline_ = stop_at + ms(cfg_.timing.finalise_report_wait_ms);
+    return take_.stop_sent;
 }
 
 void SessionController::maybe_complete() {
