@@ -1,0 +1,308 @@
+#pragma once
+#include "Drums.h"
+#include "Sequencer.h"
+#include "Synth.h"
+#include <juce_audio_devices/juce_audio_devices.h>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <vector>
+
+/**
+ * Real-time audio: sequencer -> per-slot instruments -> per-slot mixer (smoothed gain, constant-power pan)
+ * -> master (smoothed gain, soft clip). The callback never allocates, locks, waits on I/O or parses messages.
+ * Commands arrive through atomics, an immutable model pointer and a small lock-free FIFO for note previews.
+ */
+class AudioEngine : public juce::AudioIODeviceCallback, private SequencerSink
+{
+public:
+    struct PreviewMsg
+    {
+        int slot = 0;
+        int pitch = 60;
+        int velocity = 90;
+        bool on = false;
+    };
+
+    Sequencer sequencer;
+
+    void pushPreview(const PreviewMsg& m)
+    {
+        int s1, n1, s2, n2;
+        fifo.prepareToWrite(1, s1, n1, s2, n2);
+        if (n1 > 0)
+        {
+            previewBuf[s1] = m;
+            fifo.finishedWrite(1);
+        }
+    }
+
+    void audioDeviceAboutToStart(juce::AudioIODevice* device) override
+    {
+        sampleRate = device->getCurrentSampleRate();
+        bufferSize = device->getCurrentBufferSizeSamples();
+        prepare(sampleRate, bufferSize);
+    }
+    void audioDeviceStopped() override {}
+
+    /** Also used by the offline benchmark. Allocates; call before audio starts. */
+    void prepare(double sr, int maxBlock)
+    {
+        sampleRate = sr;
+        sequencer.prepare(sr);
+        for (auto& s : slots)
+        {
+            s.synth.prepare(sr);
+            s.drums.prepare(sr);
+            s.gain = 0.0f;
+            s.pan = 0.0f;
+        }
+        invTau = static_cast<float>(1.0 / (0.010 * sr));
+        sampleCoef = 1.0f - std::exp(-invTau);
+        ticksPerSecond = static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
+        const size_t n = static_cast<size_t>(std::max(maxBlock, 8192));
+        masterInitialised = false;
+        tmp.assign(n, 0.0f);
+        bufL.assign(n, 0.0f);
+        bufR.assign(n, 0.0f);
+    }
+
+    void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* out, int numOut, int numSamples,
+                                          const juce::AudioIODeviceCallbackContext&) override
+    {
+        juce::ScopedNoDenormals noDenormals;
+        const auto t0 = juce::Time::getHighResolutionTicks();
+
+        process(out, numOut, numSamples);
+
+        const double elapsed = static_cast<double>(juce::Time::getHighResolutionTicks() - t0) / ticksPerSecond;
+        const double load = elapsed / (static_cast<double>(numSamples) / sampleRate);
+        callbacks.fetch_add(1, std::memory_order_relaxed);
+        if (load > 1.0) overruns.fetch_add(1, std::memory_order_relaxed);
+        if (load > peakLoad.load(std::memory_order_relaxed)) peakLoad.store(load, std::memory_order_relaxed);
+    }
+
+    /** The whole render path (no timing); shared by the device callback and offline tests. */
+    void process(float* const* out, int numOut, int numSamples)
+    {
+        if (numSamples > static_cast<int>(tmp.size()))
+        {
+            for (int c = 0; c < numOut; ++c)
+                if (out[c]) juce::FloatVectorOperations::clear(out[c], numSamples);
+            return; // never allocate here
+        }
+
+        const PlaybackModel* m = sequencer.currentModel();
+
+        {
+            int s1, n1, s2, n2;
+            const int ready = fifo.getNumReady();
+            fifo.prepareToRead(ready, s1, n1, s2, n2);
+            for (int i = 0; i < n1; ++i) applyPreview(previewBuf[s1 + i], m);
+            for (int i = 0; i < n2; ++i) applyPreview(previewBuf[s2 + i], m);
+            fifo.finishedRead(n1 + n2);
+        }
+
+        eventCount = 0;
+        sequencer.process(numSamples, *this);
+
+        float targetGain[kMaxSlots] = {};
+        float targetPan[kMaxSlots] = {};
+        float masterTarget = 0.64f;
+        if (m != nullptr)
+        {
+            masterTarget = m->masterGain;
+            for (const auto& tr : m->tracks)
+            {
+                const int s = std::clamp(tr.slot, 0, kMaxSlots - 1);
+                targetGain[s] = tr.gain;
+                targetPan[s] = tr.pan;
+            }
+        }
+
+        // Idle slots (and the master on the very first block) jump straight to their target so a new note
+        // starts at the right level and pan instead of ramping in from zero.
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive())
+            {
+                slots[s].gain = targetGain[s];
+                slots[s].pan = targetPan[s];
+            }
+        }
+        if (!masterInitialised)
+        {
+            masterGain = masterTarget;
+            masterInitialised = true;
+        }
+
+        juce::FloatVectorOperations::clear(bufL.data(), numSamples);
+        juce::FloatVectorOperations::clear(bufR.data(), numSamples);
+        float localPeak[kMaxSlots] = {};
+
+        int cursor = 0;
+        for (int i = 0; i < eventCount; ++i)
+        {
+            const Event& e = events[i];
+            if (e.offset > cursor)
+            {
+                renderSegment(cursor, e.offset - cursor, targetGain, targetPan, localPeak);
+                cursor = e.offset;
+            }
+            if (e.type == 1)
+            {
+                if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
+                else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
+            }
+            else slots[e.slot].synth.noteOff(e.pitch);
+        }
+        if (cursor < numSamples)
+            renderSegment(cursor, numSamples - cursor, targetGain, targetPan, localPeak);
+
+        // Master: smoothed gain, soft clip, peak meters.
+        float pl = 0.0f, pr = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            masterGain += (masterTarget - masterGain) * sampleCoef;
+            const float l = softClip(bufL[static_cast<size_t>(i)] * masterGain);
+            const float r = softClip(bufR[static_cast<size_t>(i)] * masterGain);
+            bufL[static_cast<size_t>(i)] = l;
+            bufR[static_cast<size_t>(i)] = r;
+            pl = std::max(pl, std::fabs(l));
+            pr = std::max(pr, std::fabs(r));
+        }
+        for (int c = 0; c < numOut; ++c)
+        {
+            if (out[c] == nullptr) continue;
+            if (numOut == 1) // mono device
+                for (int i = 0; i < numSamples; ++i) out[c][i] = 0.5f * (bufL[static_cast<size_t>(i)] + bufR[static_cast<size_t>(i)]);
+            else if (c == 0) juce::FloatVectorOperations::copy(out[c], bufL.data(), numSamples);
+            else if (c == 1) juce::FloatVectorOperations::copy(out[c], bufR.data(), numSamples);
+            else juce::FloatVectorOperations::clear(out[c], numSamples);
+        }
+
+        raise(masterPeakL, pl);
+        raise(masterPeakR, pr);
+        for (int s = 0; s < kMaxSlots; ++s)
+            raise(slotPeak[s], localPeak[s]);
+    }
+
+    std::atomic<uint64_t> callbacks{ 0 };
+    std::atomic<uint64_t> overruns{ 0 };
+    std::atomic<double> peakLoad{ 0.0 };
+    std::atomic<float> masterPeakL{ 0.0f };
+    std::atomic<float> masterPeakR{ 0.0f };
+    std::atomic<float> slotPeak[kMaxSlots] = {};
+    double sampleRate = 48000.0;
+    int bufferSize = 0;
+
+private:
+    struct Event
+    {
+        int offset;
+        int type; // 1 = on, 0 = off
+        int slot;
+        int instrument;
+        int pitch;
+        int velocity;
+    };
+    struct SlotState
+    {
+        Synth synth;
+        DrumKit drums;
+        float gain = 0.0f;
+        float pan = 0.0f;
+    };
+
+    static constexpr int kMaxEvents = 2048;
+    Event events[kMaxEvents];
+    int eventCount = 0;
+    SlotState slots[kMaxSlots];
+    std::vector<float> tmp, bufL, bufR;
+    float masterGain = 0.64f;
+    bool masterInitialised = false;
+    float invTau = 0.002f, sampleCoef = 0.002f;
+    juce::AbstractFifo fifo{ 64 };
+    PreviewMsg previewBuf[64];
+    double ticksPerSecond = 1.0;
+
+    static void raise(std::atomic<float>& a, float v)
+    {
+        if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
+    }
+    static float softClip(float x)
+    {
+        const float a = std::fabs(x);
+        if (a <= 0.8f) return x;
+        const float y = 0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f);
+        return x < 0.0f ? -y : y;
+    }
+
+    void push(int offset, int type, int slot, int instrument, int pitch, int velocity)
+    {
+        if (eventCount >= kMaxEvents) return;
+        int i = eventCount++;
+        while (i > 0 && events[i - 1].offset > offset) // stable: offs stay before ons at equal offsets
+        {
+            events[i] = events[i - 1];
+            --i;
+        }
+        events[i] = { offset, type, slot, instrument, pitch, velocity };
+    }
+    void noteOn(int slot, int instrument, int o, int p, int v) override { push(o, 1, std::clamp(slot, 0, kMaxSlots - 1), instrument, p, v); }
+    void noteOff(int slot, int o, int p) override { push(o, 0, std::clamp(slot, 0, kMaxSlots - 1), 0, p, 0); }
+
+    void applyPreview(const PreviewMsg& pm, const PlaybackModel* m)
+    {
+        const int slot = std::clamp(pm.slot, 0, kMaxSlots - 1);
+        int instrument = kSynth;
+        if (m != nullptr)
+            for (const auto& tr : m->tracks)
+                if (tr.slot == slot) { instrument = tr.instrument; break; }
+        if (pm.on)
+        {
+            if (instrument == kDrums) slots[slot].drums.trigger(pm.pitch, pm.velocity);
+            else slots[slot].synth.noteOn(pm.pitch, pm.velocity);
+        }
+        else slots[slot].synth.noteOff(pm.pitch);
+    }
+
+    void renderSegment(int start, int len, const float* targetGain, const float* targetPan, float* localPeak)
+    {
+        if (len <= 0) return;
+        const float segCoef = 1.0f - std::exp(-static_cast<float>(len) * invTau);
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            SlotState& st = slots[s];
+            if (!st.synth.anyActive() && !st.drums.anyActive())
+            {
+                st.gain = targetGain[s]; // idle: no ramp needed
+                st.pan = targetPan[s];
+                continue;
+            }
+            float* t = tmp.data();
+            juce::FloatVectorOperations::clear(t, len);
+            st.synth.render(t, len);
+            st.drums.render(t, len);
+
+            st.pan += (targetPan[s] - st.pan) * segCoef;
+            const float angle = (st.pan + 1.0f) * 0.78539816f; // 0..pi/2
+            const float gl = std::cos(angle) * 1.41421356f;
+            const float gr = std::sin(angle) * 1.41421356f;
+            float pk = localPeak[s];
+            float g = st.gain;
+            float* L = bufL.data() + start;
+            float* R = bufR.data() + start;
+            for (int i = 0; i < len; ++i)
+            {
+                g += (targetGain[s] - g) * sampleCoef;
+                const float v = t[i] * g;
+                L[i] += v * gl;
+                R[i] += v * gr;
+                pk = std::max(pk, std::fabs(v));
+            }
+            st.gain = g;
+            localPeak[s] = pk;
+        }
+    }
+};

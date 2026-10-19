@@ -1,0 +1,24 @@
+{
+  "name": "collab-daw",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone beginner-friendly collaborative DAW (research project J26-IM-303)",
+  "workspaces": [
+    "packages/*",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "engine:configure": "cmake -S engine -B engine/build -G \"Visual Studio 17 2022\" -A x64",
+    "engine:build": "cmake --build engine/build --config Release",
+    "engine:selftest": "node scripts/engine-selftest.mjs",
+    "dev": "npm run dev -w apps/desktop",
+    "start": "electron apps/desktop",
+    "engine:benchmark": "node scripts/engine-selftest.mjs --benchmark"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  }
+}
