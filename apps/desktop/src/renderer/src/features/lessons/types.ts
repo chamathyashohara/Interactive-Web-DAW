@@ -23,7 +23,19 @@ export interface ChordTarget {
   notes: string[];
 }
 
-export type CheckSpec = { kind: "chordsPerBar"; chords: ChordTarget[] };
+/** One drum part of a pattern: the drum's MIDI pitch and where it hits inside ONE bar (repeated for every bar of the clip). */
+export interface DrumVoice {
+  pitch: number;
+  /** Shown in feedback, e.g. "Kick". */
+  label: string;
+  onsets: number[];
+}
+
+export type CheckSpec =
+  | { kind: "chordsPerBar"; chords: ChordTarget[] }
+  | { kind: "melodyInKey"; key: string; scale: "major"; minNotes: number; endOn?: string; monophonic: boolean }
+  | { kind: "drumPattern"; voices: DrumVoice[]; tolerance: number }
+  | { kind: "matchTarget"; target: StarterNote[]; tolerance: { start: number; duration: number }; velocityRange: [number, number] };
 
 export interface Exercise {
   instrument: InstrumentKind;

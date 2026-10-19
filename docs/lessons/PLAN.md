@@ -1,6 +1,6 @@
 # Component 1: Interactive Music Learning Module (plan)
 
-Status: **plan approved; Milestone 1 code written (uncommitted); in-app checks run, see "M1 status" at the end**.
+Status: **plan approved; Milestones 1 and 2 coded and committed locally (not pushed); M3 (pilot and polish) not started.** See "M1 status" and "M2 status" at the end.
 Branch: `feature/learning` (fast-forwarded to `origin/develop` at `2823884`, M3).
 Owner: Component 1 (IT23250406). Scope from the TAF (J26-IM-303): interactive lessons on chord progressions, melody,
 rhythm and MIDI editing as editable piano-roll exercises with immediate feedback, a transition into the DAW after a
@@ -292,3 +292,27 @@ Acceptance criteria from section g:
 Deviation from the sketch in section a: `Exercise` has no `tempo` field and `CheckSpec` has only the `chordsPerBar` kind
 for now (YAGNI until lessons 2-4). The completed event is recorded when Check first passes; the study record closes as
 `passed` at the same moment.
+
+## M2 status (2026-10-20)
+
+Lessons 2-4 are in (`melody-1`, `rhythm-1`, `midi-editing-1`) with their three check kinds, all pure and unit tested
+(28 new check tests; desktop total 110/110, shared 31/31, typecheck clean, renderer builds).
+
+Driven in the real Electron app (engine not built, so silent) in an isolated profile, 10/10: each lesson fails from its
+starting state with the intended message and passes after the correct edits. In lesson 4 the real **Quantize button**
+fixed the late note; the other edits (and all notes in lessons 2 and 3) were applied through `dispatchBatch`, i.e. the
+same ops the piano roll sends, not by mouse-drawing in the piano roll.
+
+Deviations from sections a and c:
+- `melodyInKey` score = in-key notes / max(notes, minNotes) rather than 0 below the minimum, so a 7-note tune scores 0.875.
+  Pass is separate from score, so score 1 with a failed rule is possible.
+- `matchTarget` takes a required `velocityRange` and reports four categories (timing, length, loudness, clean-up).
+- `drumPattern` repeats its one-bar onsets for every bar of the clip and lists at most three missing positions.
+- Lesson ids are `melody-1`, `rhythm-1`, `midi-editing-1`.
+
+Still unverified: audio, the study-session UI, the JSON/CSV download (A2), and review of the wording by a music educator.
+
+Test hygiene note: my first in-app runs wrote lesson progress into the machine's default app profile
+(`%APPDATA%\@daw\desktop`) because `--user-data-dir` pointed at a folder that did not exist. I removed those keys
+(`lessons.progress.v1`, `lessons.study.v1`, `probe`); the app recreates an empty `lessons.study.v1` on launch.
+The DAW project data was never touched (`DAW_DATA_DIR` was a temp folder).
