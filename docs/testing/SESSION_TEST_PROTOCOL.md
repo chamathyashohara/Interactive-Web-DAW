@@ -153,3 +153,24 @@ Preconditions: §2 and the Stage 11 firewall note in §3. Performer: tick **Allo
 5. **Duplicate:** request the same take again: "already verified", no second file.
 6. **No consent:** untick the performer's checkbox and request: refused, nothing written.
 7. Record the network (wired/Wi-Fi), the file size and the transfer time. Do not present one measurement as a throughput figure.
+
+## 6. Stage 10: the GUI applications themselves (evidence `2026-10-19_devpc_stage10_gui_runs.txt`)
+
+### 6.1 Automated, on one PC (done on the development PC, 19 Oct 2026)
+`tools/gui_test/gui_e2e.ps1` drives both windows through **Windows UI Automation**, the interface a
+screen reader uses, so every control it presses is a real control with an accessible name:
+sound on → session created → performer joins → both Ready → Record → Stop → request a copy →
+VERIFIED. It fails the run if any step does not reach its expected state within its timeout.
+It also counts the keyboard-focusable controls (18 on the producer).
+
+Re-run it after any UI change. It needs no network rule: it is a one-PC run.
+
+### 6.2 By hand, with a first-time user (NOT YET DONE)
+The brief's beginner-friendliness cannot be judged from an automated run. Sit someone who has not
+seen the app in front of each role, give them only `READ_ME_FIRST_TWO_PC_GUIDE.txt`, and record:
+1. whether they reach a recorded take without help, and where they hesitate;
+2. whether they can tell, at any moment, if the PC is recording;
+3. whether they understand why a greyed-out button is greyed out;
+4. whether they can do step 1 to step 4 with the keyboard only;
+5. anything they expected to find and did not.
+Write the answers into the test record. Do not report "easy to use" without this.

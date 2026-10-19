@@ -147,3 +147,15 @@ until the architecture review.
 |---|---|---|---|---|
 | D-86 | 2026-10-11 | Installed **VS 2022 Build Tools** (MSVC 14.44 = v143, Windows SDK 10.0.26100) with `winget`, approved by the researcher (UAC). The existing VS 2026 Community install (no C++ tools) was left untouched. Fixed all 6 MSVC warnings in our code: C4458 (local `data` hid `QWidget::data`), C4996 (`strerror` -> `strerror_s`, `_wfopen` -> `_wfsopen(..., _SH_DENYNO)` keeping the same sharing, `getenv` -> `_dupenv_s` in a test). | ADR-002 pins v143; the researcher chose this option | Done: 0 warnings, 170/170 tests |
 | D-87 | 2026-10-11 | Qt 6.11.3 msvc2022_64 installed from the official repository archives (qtbase, qtsvg), SHA1-checked, to `D:\Qt` without an account; `RR_QT_DIR` set for the user. aqtinstall 3.3.0 could not read the 6.11 repository layout. | The researcher chose a no-admin, no-account install | Done; translations package not installed |
+
+## Stage 10 (19 Oct 2026): guided interfaces
+
+| # | Date | Decision | Reason | Status |
+|---|---|---|---|---|
+| D-88 | 2026-10-19 | Add a guided "Start here" tab as the default and keep every existing control in an "All controls" tab, rather than rebuilding the panels | Stage 10 brief: do not replace working engine code to restructure the interface; the research still needs the detailed readouts | Implemented, GUI-tested |
+| D-89 | 2026-10-19 | The guided view holds no state: its buttons drive the existing panels' widgets, and everything it shows is read from the controller snapshot on a timer | Brief: UI state must correspond to engine state, not to button clicks; it also makes the two views impossible to desynchronise | Implemented |
+| D-90 | 2026-10-19 | One fixed light style sheet for both apps instead of following the system theme | Screenshots go into test reports, so the status colours must have known contrast | Implemented |
+| D-91 | 2026-10-19 | No style-sheet rule may match `QCheckBox`, and the app font is set with `QApplication::setFont` | Any rule matching a check box makes Qt draw it and the tick glyph disappears; consent must stay unmistakable | Implemented (found by looking at the built UI) |
+| D-92 | 2026-10-19 | Consent and delivery tick boxes are read back from the session panel's own boxes, not from the controller snapshot | The controller does not exist until the session starts, so consent ticked beforehand was being discarded | Fixed; found by the GUI test |
+| D-93 | 2026-10-19 | The interface picker ranks a real private address above a `169.254.x` link-local one, and labels the latter "the other PC cannot reach this" | A link-local address means the adapter never got one; choosing it would make the two-PC test fail for a reason the user cannot see | Fixed |
+| D-94 | 2026-10-19 | The reference design's features (waveforms, MIDI, samples, plugins) were deliberately not copied; only its layout style was | The engine has none of them, and a control that does nothing would be a false claim in the interface | Decided; open for review |

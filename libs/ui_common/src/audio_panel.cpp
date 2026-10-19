@@ -838,6 +838,49 @@ void AudioPanel::show_info(const QString& text) {
     result_label_->setText(text);
 }
 
+// ---- Stage 10: hooks for the guided view (they act on this panel's widgets) ----
+void AudioPanel::ui_open_input() {
+    if (!engine_->capture_open()) {
+        toggle_input();
+    }
+}
+
+void AudioPanel::ui_open_output() {
+    if (!engine_->playback_open()) {
+        toggle_output();
+    }
+}
+
+bool AudioPanel::ui_input_open() const {
+    return engine_->capture_open();
+}
+
+bool AudioPanel::ui_output_open() const {
+    return engine_->playback_open();
+}
+
+QString AudioPanel::ui_input_name() const {
+    if (engine_->capture_open()) {
+        return QString::fromStdString(engine_->capture_description().device_name);
+    }
+    return input_combo_->count() > 0 ? input_combo_->currentText() : tr("no input device found");
+}
+
+QString AudioPanel::ui_output_name() const {
+    if (engine_->playback_open()) {
+        return QString::fromStdString(engine_->playback_description().device_name);
+    }
+    return output_combo_->count() > 0 ? output_combo_->currentText() : tr("no output device found");
+}
+
+double AudioPanel::ui_peak_dbfs() const {
+    float peak = 0.0f;
+    for (const float v : peak_hold_) {
+        peak = std::max(peak, v);
+    }
+    return to_dbfs(peak);
+}
+
 void AudioPanel::set_session_control(bool active, std::function<void()> flush) {
     if (!active) {
         collect_take_reports();  // last reports go to the session before control is released

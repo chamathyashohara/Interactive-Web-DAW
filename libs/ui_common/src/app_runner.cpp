@@ -9,11 +9,13 @@
 #include <QCommandLineParser>
 #include <QDateTime>
 #include <QDir>
+#include <QFont>
 #include <QStandardPaths>
 #include <QTimer>
 
 #include "diagnostics.hpp"
 #include "main_window.hpp"
+#include "theme.hpp"
 #include "qt_log_bridge.hpp"
 #include "rr/shared/build_info.hpp"
 #include "rr/shared/config.hpp"
@@ -42,6 +44,13 @@ int run_application(Role role, int argc, char* argv[]) {
     QCoreApplication::setOrganizationName(QStringLiteral("SLIIT-J26-IM-303"));
     QCoreApplication::setApplicationName(qs(role_executable_name(role)));
     QCoreApplication::setApplicationVersion(QString::fromStdString(build_info().version));
+    {   // Stage 10: the app font is set here, not in the style sheet: a QWidget style-sheet rule
+        // would also match every QCheckBox and replace its native tick with a blank square.
+        QFont ui_font(QStringLiteral("Segoe UI"), 10);
+        ui_font.setStyleHint(QFont::SansSerif);
+        app.setFont(ui_font);
+    }
+    app.setStyleSheet(theme_style_sheet());  // Stage 10: one visual language for both apps
 
     QCommandLineParser parser;
     parser.setApplicationDescription(qs(role_display_name(role)) + QStringLiteral(" - ") +

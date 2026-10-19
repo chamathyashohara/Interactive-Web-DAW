@@ -72,6 +72,26 @@ public:
     QString diagnostics_text() const;
     LiveContext live_context() const;
 
+    // Stage 10: hooks for the guided "Start here" view. They drive THIS panel's own widgets and
+    // slots, never the controller directly, so both views always show the same state.
+    rr::control::ControllerSnapshot ui_snapshot() const;
+    bool ui_session_active() const;
+    // The tick boxes, which hold the user's choice even before a session exists.
+    bool ui_consent() const;
+    bool ui_delivery_consent() const;
+    bool ui_auto_copy() const;
+    void ui_set_consent(bool on);
+    void ui_set_delivery_consent(bool on);
+    void ui_set_auto_copy(bool on);
+    void ui_set_connection(const QString& host, const QString& code);  // performer
+    void ui_create_or_end();
+    void ui_new_pairing_code();
+    void ui_join_or_leave();
+    void ui_record();
+    void ui_stop();
+    void ui_stop_and_save();
+    void ui_request_copy();
+
 signals:
     void statusChanged();
 

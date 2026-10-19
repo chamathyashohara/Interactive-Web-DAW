@@ -48,6 +48,18 @@ public:
     // Record button is disabled (SES-08: session takes are started only by the producer).
     void set_session_control(bool active, std::function<void()> flush);
     rr::audio::AudioEngine& engine() { return *engine_; }
+
+    // Stage 10: the guided "Start here" view drives THIS panel's own controls, so the two views
+    // can never disagree about which device is open.
+    void ui_open_input();   // opens the selected (by default, the system default) input if closed
+    void ui_open_output();
+    bool ui_input_open() const;
+    bool ui_output_open() const;
+    QString ui_input_name() const;
+    QString ui_output_name() const;
+    // Peak of the loudest channel, dBFS, taken from the meter's hold value. The raw levels are
+    // consumed by tick(), so a second reader must never take them again.
+    double ui_peak_dbfs() const;
     std::filesystem::path recordings_root() const;
 
 private:

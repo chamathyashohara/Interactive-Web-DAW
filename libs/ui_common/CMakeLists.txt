@@ -18,7 +18,11 @@ qt_add_library(rr_ui STATIC
     src/qt_log_bridge.cpp
     src/qt_log_bridge.hpp
     src/session_panel.cpp
-    src/session_panel.hpp)
+    src/session_panel.hpp
+    src/simple_panel.cpp
+    src/simple_panel.hpp
+    src/theme.cpp
+    src/theme.hpp)
 
 target_include_directories(rr_ui
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"

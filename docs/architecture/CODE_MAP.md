@@ -81,7 +81,10 @@ boundaries visible at the file-system level. The rule is unchanged: Qt only in
 | Read-only original, partial file, producer-chosen names, path containment, resume journal | `libs/transfer/.../transfer_files.hpp` | Implemented, tested |
 | Producer transfer receiver (listener, checks, resume, VERIFIED) / performer sender (read-only, retry, resume) | `libs/transfer/.../take_receiver.hpp`, `take_sender.hpp` | Implemented, tested (loopback), real-device runs on one PC |
 | Transfer request/answer, delivery consent, readiness gate, automatic copies | `libs/control/src/session_controller.cpp` (Stage 11 section) | Implemented, tested (test recorder + real WAV) |
-| Transfer table and buttons in the Session panel | `libs/ui_common/src/session_panel.*` | Implemented, **unverified** (no Qt; syntax-checked against stub headers only) |
+| Transfer table and buttons in the Session panel | `libs/ui_common/src/session_panel.*` | Implemented; **compiled and run** since 19 Oct 2026 (Qt installed) |
+| Guided four-step "Start here" view (ADR-021) | `libs/ui_common/src/simple_panel.*` | Implemented, driven end to end through UI Automation on one PC |
+| Application style sheet and status pills (ADR-021) | `libs/ui_common/src/theme.*` | Implemented |
+| `ui_*` hooks so the guided view drives the existing panels | `libs/ui_common/src/session_panel.*`, `audio_panel.*` | Implemented, tested through the GUI |
 | UDP clock probes (ADR-010) | - | Planned |
 | Toolchain and Qt checks with clear messages (ADR-002/004) | `cmake/RrToolchainChecks.cmake`, `cmake/RrQt.cmake` | Implemented (messages captured) |
 | Compiler warnings and conformance | `cmake/RrCompilerOptions.cmake` | Implemented (GCC: 0 warnings) |

@@ -13,8 +13,26 @@ v2 §4.1).
 
 ## Status
 
-**Stage 11 (verified post-session take transfer) is implemented.** Version 0.1.0, control protocol 1.2.
-Stage 10 (studio interfaces) has **not** been started: its precondition, a tested two-PC workflow, is not met. Stages 4–9 remain as before.
+**Stage 10 (guided interfaces) is implemented.** Version 0.1.0, control protocol 1.2.
+Stages 4–9 and Stage 11 remain as before.
+
+### Stage 10: guided interfaces
+- **Implemented:**
+  - a **"Start here"** tab, now the default in both apps, with four numbered steps: sound, connect, record, and the performer's recording;
+  - every step shows one plain-English line of status, and turns `OK` only when the engine says that step is really finished;
+  - every disabled button says why it is disabled, in the user's words;
+  - one application style sheet (cards, one accent colour, large primary buttons); status is never colour alone - each state carries a symbol and a word;
+  - all the previous controls, meters and counters are untouched, one click away under **"All controls"**.
+- **The engine was not changed.** The guided view holds no state: its buttons drive the existing panels, and everything it shows is read back from the session controller.
+- **Verified on the development PC** (both apps on one PC, driven end to end through Windows UI Automation):
+  - sound on → session → performer joins → both Ready → take recorded → copy requested → **VERIFIED**, every step card reaching `OK` in order;
+  - the saved copy is byte-identical to the performer's original (independent SHA-256) and passes the structural check;
+  - this run also found and fixed two faults: consent ticked before the session existed was discarded, and the network picker could choose an unreachable `169.254.x` address.
+  - See `docs/testing/evidence/2026-10-19_devpc_stage10_gui_runs.txt` and the screenshots beside it.
+- **Not verified:** two physical PCs; any observation of a real first-time user; keyboard-only and screen-reader use by a person; dark mode.
+- **Deliberately not built:** the waveform display, markers, MIDI, samples and plugins from the reference design. The engine has none of them, and a control that did nothing would be a false claim.
+
+See [ADR-021](docs/architecture/adr/ADR-021-guided-interface.md), [SESSION_TEST_PROTOCOL §6](docs/testing/SESSION_TEST_PROTOCOL.md).
 
 ### Stage 11: verified take transfer
 - **Implemented:**

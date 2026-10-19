@@ -28,6 +28,7 @@
 #include <QVBoxLayout>
 
 #include "audio_panel.hpp"
+#include "simple_panel.hpp"
 #include "live_panel.hpp"
 #include "session_panel.hpp"
 #include "rr/shared/build_info.hpp"
@@ -61,7 +62,16 @@ MainWindow::MainWindow(DiagnosticsSources sources, rr::log::Logger& logger, QWid
     setMinimumSize(720, 480);
 
     tabs_ = new QTabWidget(this);
-    tabs_->addTab(build_session_tab(), tr("Session"));
+    // The guided view is first and selected, but it is built from the same widgets as the
+    // advanced tab, which keeps every control, meter and counter (Stage 10, ADR-021).
+    QWidget* advanced = build_session_tab();
+    auto* simple_scroll = new QScrollArea;
+    simple_scroll->setWidgetResizable(true);
+    simple_panel_ = new SimplePanel(sources_.role, *sources_.config, *audio_panel_, *session_panel_);
+    simple_scroll->setWidget(simple_panel_);
+    connect(simple_panel_, &SimplePanel::advancedRequested, this, [this] { tabs_->setCurrentIndex(1); });
+    tabs_->addTab(simple_scroll, tr("Start here"));
+    tabs_->addTab(advanced, tr("All controls"));
     tabs_->addTab(build_diagnostics_tab(), tr("Diagnostics"));
     setCentralWidget(tabs_);
     build_menus();
@@ -89,6 +99,7 @@ QWidget* MainWindow::build_session_tab() {
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
     auto* page = new QWidget;
+    page->setObjectName(QStringLiteral("pageAdvanced"));
     scroll->setWidget(page);
     auto* layout = new QVBoxLayout(page);
 
@@ -141,6 +152,7 @@ QWidget* MainWindow::build_session_tab() {
 
 QWidget* MainWindow::build_diagnostics_tab() {
     auto* page = new QWidget;
+    page->setObjectName(QStringLiteral("pageDiagnostics"));
     auto* layout = new QVBoxLayout(page);
     auto* export_button = new QPushButton(tr("Export diagnostic report (JSON)..."));
     connect(export_button, &QPushButton::clicked, this, &MainWindow::export_report);

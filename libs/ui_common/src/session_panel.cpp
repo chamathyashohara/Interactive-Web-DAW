@@ -332,10 +332,16 @@ void SessionPanel::refresh_interfaces() {
                                  : interface_combo_->currentData().toString();
     interface_combo_->clear();
     int select = -1;
+    int best_rank = -1;
     for (const auto& i : rr::net::list_ipv4_interfaces()) {
+        // 169.254.x.x is link-local: the adapter never got an address, so no other PC can reach
+        // it. It stays in the list but is never chosen over a real private address.
+        const bool link_local = i.address.rfind("169.254.", 0) == 0;
         QString label = qs(i.address) + QStringLiteral("  -  ") + qs(i.name);
         if (i.loopback) {
             label += tr("  (loopback: this PC only, for tests)");
+        } else if (link_local) {
+            label += tr("  (no network address: the other PC cannot reach this)");
         } else if (i.private_lan) {
             label += tr("  (private LAN)");
         } else {
@@ -343,10 +349,13 @@ void SessionPanel::refresh_interfaces() {
         }
         interface_combo_->addItem(label, qs(i.address));
         const int index = interface_combo_->count() - 1;
+        const int rank = i.loopback ? 1 : (link_local ? 2 : (i.private_lan ? 4 : 3));
         if (qs(i.address) == previous) {
             select = index;
-        } else if (select < 0 && i.private_lan && !i.loopback) {
+            best_rank = 99;
+        } else if (rank > best_rank) {
             select = index;
+            best_rank = rank;
         }
     }
     if (select >= 0) {
@@ -854,6 +863,89 @@ QString SessionPanel::confirmations_text(const rr::control::ControllerSnapshot& 
 }
 
 // ---------------------------------------------------------------------------------------------
+// ---- Stage 10: hooks for the guided view ----------------------------------------------------
+rr::control::ControllerSnapshot SessionPanel::ui_snapshot() const {
+    if (controller_) {
+        return controller_->snapshot();
+    }
+    rr::control::ControllerSnapshot s;
+    s.role = role_;
+    const rr::session::SessionSnapshot initial = rr::session::initial_snapshot(role_);
+    s.not_ready_reasons = initial.not_ready_reasons;
+    return s;
+}
+
+bool SessionPanel::ui_session_active() const {
+    return controller_ && controller_->session_active();
+}
+
+bool SessionPanel::ui_consent() const {
+    return consent_check_ != nullptr && consent_check_->isChecked();
+}
+
+bool SessionPanel::ui_delivery_consent() const {
+    return delivery_check_ != nullptr && delivery_check_->isChecked();
+}
+
+bool SessionPanel::ui_auto_copy() const {
+    return auto_copy_check_ != nullptr && auto_copy_check_->isChecked();
+}
+
+void SessionPanel::ui_set_consent(bool on) {
+    consent_check_->setChecked(on);  // the panel's own signal applies it to the controller
+}
+
+void SessionPanel::ui_set_delivery_consent(bool on) {
+    if (delivery_check_ != nullptr) {
+        delivery_check_->setChecked(on);
+    }
+}
+
+void SessionPanel::ui_set_auto_copy(bool on) {
+    if (auto_copy_check_ != nullptr) {
+        auto_copy_check_->setChecked(on);
+    }
+}
+
+void SessionPanel::ui_set_connection(const QString& host, const QString& code) {
+    if (host_edit_ != nullptr) {
+        host_edit_->setText(host);
+    }
+    if (code_edit_ != nullptr) {
+        code_edit_->setText(code);
+    }
+}
+
+void SessionPanel::ui_create_or_end() {
+    create_or_end_session();
+}
+
+void SessionPanel::ui_new_pairing_code() {
+    if (new_code_button_ != nullptr && new_code_button_->isEnabled()) {
+        new_code_button_->click();
+    }
+}
+
+void SessionPanel::ui_join_or_leave() {
+    join_or_leave();
+}
+
+void SessionPanel::ui_record() {
+    record();
+}
+
+void SessionPanel::ui_stop() {
+    stop();
+}
+
+void SessionPanel::ui_stop_and_save() {
+    stop_and_save();
+}
+
+void SessionPanel::ui_request_copy() {
+    request_copy();
+}
+
 rr::session::SessionSnapshot SessionPanel::status_snapshot() const {
     if (!controller_) {
         return rr::session::initial_snapshot(role_);
