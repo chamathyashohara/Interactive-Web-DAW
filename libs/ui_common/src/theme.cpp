@@ -1,9 +1,43 @@
 #include "theme.hpp"
 
+#include <QApplication>
+#include <QColor>
 #include <QLabel>
+#include <QPalette>
 #include <QStyle>
+#include <QStyleFactory>
 
 namespace rr::ui {
+
+void apply_theme(QApplication& app) {
+    // Fusion honours the palette on every platform and draws a proper tick in a check box; the
+    // native Windows style would keep its own dark-mode colours.
+    if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")); fusion != nullptr) {
+        app.setStyle(fusion);
+    }
+    const QColor text(0x1b, 0x1d, 0x2a);
+    const QColor muted(0x8a, 0x8e, 0xa3);
+    const QColor accent(0x6c, 0x4c, 0xf1);
+    QPalette p;
+    p.setColor(QPalette::Window, QColor(0xf4, 0xf5, 0xfb));
+    p.setColor(QPalette::WindowText, text);
+    p.setColor(QPalette::Base, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::AlternateBase, QColor(0xf7, 0xf8, 0xfd));
+    p.setColor(QPalette::Text, text);
+    p.setColor(QPalette::PlaceholderText, muted);
+    p.setColor(QPalette::Button, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::ButtonText, text);
+    p.setColor(QPalette::ToolTipBase, text);
+    p.setColor(QPalette::ToolTipText, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::Highlight, accent);
+    p.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+    p.setColor(QPalette::Link, QColor(0x4b, 0x3a, 0xd0));
+    p.setColor(QPalette::Disabled, QPalette::Text, muted);
+    p.setColor(QPalette::Disabled, QPalette::WindowText, muted);
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, muted);
+    app.setPalette(p);
+    app.setStyleSheet(theme_style_sheet());
+}
 
 QString theme_style_sheet() {
     // Light, high-contrast, rounded cards. Fixed colours: the apps must look the same on a PC in
@@ -174,8 +208,13 @@ QComboBox QAbstractItemView {
     selection-color: #1b1d2a; outline: none;
 }
 
-/* Nothing styles QCheckBox: the native Windows indicator keeps its tick, which must stay
-   unmistakable. Consent boxes are made bigger in code instead (SimplePanel). */
+/* The indicator is drawn from shipped images. A style-sheet indicator WITHOUT an image is a
+   blank square with no tick, and a consent box must be unmistakable. */
+QCheckBox { spacing: 9px; }
+QCheckBox::indicator { width: 18px; height: 18px; }
+QCheckBox::indicator:unchecked { image: url(:/rr/check_off.svg); }
+QCheckBox::indicator:checked   { image: url(:/rr/check_on.svg); }
+QCheckBox::indicator:disabled  { image: url(:/rr/check_off_disabled.svg); }
 
 /* ---- meters ---- */
 QProgressBar {

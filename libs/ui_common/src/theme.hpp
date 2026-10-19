@@ -10,10 +10,17 @@
 
 #include <QString>
 
+class QApplication;
 class QLabel;
 class QWidget;
 
 namespace rr::ui {
+
+// Applies the widget style and the colour palette to the application. Must run before the style
+// sheet. Both apps force a LIGHT palette and the Fusion style, because the native Windows style
+// follows the system dark/light setting: in dark mode every widget this file does not colour
+// explicitly (check boxes, line edits, menus) would draw white text on these white cards.
+void apply_theme(QApplication& app);
 
 // The whole style sheet. Applied once to the QApplication.
 QString theme_style_sheet();

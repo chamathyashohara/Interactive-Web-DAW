@@ -48,10 +48,14 @@ its *simplicity* is exactly what the brief asks for.
   and the status colours must have known contrast.
 - **Status is never colour alone.** Each pill carries a symbol and a word as well
   (`REC  RECORDING`, `OK  Ready`, `X  connection lost`), and the step badges use `OK` / a number.
-- **No style-sheet rule may match `QCheckBox`.** As soon as one does, Qt draws the box itself and
-  the tick glyph disappears; "ticked" must stay unmistakable, so the consent boxes keep the native
-  Windows indicator and are enlarged in code instead. The application font is set with
-  `QApplication::setFont` for the same reason.
+- **The light look is forced, not inherited.** The apps set the **Fusion** style and a light
+  **palette** before the style sheet. The native Windows style follows the system dark/light
+  setting, so on a PC in dark mode every widget the style sheet does not colour explicitly (check
+  boxes, line edits, menus) drew white text on these white cards. The application font is set with
+  `QApplication::setFont` rather than a `QWidget` style-sheet rule.
+- **Check-box indicators are shipped as images** (`libs/ui_common/resources/check_*.svg`, in a Qt
+  resource). A style-sheet indicator *without* an image is a blank square with no tick, and the
+  consent boxes must be unmistakable in both states.
 
 ## Verified (19 Oct 2026, evidence `2026-10-19_devpc_stage10_gui_runs.txt`)
 The two GUI applications were driven end to end through **Windows UI Automation**, the same

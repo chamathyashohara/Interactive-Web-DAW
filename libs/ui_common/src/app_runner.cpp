@@ -50,7 +50,7 @@ int run_application(Role role, int argc, char* argv[]) {
         ui_font.setStyleHint(QFont::SansSerif);
         app.setFont(ui_font);
     }
-    app.setStyleSheet(theme_style_sheet());  // Stage 10: one visual language for both apps
+    apply_theme(app);  // Stage 10: light palette + Fusion + the style sheet (ADR-021)
 
     QCommandLineParser parser;
     parser.setApplicationDescription(qs(role_display_name(role)) + QStringLiteral(" - ") +

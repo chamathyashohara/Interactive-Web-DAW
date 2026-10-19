@@ -24,6 +24,16 @@ qt_add_library(rr_ui STATIC
     src/theme.cpp
     src/theme.hpp)
 
+# Check-box indicators are shipped as images: a style-sheet indicator with no image would be a
+# blank square, and "ticked" must stay unmistakable (ADR-021).
+qt_add_resources(rr_ui "rr_theme"
+    PREFIX "/rr"
+    BASE "resources"
+    FILES
+        resources/check_off.svg
+        resources/check_on.svg
+        resources/check_off_disabled.svg)
+
 target_include_directories(rr_ui
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
