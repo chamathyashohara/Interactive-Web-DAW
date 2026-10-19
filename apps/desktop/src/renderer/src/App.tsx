@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { MAX_BPM, MIN_BPM } from "@daw/shared";
+import { MAX_BPM, MIN_BPM, sortedClips } from "@daw/shared";
+import { Arrangement } from "./components/Arrangement";
 import { Mixer } from "./components/Mixer";
-import { TrackList } from "./components/TrackList";
+import { TRACK_ROW_H } from "./components/TrackHeader";
 import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H } from "./pianoRoll/geometry";
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
-import { engineStateStore, projectStore, statusStore, useStore } from "./store";
+import { engineStateStore, exportStore, projectStore, statusStore, useStore } from "./store";
 
 const TOOLS: { id: Tool; label: string; key: string; title: string }[] = [
   { id: "draw", label: "Draw", key: "D", title: "Draw notes (D): click, or click and drag to set length" },
@@ -50,6 +51,35 @@ function TempoField({ tempo }: { tempo: number }) {
   );
 }
 
+function ExportChip() {
+  const ex = useStore(exportStore);
+  if (!ex) return null;
+  const name = (p: string) => p.split(/[\/]/).pop();
+  return (
+    <span className="flex items-center gap-2" data-testid="export-chip" data-state={ex.state}>
+      {ex.state === "running" && (
+        <>
+          <span className="text-cyan-300">Exporting… {Math.round(ex.fraction * 100)}%</span>
+          <span className="h-1.5 w-24 overflow-hidden rounded bg-white/10"><span className="block h-full bg-cyan-400" style={{ width: `${ex.fraction * 100}%` }} /></span>
+        </>
+      )}
+      {ex.state === "done" && (
+        <>
+          <span className="text-emerald-300">Saved {name(ex.path)} ({ex.seconds.toFixed(1)} s)</span>
+          <button className="rounded bg-white/5 px-2 py-0.5 text-slate-300 hover:bg-white/10" onClick={() => window.daw.showInFolder(ex.path)}>Show in folder</button>
+          <button className="text-slate-500 hover:text-slate-300" onClick={() => exportStore.set(null)} aria-label="Dismiss">×</button>
+        </>
+      )}
+      {ex.state === "error" && (
+        <>
+          <span className="text-rose-300">Export failed: {ex.message}</span>
+          <button className="text-slate-500 hover:text-slate-300" onClick={() => exportStore.set(null)} aria-label="Dismiss">×</button>
+        </>
+      )}
+    </span>
+  );
+}
+
 function StatusBar() {
   const engine = useStore(engineStateStore);
   const status = useStore(statusStore);
@@ -70,6 +100,7 @@ function StatusBar() {
           callbacks {status.callbacks} · overruns <b className={status.overruns ? "text-rose-300" : "text-emerald-300"}>{status.overruns}</b> · peak load {(status.peakLoad * 100).toFixed(1)}% · xruns {status.xruns}
         </span>
       )}
+      <ExportChip />
       <span className="ml-auto flex items-center gap-2">
         <span className="text-slate-500">Autosaved locally</span>
         <button
@@ -100,8 +131,10 @@ export function App() {
   const [gridTicks, setGridTicks] = useState<number>(GRID_OPTIONS[2].ticks);
   const [pxPerBeat, setPxPerBeat] = useState(120);
   const [rowH, setRowH] = useState(DEFAULT_ROW_H);
-  const [mixerOpen, setMixerOpen] = useState(true);
+  const [mixerOpen, setMixerOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState("");
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [focus, setFocus] = useState<"arrangement" | "pianoroll">("pianoroll");
   const playing = useRef(false);
   playing.current = status?.playing ?? false;
 
@@ -129,6 +162,17 @@ export function App() {
   if (!project) return null;
   // The selected track may have just been deleted (or not exist yet): fall back to the first track.
   const track = project.tracks[selectedTrackId] ?? project.tracks[project.trackOrder[0]!]!;
+  // The clip shown in the piano roll: the selected one, else the track's first clip (there may be none).
+  const clip = (selectedClipId ? track.clips[selectedClipId] : undefined) ?? sortedClips(track)[0];
+  const selectTrackClip = (trackId: string, clipId: string | null) => {
+    setSelectedTrackId(trackId);
+    setSelectedClipId(clipId);
+  };
+  const arrHeight = Math.max(150, Math.min(300, 32 + 24 + (project.trackOrder.length + 1) * TRACK_ROW_H));
+  const exportWav = async () => {
+    const r = await window.daw.exportWav();
+    if (!r.ok && !r.canceled) exportStore.set({ state: "error", id: "-", message: r.reason ?? "unknown error" });
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -178,6 +222,9 @@ export function App() {
         </label>
 
         <div className="ml-auto flex gap-1">
+          <button className={`${btn} ${idle}`} onClick={() => void exportWav()} title="Render the whole song to a WAV file" data-testid="export-wav">
+            ⤓ Export WAV
+          </button>
           <button className={`${btn} ${mixerOpen ? active : idle}`} onClick={() => setMixerOpen(!mixerOpen)} aria-pressed={mixerOpen} title="Show or hide the mixer">
             Mixer
           </button>
@@ -190,9 +237,19 @@ export function App() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <TrackList project={project} selectedId={track.id} onSelect={setSelectedTrackId} />
-        <PianoRoll key={track.id} project={project} track={track} tool={tool} snap={snap} gridTicks={gridTicks} pxPerBeat={pxPerBeat} rowH={rowH} onTool={setTool} />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div onPointerDownCapture={() => setFocus("arrangement")}>
+          <Arrangement project={project} selectedTrackId={track.id} selectedClipId={clip?.id ?? null} snap={snap} keysEnabled={focus === "arrangement"} height={arrHeight} onSelect={selectTrackClip} />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col" onPointerDownCapture={() => setFocus("pianoroll")}>
+          {clip ? (
+            <PianoRoll key={`${track.id}/${clip.id}`} track={track} clip={clip} keysEnabled={focus === "pianoroll"} tool={tool} snap={snap} gridTicks={gridTicks} pxPerBeat={pxPerBeat} rowH={rowH} onTool={setTool} />
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-slate-500" data-testid="no-clip">
+              This track has no clips. Double-click its lane in the arrangement, or press “+ Clip”, to add one.
+            </div>
+          )}
+        </div>
       </div>
       {mixerOpen && <Mixer project={project} selectedId={track.id} onSelect={setSelectedTrackId} />}
       <StatusBar />

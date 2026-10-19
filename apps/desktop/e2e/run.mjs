@@ -33,7 +33,7 @@ async function until(fn, timeout = 8000, step = 100) {
 
 function launch() {
   const child = spawn(electronExe, [appDir, `--remote-debugging-port=${PORT}`], {
-    env: { ...process.env, DAW_DATA_DIR: dataDir },
+    env: (() => { const e = { ...process.env, DAW_DATA_DIR: dataDir, DAW_E2E: "1" }; delete e.ELECTRON_RUN_AS_NODE; return e; })(),
     stdio: ["ignore", "ignore", "inherit"],
   });
   return child;
@@ -57,6 +57,7 @@ async function connect() {
     }
   };
   const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
   const evalJs = async (expr) => {
     const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
     if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails));
@@ -82,6 +83,7 @@ try {
   // 1. engine connects
   const connected = await until(async () => (await chip(c)).includes("Engine connected"), 15000);
   check("1. UI shows 'Engine connected' shortly after launch", !!connected);
+  await c.evalJs(`window.daw.dispatch({ type: "setSongLength", bars: 4 })`); // M1 checks assume a 4-bar loop
 
   // 2. draw tool adds a note on the grid; keyboard key preview does not throw
   const g = await gridInfo(c);

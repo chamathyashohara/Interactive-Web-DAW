@@ -18,6 +18,7 @@ juce_add_console_app(daw_engine
 target_sources(daw_engine PRIVATE
   src/Main.cpp
   src/Sequencer.cpp
+  src/Export.cpp
   src/SelfTest.cpp)
 
 target_compile_definitions(daw_engine PRIVATE
@@ -30,5 +31,6 @@ target_link_libraries(daw_engine PRIVATE
   juce::juce_core
   juce::juce_events
   juce::juce_audio_basics
+  juce::juce_audio_formats
   juce::juce_audio_devices
   juce::juce_recommended_config_flags)

@@ -9,6 +9,11 @@ export const MIN_BPM = 20;
 export const MAX_BPM = 300;
 export const MAX_TRACKS = 16;
 export const DEFAULT_VOLUME = 80;
+export const MAX_SONG_BARS = 128;
+export const DEFAULT_SONG_BARS = 8;
+/** A clip is at least one beat long. */
+export const MIN_CLIP_TICKS = PPQ;
+export const DEFAULT_CLIP_BARS = 4;
 
 export type InstrumentKind = "synth" | "drums";
 export const INSTRUMENTS: InstrumentKind[] = ["synth", "drums"];
@@ -28,9 +33,12 @@ export interface Note {
 
 export interface Clip {
   id: string;
+  /** Display name, 1-40 characters. Optional. */
+  name?: string;
   /** Position on the arrangement timeline. */
   startTick: number;
   lengthTicks: number;
+  /** Notes are relative to the clip start and always lie inside [0, lengthTicks]. */
   notes: Record<string, Note>;
 }
 
@@ -46,6 +54,7 @@ export interface Track {
   pan: number;
   mute: boolean;
   solo: boolean;
+  /** Clips on one track never overlap. */
   clips: Record<string, Clip>;
 }
 
@@ -55,6 +64,8 @@ export interface Project {
   name: string;
   tempo: number;
   ppq: number;
+  /** Song length in bars; playback loops here and export renders exactly this long (plus a tail). */
+  songBars: number;
   /** 0..100 */
   masterVolume: number;
   tracks: Record<string, Track>;
@@ -64,6 +75,7 @@ export interface Project {
 }
 
 export const RECENT_OPS_LIMIT = 2000;
+export const songTicks = (project: Pick<Project, "songBars">) => project.songBars * TICKS_PER_BAR;
 
 export function createTrack(id: string, name: string, instrument: InstrumentKind, color: string, clipId: string): Track {
   return {
@@ -75,7 +87,7 @@ export function createTrack(id: string, name: string, instrument: InstrumentKind
     pan: 0,
     mute: false,
     solo: false,
-    clips: { [clipId]: { id: clipId, startTick: 0, lengthTicks: 4 * TICKS_PER_BAR, notes: {} } },
+    clips: { [clipId]: { id: clipId, name: "Clip 1", startTick: 0, lengthTicks: DEFAULT_CLIP_BARS * TICKS_PER_BAR, notes: {} } },
   };
 }
 
@@ -86,6 +98,7 @@ export function createProject(id: string, name = "Untitled"): Project {
     name,
     tempo: 120,
     ppq: PPQ,
+    songBars: DEFAULT_SONG_BARS,
     masterVolume: DEFAULT_VOLUME,
     trackOrder: [trackId],
     tracks: { [trackId]: createTrack(trackId, "Synth", "synth", TRACK_COLORS[0]!, "clip-1") },
@@ -93,10 +106,11 @@ export function createProject(id: string, name = "Untitled"): Project {
   };
 }
 
-/** Fills defaults for projects saved by older versions (M1 had no mixer fields). */
+/** Fills defaults for projects saved by older versions (M1: no mixer fields; M2: no song length). */
 export function migrateProject(raw: Project): Project {
   const tracks: Record<string, Track> = {};
   let i = 0;
+  let maxEnd = 0;
   for (const [id, t] of Object.entries(raw.tracks)) {
     tracks[id] = {
       ...t,
@@ -106,7 +120,10 @@ export function migrateProject(raw: Project): Project {
       mute: t.mute ?? false,
       solo: t.solo ?? false,
     };
+    for (const c of Object.values(t.clips ?? {})) maxEnd = Math.max(maxEnd, c.startTick + c.lengthTicks);
     i++;
   }
-  return { ...raw, tracks, masterVolume: raw.masterVolume ?? DEFAULT_VOLUME };
+  // Older projects looped over their longest clip; keep that length so they play exactly as before.
+  const songBars = raw.songBars ?? Math.min(MAX_SONG_BARS, Math.max(1, Math.ceil(maxEnd / TICKS_PER_BAR)));
+  return { ...raw, tracks, masterVolume: raw.masterVolume ?? DEFAULT_VOLUME, songBars };
 }

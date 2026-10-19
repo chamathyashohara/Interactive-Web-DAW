@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
@@ -72,6 +73,11 @@ app.whenReady().then(() => {
     engineState.lastError = message;
     sendToRenderer("engine:state", engineState);
   });
+  engine.on("exportEvent", (e) => {
+    if (e.t === "exportProgress") sendToRenderer("export:status", { state: "running", id: e.id, fraction: e.fraction });
+    else if (e.t === "exportDone") sendToRenderer("export:status", { state: "done", id: e.id, path: e.path, seconds: e.seconds, frames: e.frames, peak: e.peak });
+    else sendToRenderer("export:status", { state: "error", id: e.id, message: e.message });
+  });
   engine.on("status", (status) => {
     // Translate engine slot meters into per-track levels for the UI.
     const levels: Record<string, number> = {};
@@ -106,6 +112,26 @@ app.whenReady().then(() => {
     const slot = slots.slotFor(p.trackId);
     if (slot !== undefined) engine.send({ t: "preview", slot, pitch: p.pitch, velocity: p.velocity, on: p.on });
   });
+  ipcMain.handle("export:wav", async (_e, explicitPath?: string) => {
+    if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
+    let target: string | undefined;
+    if (explicitPath && process.env.DAW_E2E === "1") target = explicitPath; // test hook: skip the dialog (never enabled in normal use)
+    else {
+      const picked = await dialog.showSaveDialog(win!, {
+        title: "Export WAV",
+        defaultPath: path.join(app.getPath("music"), `${service.current.name}.wav`),
+        filters: [{ name: "WAV audio", extensions: ["wav"] }],
+      });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    const id = randomUUID();
+    pushProjectToEngine(service.current); // make sure the engine renders exactly the saved state
+    engine.send({ t: "exportWav", id, path: target, tailSeconds: 2 });
+    sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
+    return { ok: true, id };
+  });
+  ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
 
   engine.start();

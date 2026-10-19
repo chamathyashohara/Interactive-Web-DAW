@@ -37,6 +37,7 @@ public:
         target->pitch = pitch;
         target->amp = 0.55f * static_cast<float>(velocity) / 127.0f;
         target->age = ++counter;
+        target->rng = 0x9E3779B9u * static_cast<uint32_t>(counter) + static_cast<uint32_t>(pitch) * 0x85EBCA6Bu + 1u;
         switch (pitch)
         {
             case 41: target->f0 = 90.0f; break;
@@ -71,26 +72,26 @@ public:
                     case Kick: {
                         const float f = 45.0f + 110.0f * std::exp(-t / 0.035f);
                         v.phase += f / fs;
-                        s = std::sin(6.2831853f * v.phase) * std::exp(-t / 0.16f) + 0.25f * noise() * std::exp(-t / 0.004f);
+                        s = std::sin(6.2831853f * v.phase) * std::exp(-t / 0.16f) + 0.25f * noiseOf(v) * std::exp(-t / 0.004f);
                         end = 0.6f;
                         break;
                     }
                     case Snare: {
                         v.phase += 185.0f / fs;
-                        s = 0.55f * noise() * std::exp(-t / 0.085f) + 0.45f * std::sin(6.2831853f * v.phase) * std::exp(-t / 0.05f);
+                        s = 0.55f * noiseOf(v) * std::exp(-t / 0.085f) + 0.45f * std::sin(6.2831853f * v.phase) * std::exp(-t / 0.05f);
                         end = 0.4f;
                         break;
                     }
                     case Clap: {
                         const float burst = (t < 0.010f ? 1.0f : t < 0.020f ? 0.8f : t < 0.030f ? 0.9f : 0.0f);
-                        s = noise() * (burst * std::exp(-std::fmod(t, 0.010f) / 0.006f) + 0.5f * std::exp(-t / 0.08f));
+                        s = noiseOf(v) * (burst * std::exp(-std::fmod(t, 0.010f) / 0.006f) + 0.5f * std::exp(-t / 0.08f));
                         s *= 0.7f;
                         end = 0.4f;
                         break;
                     }
                     case ClosedHat:
                     case OpenHat: {
-                        const float n = noise();
+                        const float n = noiseOf(v);
                         const float hp = n - v.last; // crude high-pass
                         v.last = n;
                         s = hp * 0.7f * std::exp(-t / (v.kind == ClosedHat ? 0.018f : 0.14f));
@@ -125,6 +126,7 @@ private:
         int pitch = 0;
         float phase = 0, f0 = 200, amp = 0.5f, last = 0;
         int64_t n = 0;
+        uint32_t rng = 1; // per-voice noise: output must not depend on how audio is split into blocks
         unsigned long long age = 0;
     };
 
@@ -142,16 +144,15 @@ private:
         }
     }
 
-    float noise()
+    static float noiseOf(Voice& v)
     {
-        rng ^= rng << 13;
-        rng ^= rng >> 17;
-        rng ^= rng << 5;
-        return static_cast<float>(static_cast<int32_t>(rng)) / 2147483648.0f;
+        v.rng ^= v.rng << 13;
+        v.rng ^= v.rng >> 17;
+        v.rng ^= v.rng << 5;
+        return static_cast<float>(static_cast<int32_t>(v.rng)) / 2147483648.0f;
     }
 
     Voice voices[kVoices];
     double sr = 48000.0;
-    uint32_t rng = 0x12345678u;
     unsigned long long counter = 0;
 };

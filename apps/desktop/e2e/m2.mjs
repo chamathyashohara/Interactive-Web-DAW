@@ -39,6 +39,8 @@ const kicks = (trackId, clipId) => Array.from({ length: 32 }, (_, i) => ({ type:
 
 try {
   await until(async () => (await c.evalJs(`document.querySelector('[data-testid=engine-chip]')?.textContent ?? ''`)).includes("Engine connected"), 15000);
+  await c.evalJs(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Mixer').click()`); // the mixer is collapsed by default
+  await c.evalJs(`window.daw.dispatch({ type: "setSongLength", bars: 4 })`); // these tests fill a 4-bar loop with sustained notes
 
   // ---------- tracks: add via the UI ----------
   check("M2-1a. project starts with one track", (await trackIds()).length === 1);
@@ -167,9 +169,9 @@ try {
   let g = await grid();
   // paint: drag across 5 cells -> one undo step
   await tool("paint");
-  await c.drag(X(g, 0), Y(g, 60), X(g, 0) + 4 * 30 + 6, Y(g, 60), 8);
+  await c.drag(X(g, 0), Y(g, 66), X(g, 0) + 4 * 30 + 6, Y(g, 66), 8);
   await until(async () => (await noteCount()) >= 4, 3000);
-  if (false) console.log("DEBUG paint", JSON.stringify({ g, pressed: await c.evalJs(`document.querySelector('[data-tool=paint]').getAttribute('aria-pressed')`), sel: await c.evalJs(`document.querySelector('[data-track-id][data-selected]')?.dataset.trackId`), want: ids[0], at: await c.evalJs(`document.elementFromPoint(${X(g, 0)}, ${Y(g, 60)})?.outerHTML.slice(0, 120)`), scroll: await c.evalJs(`innerHeight`) }));
+  if ((await noteCount()) < 4) console.log("DEBUG paint", JSON.stringify({ g, pressed: await c.evalJs(`document.querySelector('[data-tool=paint]').getAttribute('aria-pressed')`), sel: await c.evalJs(`document.querySelector('[data-track-id][data-selected]')?.dataset.trackId`), want: ids[0], at: await c.evalJs(`document.elementFromPoint(${X(g, 0)}, ${Y(g, 60)})?.outerHTML.slice(0, 120)`), scroll: await c.evalJs(`innerHeight`) }));
   const painted = await noteCount();
   await c.ctrl("z");
   await until(async () => (await noteCount()) === 0);
@@ -299,7 +301,7 @@ try {
   check("M2-24. force-killed app: all tracks, names, mixer settings, notes and muted notes are restored", same && after.tracks[ids[1]].name === "Lead" && after.tracks[ids[1]].mute === true && after.tracks[ids[1]].pan === -55);
   await c.evalJs(`window.daw.play()`);
   await sleep(800);
-  check("M2-25. after relaunch the restored project plays", (await peak(`[data-testid=meter-${ids[0]}]`, 600)) > 0.001 || (await peak(`[data-testid=meter-${ids[2]}]`, 600)) > 0.001);
+  check("M2-25. after relaunch the restored project plays", (await peak(`[data-testid=meter-list-${ids[0]}]`, 600)) > 0.001 || (await peak(`[data-testid=meter-list-${ids[2]}]`, 600)) > 0.001);
 } catch (e) {
   check("m2 run completed without exception", false, String(e));
 } finally {

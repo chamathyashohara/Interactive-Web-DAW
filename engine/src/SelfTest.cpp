@@ -1,6 +1,8 @@
 #include "SelfTest.h"
 #include "AudioEngine.h"
+#include "Export.h"
 #include "Sequencer.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_events/juce_events.h>
 #include <algorithm>
 #include <chrono>
@@ -268,6 +270,117 @@ int runSelfTest()
         m.tracks.push_back(makeTrack(5, kDrums, 0.8f, 0.0f, one, 36, loop, 480));
         const Energy e = renderOffline(m, 120, 40);
         expect(e.peak[0] > 0.01f && e.peak[5] > 0.01f && e.peak[1] == 0.0f, "per-slot meters are independent");
+    }
+
+    // ---- 4. Offline export ----
+    {
+        constexpr double kSr = 48000.0;
+        // 8-bar song at 120 BPM = exactly 16 s. Synth + drums, notes only in bars 1-2, static pans.
+        PlaybackModel m;
+        m.ppq = ppq;
+        m.tempo = 120.0;
+        m.loopTicks = 8 * 4 * ppq;
+        m.masterGain = 0.8f;
+        const std::vector<int64_t> early = { 0, 960, 1920, 2880, 3840, 4800, 5760, 6720 }; // bars 1-2
+        m.tracks.push_back(makeTrack(0, kSynth, 0.8f, -0.3f, early, 55, m.loopTicks, 900));
+        m.tracks.push_back(makeTrack(1, kDrums, 0.8f, 0.4f, early, 36, m.loopTicks, 120));
+
+        expect(songFrames(m, kSr) == 768000, "export: 8 bars at 120 BPM / 48 kHz is exactly 768000 frames");
+        PlaybackModel m90 = m;
+        m90.tempo = 90.0;
+        expect(songFrames(m90, kSr) == 1024000, "export: 8 bars at 90 BPM is exactly 1024000 frames");
+
+        std::vector<float> L, R;
+        int64_t frames = renderSong(m, kSr, 2.0, [&](const float* l, const float* r, int n) {
+            L.insert(L.end(), l, l + n);
+            R.insert(R.end(), r, r + n);
+        });
+        expect(frames == 768000 + 96000, "export: length is song + tail exactly");
+        expect(static_cast<int64_t>(L.size()) == frames && static_cast<int64_t>(R.size()) == frames, "export: sink received every frame");
+
+        double early_peak = 0, gap_peak = 0, tail_peak = 0;
+        for (int64_t i = 0; i < frames; ++i)
+        {
+            const double v = std::max(std::fabs(L[static_cast<size_t>(i)]), std::fabs(R[static_cast<size_t>(i)]));
+            if (i < 8 * 48000) early_peak = std::max(early_peak, v);       // first 8 s: music
+            else if (i < 768000) gap_peak = std::max(gap_peak, v);         // bars 5-8: nothing plays
+            else tail_peak = std::max(tail_peak, v);
+        }
+        expect(early_peak > 0.05, "export: audible where notes play");
+        expect(gap_peak < 1e-9, "export: exactly silent where nothing plays");
+        expect(tail_peak < 1e-9, "export: tail has rung out to silence");
+
+        std::vector<float> L2, R2;
+        renderSong(m, kSr, 2.0, [&](const float* l, const float* r, int n) {
+            L2.insert(L2.end(), l, l + n);
+            R2.insert(R2.end(), r, r + n);
+        });
+        expect(L == L2 && R == R2, "export: rendering twice is bit-identical (deterministic)");
+
+        // The export must match what the live path renders at a different block size (same mixer code).
+        {
+            AudioEngine live;
+            live.prepare(kSr, 1000);
+            live.sequencer.setModel(&m);
+            live.sequencer.setBpm(m.tempo);
+            live.sequencer.setPlaying(true);
+            std::vector<float> l(1000), r(1000);
+            float* out[2] = { l.data(), r.data() };
+            double worstDiff = 0;
+            int64_t firstBad = -1;
+            for (int64_t done = 0; done + 1000 <= 400000; done += 1000)
+            {
+                live.process(out, 2, 1000);
+                for (int i = 0; i < 1000; ++i)
+                {
+                    if (firstBad < 0 && std::fabs(l[static_cast<size_t>(i)] - L[static_cast<size_t>(done + i)]) > 1e-6)
+                    {
+                        firstBad = done + i;
+                        std::fprintf(stderr, "first divergence at frame %lld: live=%g export=%g (block start %lld)\n", static_cast<long long>(firstBad), l[static_cast<size_t>(i)], L[static_cast<size_t>(done + i)], static_cast<long long>(done));
+                    }
+                    worstDiff = std::max(worstDiff, static_cast<double>(std::fabs(l[static_cast<size_t>(i)] - L[static_cast<size_t>(done + i)])));
+                    worstDiff = std::max(worstDiff, static_cast<double>(std::fabs(r[static_cast<size_t>(i)] - R[static_cast<size_t>(done + i)])));
+                }
+            }
+            live.sequencer.setModel(nullptr);
+            if (worstDiff > 1e-6)
+                std::fprintf(stderr, "live vs export worst difference %.3g\n", worstDiff);
+            expect(worstDiff <= 1e-6, "export: matches the live render path (block 1000 vs 512)");
+        }
+
+        // WAV file: header and content.
+        const juce::File file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("daw_selftest_export.wav");
+        const ExportResult er = exportWav(m, file, kSr, 2.0);
+        expect(er.ok && er.frames == frames, "export: exportWav reports the exact frame count");
+        expect(er.peak > 0.05 && er.peak < 1.0, "export: peak is inside full scale");
+        {
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatReader> reader(wav.createReaderFor(file.createInputStream().release(), true));
+            expect(reader != nullptr, "export: file opens as a WAV");
+            if (reader != nullptr)
+            {
+                expect(reader->lengthInSamples == frames, "export: WAV length equals song + tail exactly");
+                expect(reader->sampleRate == kSr && reader->numChannels == 2 && reader->bitsPerSample == 24, "export: 48 kHz, stereo, 24-bit");
+                juce::AudioBuffer<float> buf(2, 48000);
+                double worst = 0;
+                for (int64_t pos = 0; pos + 48000 <= 8 * 48000; pos += 48000)
+                {
+                    reader->read(&buf, 0, 48000, pos, true, true);
+                    for (int i = 0; i < 48000; ++i)
+                    {
+                        worst = std::max(worst, static_cast<double>(std::fabs(buf.getSample(0, i) - L[static_cast<size_t>(pos + i)])));
+                        worst = std::max(worst, static_cast<double>(std::fabs(buf.getSample(1, i) - R[static_cast<size_t>(pos + i)])));
+                    }
+                }
+                expect(worst < 1.5e-7, "export: WAV samples equal the render to within 24-bit quantisation");
+            }
+        }
+        file.deleteFile();
+
+        PlaybackModel empty;
+        empty.loopTicks = 0;
+        expect(!exportWav(empty, file, kSr, 1.0).ok, "export: empty song is refused");
+        expect(!exportWav(m, juce::File("Z:/definitely/not/a/folder/x.wav"), kSr, 1.0).ok, "export: unwritable path is reported, not crashed");
     }
 
     std::printf("{\"t\":\"selftest\",\"pass\":%s,\"checked\":%d,\"failures\":%d,\"worstSampleError\":%lld}\n", failures == 0 ? "true" : "false",

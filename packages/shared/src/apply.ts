@@ -2,23 +2,27 @@ import {
   INSTRUMENTS,
   MAX_BPM,
   MAX_PITCH,
+  MAX_SONG_BARS,
   MAX_TRACKS,
   MIN_BPM,
+  MIN_CLIP_TICKS,
   MIN_PITCH,
   RECENT_OPS_LIMIT,
+  TICKS_PER_BAR,
+  songTicks,
   type Clip,
   type Note,
   type Project,
   type Track,
 } from "./model";
-import type { Op, OpBody, TrackFields } from "./ops";
+import type { ClipFields, Op, OpBody, TrackFields } from "./ops";
 
 export type ApplyResult =
   | { ok: true; project: Project; applied: boolean }
   | { ok: false; reason: string };
 
-const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 function validateNote(clip: Clip, n: Note): string | null {
@@ -28,6 +32,32 @@ function validateNote(clip: Clip, n: Note): string | null {
   if (!isInt(n.durationTicks) || n.durationTicks < 1) return "durationTicks must be a positive integer";
   if (n.startTick + n.durationTicks > clip.lengthTicks) return "note exceeds clip length";
   if (n.muted !== undefined && typeof n.muted !== "boolean") return "muted must be boolean";
+  return null;
+}
+
+/** The furthest note end inside a clip (0 when empty): the clip may not be made shorter than this. */
+export function clipContentEnd(clip: Clip): number {
+  let end = 0;
+  for (const n of Object.values(clip.notes)) end = Math.max(end, n.startTick + n.durationTicks);
+  return end;
+}
+
+/** Checks a clip's own shape and its place among its track's other clips. */
+function clipError(clips: Record<string, Clip>, clip: Clip, songLen: number): string | null {
+  if (!clip.id || typeof clip.id !== "string") return "clip id required";
+  if (clip.name !== undefined && (typeof clip.name !== "string" || clip.name.length < 1 || clip.name.length > 40)) return "clip name must be 1-40 characters";
+  if (!isInt(clip.startTick) || clip.startTick < 0) return "clip start must be a non-negative integer";
+  if (!isInt(clip.lengthTicks) || clip.lengthTicks < MIN_CLIP_TICKS) return "clip must be at least one beat long";
+  if (clip.startTick + clip.lengthTicks > songLen) return "clip extends past the end of the song";
+  if (clipContentEnd(clip) > clip.lengthTicks) return "clip is shorter than its notes";
+  for (const other of Object.values(clips)) {
+    if (other.id === clip.id) continue;
+    if (clip.startTick < other.startTick + other.lengthTicks && other.startTick < clip.startTick + clip.lengthTicks) return "clips on a track cannot overlap";
+  }
+  for (const n of Object.values(clip.notes)) {
+    const err = validateNote(clip, n);
+    if (err) return err;
+  }
   return null;
 }
 
@@ -41,7 +71,7 @@ function validateTrackFields(t: Partial<TrackFields>): string | null {
   return null;
 }
 
-function validateTrack(t: Track): string | null {
+function validateTrack(t: Track, songLen: number): string | null {
   if (!t.id || typeof t.id !== "string") return "track id required";
   if (!INSTRUMENTS.includes(t.instrument)) return "unknown instrument";
   const fieldErr = validateTrackFields(t);
@@ -49,19 +79,22 @@ function validateTrack(t: Track): string | null {
   if (t.name === undefined || t.color === undefined || t.volume === undefined || t.pan === undefined || t.mute === undefined || t.solo === undefined) {
     return "track is missing fields";
   }
+  const placed: Record<string, Clip> = {};
   for (const clip of Object.values(t.clips ?? {})) {
-    if (!isInt(clip.startTick) || clip.startTick < 0 || !isInt(clip.lengthTicks) || clip.lengthTicks < 1) return "invalid clip";
-    for (const n of Object.values(clip.notes)) {
-      const err = validateNote(clip, n);
-      if (err) return err;
-    }
+    const err = clipError(placed, clip, songLen);
+    if (err) return err;
+    placed[clip.id] = clip;
   }
   return null;
 }
 
+function withTrack(project: Project, trackId: string, track: Track): Project {
+  return { ...project, tracks: { ...project.tracks, [trackId]: track } };
+}
+
 function withClip(project: Project, trackId: string, clipId: string, clip: Clip): Project {
   const track = project.tracks[trackId]!;
-  return { ...project, tracks: { ...project.tracks, [trackId]: { ...track, clips: { ...track.clips, [clipId]: clip } } } };
+  return withTrack(project, trackId, { ...track, clips: { ...track.clips, [clipId]: clip } });
 }
 
 function remember(project: Project, opId: string): Project {
@@ -71,6 +104,13 @@ function remember(project: Project, opId: string): Project {
 }
 
 const done = (project: Project, opId: string): ApplyResult => ({ ok: true, applied: true, project: remember(project, opId) });
+
+/** End of the last clip on any track (0 when there are none). */
+export function lastClipEnd(project: Project): number {
+  let end = 0;
+  for (const t of Object.values(project.tracks)) for (const c of Object.values(t.clips)) end = Math.max(end, c.startTick + c.lengthTicks);
+  return end;
+}
 
 /**
  * Pure, deterministic reducer shared by the desktop client and (later) the collaboration server.
@@ -91,10 +131,15 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (!isInt(op.volume) || op.volume < 0 || op.volume > 100) return { ok: false, reason: "volume must be an integer 0-100" };
       return done({ ...project, masterVolume: op.volume }, op.opId);
     }
+    case "setSongLength": {
+      if (!isInt(op.bars) || op.bars < 1 || op.bars > MAX_SONG_BARS) return { ok: false, reason: `song length must be 1-${MAX_SONG_BARS} bars` };
+      if (op.bars * TICKS_PER_BAR < lastClipEnd(project)) return { ok: false, reason: "song would end before the last clip" };
+      return done({ ...project, songBars: op.bars }, op.opId);
+    }
     case "addTrack": {
       if (project.tracks[op.track.id]) return { ok: false, reason: "track id already exists" };
       if (project.trackOrder.length >= MAX_TRACKS) return { ok: false, reason: `at most ${MAX_TRACKS} tracks` };
-      const err = validateTrack(op.track);
+      const err = validateTrack(op.track, songTicks(project));
       if (err) return { ok: false, reason: err };
       const order = [...project.trackOrder];
       const index = op.index === undefined ? order.length : Math.max(0, Math.min(order.length, op.index));
@@ -112,7 +157,29 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (!track) return { ok: false, reason: "unknown track" };
       const err = validateTrackFields(op.changes);
       if (err) return { ok: false, reason: err };
-      return done({ ...project, tracks: { ...project.tracks, [op.trackId]: { ...track, ...op.changes } } }, op.opId);
+      return done(withTrack(project, op.trackId, { ...track, ...op.changes }), op.opId);
+    }
+    case "addClip": {
+      const track = project.tracks[op.trackId];
+      if (!track) return { ok: false, reason: "unknown track" };
+      if (track.clips[op.clip.id]) return { ok: false, reason: "clip id already exists" };
+      const err = clipError(track.clips, op.clip, songTicks(project));
+      if (err) return { ok: false, reason: err };
+      return done(withClip(project, op.trackId, op.clip.id, clone(op.clip)), op.opId);
+    }
+    case "deleteClip": {
+      const track = project.tracks[op.trackId];
+      if (!track?.clips[op.clipId]) return { ok: false, reason: "unknown track or clip" };
+      const { [op.clipId]: _removed, ...rest } = track.clips;
+      return done(withTrack(project, op.trackId, { ...track, clips: rest }), op.opId);
+    }
+    case "updateClip": {
+      const clip = project.tracks[op.trackId]?.clips[op.clipId];
+      if (!clip) return { ok: false, reason: "unknown track or clip" };
+      const updated: Clip = { ...clip, ...op.changes };
+      const err = clipError(project.tracks[op.trackId]!.clips, updated, songTicks(project));
+      if (err) return { ok: false, reason: err };
+      return done(withClip(project, op.trackId, op.clipId, updated), op.opId);
     }
     case "addNote":
     case "deleteNote":
@@ -152,6 +219,8 @@ export function stamp(body: OpBody, opId: string, clientId: string): Op {
   return { ...body, opId, clientId } as Op;
 }
 
+type UpdateNoteChanges = Extract<Op, { type: "updateNote" }>["changes"];
+
 /**
  * Builds the op that undoes `op`, given the project state *before* `op` was applied.
  * Returns null if the op has no effect to undo.
@@ -163,6 +232,8 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       return { ...base, type: "setTempo", bpm: before.tempo };
     case "setMasterVolume":
       return { ...base, type: "setMasterVolume", volume: before.masterVolume };
+    case "setSongLength":
+      return { ...base, type: "setSongLength", bars: before.songBars };
     case "addTrack":
       return { ...base, type: "deleteTrack", trackId: op.track.id };
     case "deleteTrack": {
@@ -175,6 +246,19 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       const changes: Record<string, unknown> = {};
       for (const key of Object.keys(op.changes) as (keyof TrackFields)[]) changes[key] = track[key];
       return { ...base, type: "updateTrack", trackId: op.trackId, changes: changes as Partial<TrackFields> };
+    }
+    case "addClip":
+      return { ...base, type: "deleteClip", trackId: op.trackId, clipId: op.clip.id };
+    case "deleteClip": {
+      const clip = before.tracks[op.trackId]?.clips[op.clipId];
+      return clip ? { ...base, type: "addClip", trackId: op.trackId, clip: clone(clip) } : null;
+    }
+    case "updateClip": {
+      const clip = before.tracks[op.trackId]?.clips[op.clipId];
+      if (!clip) return null;
+      const changes: Record<string, unknown> = {};
+      for (const key of Object.keys(op.changes) as (keyof ClipFields)[]) changes[key] = clip[key];
+      return { ...base, type: "updateClip", trackId: op.trackId, clipId: op.clipId, changes: changes as Partial<ClipFields> };
     }
     case "addNote":
       return { ...base, type: "deleteNote", trackId: op.trackId, clipId: op.clipId, noteId: op.note.id };
@@ -191,7 +275,6 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
     }
   }
 }
-type UpdateNoteChanges = Extract<Op, { type: "updateNote" }>["changes"];
 
 /** Stable hash of the project content (ignores recentOps) for divergence checks in later phases. */
 export function projectHash(project: Project): string {

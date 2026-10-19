@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyOp, createProject, createTrack, type Op, type Project } from "@daw/shared";
+import { applyOp, createProject, createTrack, TICKS_PER_BAR, type Op, type Project } from "@daw/shared";
 import { isAudible, SlotAllocator, toEngineSnapshot, volumeToGain } from "./snapshot";
 
 let n = 0;
@@ -69,5 +69,28 @@ describe("SlotAllocator", () => {
     slots.sync(p);
     expect(slots.slotFor("t4")).toBe(1); // reused
     expect(slots.trackFor(1)).toBe("t4");
+  });
+});
+
+describe("clips in the engine snapshot", () => {
+  it("loops over the song length, not over the longest clip", () => {
+    let p = createProject("p"); // 8-bar song, one 4-bar clip
+    expect(toEngineSnapshot(p, new SlotAllocator()).loopTicks).toBe(8 * TICKS_PER_BAR);
+    p = run(p, { type: "setSongLength", bars: 20 });
+    expect(toEngineSnapshot(p, new SlotAllocator()).loopTicks).toBe(20 * TICKS_PER_BAR);
+  });
+
+  it("places notes of every clip at absolute song ticks (clip start + note start)", () => {
+    let p = createProject("p");
+    p = run(p, { type: "addNote", trackId: "track-1", clipId: "clip-1", note: { id: "a", pitch: 60, startTick: 480, durationTicks: 240, velocity: 90 } });
+    p = run(p, { type: "addClip", trackId: "track-1", clip: { id: "late", startTick: 5 * TICKS_PER_BAR, lengthTicks: 2 * TICKS_PER_BAR, notes: { b: { id: "b", pitch: 64, startTick: 960, durationTicks: 480, velocity: 100 } } } });
+    const notes = toEngineSnapshot(p, new SlotAllocator()).tracks[0]!.notes.map((n) => [n.pitch, n.startTick]).sort();
+    expect(notes).toEqual([[60, 480], [64, 5 * TICKS_PER_BAR + 960]]);
+  });
+
+  it("keeps a clip's notes silent when the track is muted, and a muted note out of the engine", () => {
+    let p = createProject("p");
+    p = run(p, { type: "addNote", trackId: "track-1", clipId: "clip-1", note: { id: "a", pitch: 60, startTick: 0, durationTicks: 240, velocity: 90, muted: true } });
+    expect(toEngineSnapshot(p, new SlotAllocator()).tracks[0]!.notes).toHaveLength(0);
   });
 });

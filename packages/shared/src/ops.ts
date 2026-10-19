@@ -1,7 +1,8 @@
-import type { Note, Track } from "./model";
+import type { Clip, Note, Track } from "./model";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
 export type TrackFields = Pick<Track, "name" | "color" | "volume" | "pan" | "mute" | "solo">;
+export type ClipFields = Pick<Clip, "name" | "startTick" | "lengthTicks">;
 
 interface OpBase {
   /** Globally unique; the same opId applied twice has the same effect as once. */
@@ -52,8 +53,41 @@ export interface SetMasterVolumeOp extends OpBase {
   type: "setMasterVolume";
   volume: number;
 }
+/** Adds a complete clip with its notes (also used to restore a deleted clip on undo). */
+export interface AddClipOp extends OpBase {
+  type: "addClip";
+  trackId: string;
+  clip: Clip;
+}
+export interface DeleteClipOp extends OpBase {
+  type: "deleteClip";
+  trackId: string;
+  clipId: string;
+}
+export interface UpdateClipOp extends OpBase {
+  type: "updateClip";
+  trackId: string;
+  clipId: string;
+  changes: Partial<ClipFields>;
+}
+export interface SetSongLengthOp extends OpBase {
+  type: "setSongLength";
+  bars: number;
+}
 
-export type Op = AddNoteOp | DeleteNoteOp | UpdateNoteOp | SetTempoOp | AddTrackOp | DeleteTrackOp | UpdateTrackOp | SetMasterVolumeOp;
+export type Op =
+  | AddNoteOp
+  | DeleteNoteOp
+  | UpdateNoteOp
+  | SetTempoOp
+  | AddTrackOp
+  | DeleteTrackOp
+  | UpdateTrackOp
+  | SetMasterVolumeOp
+  | AddClipOp
+  | DeleteClipOp
+  | UpdateClipOp
+  | SetSongLengthOp;
 
 type Body<T> = T extends Op ? Omit<T, "opId" | "clientId"> : never;
 /** An op before it is stamped with opId/clientId (what the UI sends to the main process). */

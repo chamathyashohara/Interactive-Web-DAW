@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PPQ, TICKS_PER_BAR, type Note, type NoteFields, type OpBody, type Project, type Track } from "@daw/shared";
+import { PPQ, TICKS_PER_BAR, type Clip, type Note, type NoteFields, type OpBody, type Track } from "@daw/shared";
 import { statusStore, useStore } from "../store";
 import { clampGroupMove, copyNotes, deleteOps, duplicateOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, type NoteClip } from "./editing";
 import {
@@ -20,8 +20,10 @@ import {
 export type Tool = "draw" | "paint" | "select" | "delete" | "mute" | "slice";
 
 interface Props {
-  project: Project;
   track: Track;
+  clip: Clip;
+  /** Keyboard shortcuts (tools, copy/paste, delete...) only react while this panel has focus. */
+  keysEnabled: boolean;
   tool: Tool;
   snap: boolean;
   gridTicks: number;
@@ -48,17 +50,18 @@ const PITCHES = Array.from({ length: PITCH_MAX - PITCH_MIN + 1 }, (_, i) => PITC
 /** Notes copied with Copy; shared across tracks so a pattern can be pasted into another track. */
 let clipboard: Note[] = [];
 
-const Playhead = memo(function Playhead({ pxPerBeat }: { pxPerBeat: number }) {
+const Playhead = memo(function Playhead({ pxPerBeat, clipStart, clipLength }: { pxPerBeat: number; clipStart: number; clipLength: number }) {
   const status = useStore(statusStore);
-  const x = KEYS_W + tickToPx(status?.tick ?? 0, pxPerBeat);
+  const rel = (status?.tick ?? 0) - clipStart; // the playhead is absolute song time; the roll shows one clip
+  if (rel < 0 || rel > clipLength) return null;
+  const x = KEYS_W + tickToPx(rel, pxPerBeat);
   return <div className="pointer-events-none absolute top-0 bottom-0 z-[25] w-px bg-amber-300" style={{ left: x, boxShadow: "0 0 6px rgba(252,211,77,.7)" }} />;
 });
 
 const btn = "rounded px-2 py-0.5 text-[11px] font-medium bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5";
 
-export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, rowH, onTool }: Props) {
-  const clipId = Object.keys(track.clips)[0]!;
-  const clip = track.clips[clipId]!;
+export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxPerBeat, rowH, onTool }: Props) {
+  const clipId = clip.id;
   const noteClip: NoteClip = { trackId: track.id, clipId, lengthTicks: clip.lengthTicks };
   const notes = useMemo(() => Object.values(clip.notes), [clip.notes]);
   const gridW = tickToPx(clip.lengthTicks, pxPerBeat);
@@ -90,11 +93,11 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const pitches = Object.values(track.clips[clipId]!.notes).map((n) => n.pitch);
+    const pitches = Object.values(clip.notes).map((n) => n.pitch);
     const center = pitches.length ? Math.round(pitches.reduce((a, b) => a + b, 0) / pitches.length) : isDrums ? 42 : 66;
     el.scrollTop = Math.max(0, pitchToY(center, rowH) + RULER_H - el.clientHeight / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track.id]);
+  }, [track.id, clip.id]);
 
   // ---- editing commands (buttons + shortcuts) ----
   const targets = () => (selectedNotes.length ? selectedNotes : notes);
@@ -103,7 +106,8 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
   };
   const cmdPaste = () => {
     if (!clipboard.length) return;
-    const at = snapTick(statusStore.get()?.tick ?? 0, gridTicks, snap, "floor");
+    const rel = (statusStore.get()?.tick ?? 0) - clip.startTick;
+    const at = rel >= 0 && rel < clip.lengthTicks ? snapTick(rel, gridTicks, snap, "floor") : 0; // playhead outside this clip: paste at its start
     const ids: string[] = [];
     batch(pasteOps(noteClip, clipboard, at, () => (ids.push(crypto.randomUUID()), ids[ids.length - 1]!)));
     setSelected(new Set(ids));
@@ -121,6 +125,7 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
   const cmdSelectAll = () => setSelected(new Set(notes.map((n) => n.id)));
 
   useEffect(() => {
+    if (!keysEnabled) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA")) return;
@@ -392,7 +397,7 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
         <span className="mr-1 flex items-center gap-1.5 text-[11px] text-slate-400">
           <span className="h-2.5 w-2.5 rounded-sm" style={{ background: track.color }} />
           {track.name}
-          <span className="text-slate-600">· {isDrums ? "Drums" : "Synth"}</span>
+          <span className="text-slate-600">· {isDrums ? "Drums" : "Synth"} · {clip.name ?? "Clip"}</span>
         </span>
         <button className={btn} onClick={cmdSelectAll} title="Select all (Ctrl+A)">Select all</button>
         <button className={btn} disabled={!liveSelected.size} onClick={cmdCopy} title="Copy (Ctrl+C)">Copy</button>
@@ -405,7 +410,7 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
 
       <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-auto bg-[#0b0e14]" data-testid="piano-roll-scroll">
         <div className="relative" style={{ width: KEYS_W + gridW, minHeight: "100%" }}>
-          <Playhead pxPerBeat={pxPerBeat} />
+          <Playhead pxPerBeat={pxPerBeat} clipStart={clip.startTick} clipLength={clip.lengthTicks} />
 
           {/* Ruler */}
           <div className="sticky top-0 z-30 flex" style={{ height: RULER_H }}>
@@ -415,12 +420,12 @@ export function PianoRoll({ project, track, tool, snap, gridTicks, pxPerBeat, ro
               style={{ width: gridW }}
               onPointerDown={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
-                window.daw.seek(clamp(snapTick(pxToTick(e.clientX - rect.left, pxPerBeat), PPQ, true, "round"), 0, clip.lengthTicks - 1));
+                window.daw.seek(clip.startTick + clamp(snapTick(pxToTick(e.clientX - rect.left, pxPerBeat), PPQ, true, "round"), 0, clip.lengthTicks - 1));
               }}
             >
               {Array.from({ length: bars }, (_, b) => (
                 <div key={b} className="absolute top-0 h-full border-l border-white/30 pl-1 text-[10px] leading-[22px] text-slate-300" style={{ left: b * barPx }}>
-                  {b + 1}
+                  {Math.floor(clip.startTick / TICKS_PER_BAR) + b + 1}
                 </div>
               ))}
               {Array.from({ length: bars * 4 }, (_, i) => (i % 4 === 0 ? null : <div key={i} className="absolute bottom-0 h-1.5 border-l border-white/20" style={{ left: i * beatPx }} />))}

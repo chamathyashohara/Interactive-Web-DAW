@@ -43,7 +43,9 @@ export type EngineCommand =
   | { t: "stop" }
   | { t: "seek"; tick: number }
   | { t: "setTempo"; bpm: number }
-  | { t: "preview"; slot: number; pitch: number; velocity: number; on: boolean };
+  | { t: "preview"; slot: number; pitch: number; velocity: number; on: boolean }
+  /** Offline-render the current project to a 24-bit stereo 48 kHz WAV (song length + tail). Runs beside live playback. */
+  | { t: "exportWav"; id: string; path: string; tailSeconds: number };
 
 export interface EngineStatus {
   t: "status";
@@ -70,4 +72,25 @@ export interface EngineReady {
   version: string;
 }
 
-export type EngineEvent = EngineReady | EngineStatus | { t: "error"; message: string };
+export interface ExportProgress {
+  t: "exportProgress";
+  id: string;
+  fraction: number;
+}
+export interface ExportDone {
+  t: "exportDone";
+  id: string;
+  path: string;
+  frames: number;
+  sampleRate: number;
+  seconds: number;
+  peak: number;
+}
+export interface ExportError {
+  t: "exportError";
+  id: string;
+  message: string;
+}
+export type ExportEvent = ExportProgress | ExportDone | ExportError;
+
+export type EngineEvent = EngineReady | EngineStatus | ExportEvent | { t: "error"; message: string };

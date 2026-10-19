@@ -1,5 +1,5 @@
 import { ENGINE_MAX_SLOTS, type EngineProjectSnapshot, type EngineTrack } from "@daw/engine-protocol";
-import type { Project } from "@daw/shared";
+import { songTicks, type Project } from "@daw/shared";
 
 /** Fader curve: 0..100 -> linear gain. Squared so the lower half of the fader is usable. */
 export const volumeToGain = (volume: number) => (volume / 100) ** 2;
@@ -42,14 +42,13 @@ export function isAudible(project: Project, trackId: string): boolean {
 /** Flattens tracks -> clips -> notes into the absolute-tick note lists the audio engine plays. */
 export function toEngineSnapshot(project: Project, slots: SlotAllocator): EngineProjectSnapshot {
   slots.sync(project);
-  let loopTicks = 0;
+  const loopTicks = songTicks(project); // playback loops over the song, not over the longest clip
   const tracks: EngineTrack[] = [];
   for (const trackId of project.trackOrder) {
     const track = project.tracks[trackId];
     if (!track) continue;
     const notes: EngineTrack["notes"] = [];
     for (const clip of Object.values(track.clips)) {
-      loopTicks = Math.max(loopTicks, clip.startTick + clip.lengthTicks);
       for (const n of Object.values(clip.notes)) {
         if (n.muted) continue; // muted notes stay in the project but are not played
         notes.push({ pitch: n.pitch, startTick: clip.startTick + n.startTick, durationTicks: n.durationTicks, velocity: n.velocity });

@@ -1,4 +1,10 @@
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #include "AudioEngine.h"
+#include "Export.h"
 #include "SelfTest.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
@@ -6,6 +12,7 @@
 #include <atomic>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -18,7 +25,8 @@
 
 namespace
 {
-constexpr const char* kVersion = "0.2.0";
+constexpr const char* kVersion = "0.3.0";
+constexpr double kExportSampleRate = 48000.0; // exports do not depend on the audio device
 
 std::mutex gOutMutex;
 void sendLine(const std::string& json)
@@ -55,6 +63,13 @@ public:
         current = fresh;
     }
 
+    /** A private copy of the current model for the export thread (the live one may be retired at any time). */
+    std::unique_ptr<PlaybackModel> copyCurrent()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return current != nullptr ? std::make_unique<PlaybackModel>(*current) : nullptr;
+    }
+
     void purge()
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -84,6 +99,7 @@ PlaybackModel* parseModel(const juce::var& project)
     model->ppq = std::max(1, static_cast<int>(project["ppq"]));
     model->loopTicks = static_cast<juce::int64>(project["loopTicks"]);
     model->masterGain = static_cast<float>(static_cast<double>(project["masterGain"]));
+    model->tempo = static_cast<double>(project["tempo"]);
 
     if (const auto* tracks = project["tracks"].getArray())
     {
@@ -200,6 +216,53 @@ int main(int argc, char** argv)
         }
     });
 
+    // Offline WAV export runs on its own thread (separate AudioEngine instance) so live playback is undisturbed.
+    std::thread exportThread;
+    std::atomic<bool> exporting{ false };
+    std::atomic<bool> cancelExport{ false };
+    auto startExport = [&](const juce::String& id, const juce::String& path, double tailSeconds) {
+        const std::string sid = id.toStdString();
+        if (exporting.load())
+        {
+            sendLine("{\"t\":\"exportError\",\"id\":" + jsonEscape(id) + ",\"message\":\"an export is already running\"}");
+            return;
+        }
+        auto model = models.copyCurrent();
+        if (model == nullptr)
+        {
+            sendLine("{\"t\":\"exportError\",\"id\":" + jsonEscape(id) + ",\"message\":\"no project loaded\"}");
+            return;
+        }
+        if (exportThread.joinable()) exportThread.join();
+        exporting = true;
+        cancelExport = false;
+        exportThread = std::thread([&, id, path, tailSeconds, m = std::move(model)] {
+#ifdef _WIN32
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); // never compete with the audio thread
+#endif
+            juce::uint32 lastSent = 0;
+            const auto progress = [&](double fraction) {
+                const auto now = juce::Time::getMillisecondCounter();
+                if (now - lastSent < 100 && fraction < 1.0) return;
+                lastSent = now;
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), ",\"fraction\":%.4f}", fraction);
+                sendLine("{\"t\":\"exportProgress\",\"id\":" + jsonEscape(id) + buf);
+            };
+            const auto result = exportWav(*m, juce::File(path), kExportSampleRate, tailSeconds, progress, &cancelExport);
+            if (result.ok)
+            {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), ",\"frames\":%lld,\"sampleRate\":%.0f,\"seconds\":%.3f,\"peak\":%.5f}",
+                              static_cast<long long>(result.frames), kExportSampleRate, static_cast<double>(result.frames) / kExportSampleRate, result.peak);
+                sendLine("{\"t\":\"exportDone\",\"id\":" + jsonEscape(id) + ",\"path\":" + jsonEscape(path) + buf);
+            }
+            else
+                sendLine("{\"t\":\"exportError\",\"id\":" + jsonEscape(id) + ",\"message\":" + jsonEscape(juce::String(result.error)) + "}");
+            exporting = false;
+        });
+    };
+
     // Command loop (blocks until the parent closes our stdin).
     std::string line;
     while (std::getline(std::cin, line))
@@ -225,9 +288,12 @@ int main(int argc, char** argv)
         else if (type == "preview")
             engine.pushPreview({ std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1), std::clamp(static_cast<int>(msg["pitch"]), 0, 127),
                                  std::clamp(static_cast<int>(msg["velocity"]), 1, 127), static_cast<bool>(msg["on"]) });
+        else if (type == "exportWav") startExport(msg["id"].toString(), msg["path"].toString(), static_cast<double>(msg["tailSeconds"]));
         else if (type == "hello") sendLine(readyBuf);
     }
 
+    cancelExport = true;
+    if (exportThread.joinable()) exportThread.join();
     running = false;
     statusThread.join();
     deviceManager.removeAudioCallback(&engine);

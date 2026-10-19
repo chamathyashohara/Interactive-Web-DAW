@@ -10,3 +10,5 @@ soak-result.log
 buffer-matrix.log
 soak-m2.log
 .vscode/
+.claude/
+soak-m3.log

@@ -41,8 +41,11 @@ export const tmpDataDir = (prefix = "daw-e2e-") => fs.mkdtempSync(path.join(os.t
 export const rmDir = (d) => fs.rmSync(d, { recursive: true, force: true });
 
 export function launch(port, dataDir) {
+  // ELECTRON_RUN_AS_NODE (set by some hosts) would make Electron run as plain Node and break the app.
+  const env = { ...process.env, DAW_DATA_DIR: dataDir, DAW_E2E: "1" };
+  delete env.ELECTRON_RUN_AS_NODE;
   return spawn(electronExe, [appDir, `--remote-debugging-port=${port}`], {
-    env: { ...process.env, DAW_DATA_DIR: dataDir },
+    env,
     stdio: ["ignore", "ignore", "inherit"],
   });
 }
@@ -70,6 +73,8 @@ export async function connect(port) {
     }
   };
   const send = (method, params = {}) => new Promise((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  // A taller virtual viewport so both the arrangement and the piano roll have room (the real window is resizable).
+  await send("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1000, deviceScaleFactor: 1, mobile: false });
   const evalJs = async (expr) => {
     const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
     if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails));

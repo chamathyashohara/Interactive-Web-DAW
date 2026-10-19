@@ -1,14 +1,18 @@
 // Engine soak test: plays a dense 8-track looping pattern (6 synths + 2 drum kits, moving mixer values) for N minutes
 // with a steady stream of project reloads (simulating edits) and reports callback overruns.
-// Usage: node apps/desktop/e2e/soak.mjs [minutes] [bufferSize]
+// Usage: node apps/desktop/e2e/soak.mjs [minutes] [bufferSize] [exportEverySeconds]
+// With exportEverySeconds the engine also renders the whole song to a WAV on that interval while playing (tests live audio vs export).
 import { spawn } from "node:child_process";
 import os from "node:os";
 
 const minutes = Number(process.argv[2] ?? 10);
-const buffer = process.argv[3] ?? "";
+const buffer = process.argv[3] && process.argv[3] !== "0" ? process.argv[3] : "";
+const exportEvery = Number(process.argv[4] ?? 0);
 const exe = new URL("../../../engine/build/daw_engine_artefacts/Release/daw_engine.exe", import.meta.url);
 const p = spawn(decodeURIComponent(exe.pathname.slice(1)), buffer ? ["--buffer", buffer] : [], { stdio: ["pipe", "pipe", "inherit"] });
 let buf = "", last = null, ready = null;
+const exportStarted = {}, exportSeconds = [], exportErrors = [];
+let exportsDone = 0;
 p.stdout.on("data", (d) => {
   buf += d;
   let i;
@@ -17,6 +21,8 @@ p.stdout.on("data", (d) => {
     buf = buf.slice(i + 1);
     if (m.t === "ready") ready = m;
     else if (m.t === "status") last = m;
+    else if (m.t === "exportDone") { exportsDone++; exportSeconds.push(Date.now() - exportStarted[m.id]); }
+    else if (m.t === "exportError") exportErrors.push(m.message);
   }
 });
 const send = (o) => p.stdin.write(JSON.stringify(o) + "\n");
@@ -41,10 +47,16 @@ const makeProject = (shift) => ({
 setTimeout(() => { send({ t: "loadProject", project: makeProject(0) }); send({ t: "play" }); }, 1500);
 let n = 0;
 const edit = setInterval(() => send({ t: "loadProject", project: makeProject(++n) }), 100); // 10 project updates/s
+let exportCount = 0;
+const exporter = exportEvery > 0 ? setInterval(() => {
+  const id = "soak-" + ++exportCount;
+  exportStarted[id] = Date.now();
+  send({ t: "exportWav", id, path: os.tmpdir() + "/daw-soak-export.wav", tailSeconds: 2 });
+}, exportEvery * 1000) : null;
 const report = setInterval(() => last && console.log(new Date().toISOString().slice(11, 19), `callbacks=${last.callbacks} overruns=${last.overruns} peakLoad=${(last.peakLoad * 100).toFixed(1)}% xruns=${last.xruns} masterL=${last.masterL}`), 30000);
 setTimeout(() => {
-  clearInterval(edit); clearInterval(report);
-  console.log("RESULT", JSON.stringify({ minutes, tracks: TRACKS, device: ready?.device, deviceType: ready?.deviceType, sampleRate: ready?.sampleRate, bufferSize: ready?.bufferSize, cpu: os.cpus()[0].model, callbacks: last?.callbacks, overruns: last?.overruns, peakLoadPct: +(last?.peakLoad * 100).toFixed(1), xruns: last?.xruns }));
+  clearInterval(edit); clearInterval(report); if (exporter) clearInterval(exporter);
+  console.log("RESULT", JSON.stringify({ minutes, tracks: TRACKS, device: ready?.device, deviceType: ready?.deviceType, sampleRate: ready?.sampleRate, bufferSize: ready?.bufferSize, cpu: os.cpus()[0].model, callbacks: last?.callbacks, overruns: last?.overruns, peakLoadPct: +(last?.peakLoad * 100).toFixed(1), xruns: last?.xruns, exports: exportsDone, exportErrors: exportErrors.length, exportMsAvg: exportSeconds.length ? Math.round(exportSeconds.reduce((a, b) => a + b, 0) / exportSeconds.length) : null }));
   p.stdin.end();
   setTimeout(() => process.exit(last && last.overruns === 0 ? 0 : 1), 500);
 }, minutes * 60_000);

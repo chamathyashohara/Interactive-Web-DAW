@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Project } from "@daw/shared";
-import type { EngineState, StatusPayload } from "../../preload/index";
+import type { EngineState, ExportStatus, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
   let state = initial;
@@ -34,6 +34,8 @@ export const engineStateStore = createStore<EngineState>({ connected: false, inf
 /** Engine status arrives ~30 Hz; kept in its own store so only the playhead/diagnostics re-render. */
 export const statusStore = createStore<StatusPayload | null>(null);
 
+export const exportStore = createStore<ExportStatus | null>(null);
+
 export async function initStores() {
   const initial = await window.daw.getInitial();
   projectStore.set({ project: initial.project, canUndo: initial.canUndo, canRedo: initial.canRedo });
@@ -42,4 +44,5 @@ export async function initStores() {
   window.daw.onProject((p) => projectStore.set(p));
   window.daw.onEngineState((s) => engineStateStore.set(s));
   window.daw.onEngineStatus((s) => statusStore.set(s));
+  window.daw.onExportStatus((s) => exportStore.set(s));
 }
