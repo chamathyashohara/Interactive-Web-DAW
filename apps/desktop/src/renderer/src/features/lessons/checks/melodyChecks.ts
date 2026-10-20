@@ -134,7 +134,9 @@ export function checkRepeatBars(clip: Clip, spec: { from: number; to: number; mi
   const correct = items.filter((i) => i.ok).length;
   const pass = correct === items.length;
   const feedback = pass
-    ? "A motif, repeated, then varied: that is how melodies stick in the head."
+    ? spec.variation
+      ? "A motif, repeated, then varied: that is how melodies stick in the head."
+      : "The motif is repeated exactly. Hearing it twice makes it stick."
     : !enough
       ? `Write a motif of at least ${spec.minNotes} notes in bar ${spec.from + 1}. You have ${a.length}.`
       : !repeated

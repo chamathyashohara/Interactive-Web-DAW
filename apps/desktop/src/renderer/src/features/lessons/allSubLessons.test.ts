@@ -28,11 +28,10 @@ describe("every sub-lesson on the path", () => {
     }
   });
 
-  for (const done of ["m0", "m1", "m2", "m3", "m4"]) {
-    it(`${done.toUpperCase()} is complete`, () => {
-      for (const item of MODULES.find((m) => m.id === done)!.items) expect(BUILT[item.id], item.id).toBeDefined();
-    });
-  }
+  it("every outline item on the path has content (the whole course is written)", () => {
+    for (const m of MODULES) for (const item of m.items) expect(BUILT[item.id], item.id).toBeDefined();
+    expect(subs).toHaveLength(MODULES.reduce((sum, m) => sum + m.items.length, 0));
+  });
 
   for (const sub of subs) {
     describe(sub.id, () => {

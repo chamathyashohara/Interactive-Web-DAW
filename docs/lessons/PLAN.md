@@ -412,3 +412,8 @@ sub-lesson driven end to end, 36/36, no console errors. Remaining: M4 Chord prog
 
 All six M4 Chord progressions sub-lessons (`content/m4.ts`), beginner wording. Unit tests 417/417; in the built app every M4
 sub-lesson driven end to end, 31/31, no console errors. Remaining: M5 Melody.
+
+## M5 complete: the whole path is written (2026-10-20)
+
+All five M5 Melody sub-lessons (`content/m5.ts`). Every outline item of M0-M5 now has content (39 sub-lessons); a test
+enforces that. Unit tests 453/453 desktop, 31/31 shared. In the built app all 39 sub-lessons were driven end to end in one run (Hook, Watch, Try, Practice with 3 hints, Quick check, Done, next), 191/191 checks, no console errors.

@@ -227,3 +227,20 @@ letters minor). Full text in `content/m4.ts`.
 | Other classics | I–IV–V–I: C, F, G, C | vi–IV–I–V worked out from the numbers: Am, F, C, G | I–IV–V–I in C is C, F, G, C |
 | Your own progression | Choose F and G for the middle of C _ _ C | Own 4 chords from C major: start and end on C, no repeats in a row (any valid answer passes) | Ending on I sounds finished |
 | Rhythm and a bass note | Chop a long C chord into hits on beats 1 and 3 | Add low root bass notes (C, then G) under given chord hits | The bass plays the root |
+
+# M5: Melody (all five sub-lessons, version 1)
+
+Beginner wording. In the melody-over-chords lessons the chords sit low (below C4) and the melody above, so the checks only
+judge notes at or above C4 as melody. Full text in `content/m5.ts`.
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Quick check |
+|---|---|---|---|
+| Melody from a scale | 6+ notes in C major ending on C (red = out of key) | Own 8+ note melody in G major ending on G (any valid answer passes) | Steps sound smoothest |
+| Chord tones | Chord tones on beats 1 and 3 over C and G (given low) | Same over Am and F | E is a chord tone of C major |
+| Melody rhythm | C4 2 beats, D4 + E4 half beats, G4 1 beat | G4 ½, E4 ½, D4 1, C4 2 | Rhythm = when and how long |
+| Motif and repetition | Duplicate a 3-note motif into bar 2 | Own motif, exact repeat, then a variation (same rhythm, one note changed) | A motif is a short repeated idea |
+| Project: melody over your progression | Chord tones on beat 1 over C, G, Am, F | Full melody: 8+ white-key notes above C4, one at a time, chord tone on each beat 1, end on C | Beat 1 = a note of that bar's chord |
+
+**The whole learning path (M0-M5, 39 sub-lessons) is now written.** The four "Earlier lessons" stay available; chords and
+melody are covered by M3-M5, while the drum Rhythm and "Fix the recording" MIDI-editing lessons are not part of the outline
+and remain under Earlier lessons.
