@@ -166,3 +166,16 @@ Tools are introduced one at a time; each sub-lesson's roll only offers the tools
 
 Each has a Hook (with sound), a four-step Watch, three-level Practice hints and a recap. Note: the tempo set in
 "Play, loop, tempo" stays in the learner's project (the recap says so).
+
+# M1: Notes (all six sub-lessons, version 1)
+
+Tools: Draw, Select, Delete and the copy/duplicate strip (all taught in M0). Full text in `content/m1.ts`.
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Quick check |
+|---|---|---|---|
+| High and low | A low note (≤ C3) on beat 1, a high one (≥ C5) on beat 3 | One note per zone: low, middle (C4-B4), high, low | Highest of C3/C5/C4/C2 is C5 |
+| Note names A–G | C4 D4 E4 F4, then G4 at bar 2 | A, F, D, B on beats 1-4, any octave | After G comes A |
+| Sharps and flats | C#4 and E♭4 | F#, B♭, G#, D♭ on beats 1-4, any octave | C# and D♭ are the same key |
+| Octaves and middle C | C4, C5, C3 | G4, the G an octave up, the E an octave below E4 | An octave is 12 keys |
+| Semitones and whole tones | From C4: a semitone up, a whole tone up | From E4: semitone up, whole tone up, semitone down (watch E-F) | A whole tone is 2 semitones |
+| Note lengths and beats | Half note, then two quarter notes | Whole note; four eighths and a half note | 4 quarter notes in a whole note |

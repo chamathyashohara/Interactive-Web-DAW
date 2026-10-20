@@ -28,9 +28,11 @@ describe("every sub-lesson on the path", () => {
     }
   });
 
-  it("M0 is complete", () => {
-    for (const item of MODULES.find((m) => m.id === "m0")!.items) expect(BUILT[item.id], item.id).toBeDefined();
-  });
+  for (const done of ["m0", "m1"]) {
+    it(`${done.toUpperCase()} is complete`, () => {
+      for (const item of MODULES.find((m) => m.id === done)!.items) expect(BUILT[item.id], item.id).toBeDefined();
+    });
+  }
 
   for (const sub of subs) {
     describe(sub.id, () => {

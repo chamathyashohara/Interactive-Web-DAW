@@ -391,3 +391,8 @@ helpers, curriculum). Not verified: voice guidance, Watch sound quality (could n
   answer, Watch steps sound, setup ops valid. 201 desktop tests.
 - **In the built app, 36/36:** every written sub-lesson driven Hook → Watch → Try → Practice (3 hints) → Quick check (wrong,
   then right) → Done → next, path shows Done, no console errors. Not verified: sound quality, voice guidance.
+
+## M1 complete (2026-10-20)
+
+All six M1 Notes sub-lessons are written (`content/m1.ts`). Unit tests 250/250 (every sub-lesson validated); in the built
+app every M1 sub-lesson was driven end to end, 31/31, no console errors. M2, the rest of M3, M4 and M5 remain planned.

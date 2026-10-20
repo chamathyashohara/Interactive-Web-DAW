@@ -55,12 +55,19 @@ const TOL = 120;
  * A slot for the placement check: a note that must start near `bar`/`beat`. `names` are pitch classes (any octave);
  * `exact` pins one pitch; `len` is the length in beats (with a little give).
  */
-export function slotAt(label: string, bar: number, beat: number, o: { names?: string[]; exact?: string; len?: number; lenMin?: number; lenMax?: number; tol?: number } = {}): Slot {
+export function slotAt(
+  label: string,
+  bar: number,
+  beat: number,
+  o: { names?: string[]; exact?: string; min?: string; max?: string; len?: number; lenMin?: number; lenMax?: number; tol?: number } = {},
+): Slot {
   const tol = o.tol ?? TOL;
   const start = at(bar, beat);
   const slot: Slot = { label, startMin: start - tol, startMax: start + tol };
   if (o.names) slot.pitchClasses = o.names;
   if (o.exact) slot.pitchMin = slot.pitchMax = pitch(o.exact);
+  if (o.min) slot.pitchMin = pitch(o.min);
+  if (o.max) slot.pitchMax = pitch(o.max);
   if (o.len !== undefined) {
     slot.durationMin = beats(o.len) - TOL;
     slot.durationMax = beats(o.len) + TOL;
@@ -69,6 +76,9 @@ export function slotAt(label: string, bar: number, beat: number, o: { names?: st
   if (o.lenMax !== undefined) slot.durationMax = beats(o.lenMax);
   return slot;
 }
+
+/** Every pitch class: nothing turns red (for stages where any note is allowed). */
+export const ALL_PITCH_CLASSES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 export const quick = (question: string, options: string[], correct: number, explanation: string): QuickCheckQuestion => ({ question, options, correct, explanation });
 
