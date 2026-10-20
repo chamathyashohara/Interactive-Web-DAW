@@ -8,7 +8,7 @@ import { PianoPane } from "./PianoPane";
 import { ResultCard } from "./ResultCard";
 import { speak, stopSpeaking } from "./speech";
 import { studyLog } from "./studyLog";
-import { HINT_LABELS, STAGES, hintGuide, practiceStep, stageSpeech, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors, type StageId } from "./subLesson";
+import { HINT_LABELS, STAGES, WORKSPACE, hintGuide, hintLabel, practiceStep, stageSpeech, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors, type StageId } from "./subLesson";
 import type { SubLesson } from "./types";
 import { useExercise } from "./useExercise";
 
@@ -24,6 +24,8 @@ export interface SubLessonPageProps {
   onOpenClip: (trackId: string, clipId: string | null) => void;
   onExit: () => void;
   onBackToPath: () => void;
+  /** The next ready sub-lesson on the path, if any. */
+  next: { title: string; open: () => void } | null;
   voice: boolean;
   canSpeak: boolean;
 }
@@ -34,9 +36,9 @@ function Card({ children, tone = "plain" }: { children: React.ReactNode; tone?: 
 }
 
 /** One sub-lesson as a guided flow: Hook, Watch, Try, Practice (feedback inside), Quick check, Done. */
-export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, voice, canSpeak }: SubLessonPageProps) {
-  const tryXs = useExercise(sub, tryStep(sub), project, onOpenClip, false);
-  const practiceXs = useExercise(sub, practiceStep(sub), project, onOpenClip, true);
+export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, next: nextSub, voice, canSpeak }: SubLessonPageProps) {
+  const tryXs = useExercise(sub, tryStep(sub), project, onOpenClip, false, WORKSPACE);
+  const practiceXs = useExercise(sub, practiceStep(sub), project, onOpenClip, true, WORKSPACE);
   const [stage, setStage] = useState<StageId>("hook");
   const [reached, setReached] = useState(0);
   const [tab, setTab] = useState<"lesson" | "notes">("lesson");
@@ -94,7 +96,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
   };
 
   // ---- Stage flow ----
-  const practiceCleared = useRef(false);
+  const entered = useRef({ try: false, practice: false }); // first entry resets the shared clip; later visits keep the learner's work
   const tryPassed = tryXs.result?.pass ?? false;
   const practicePassed = practiceXs.result?.pass ?? false;
   const canAdvance: Record<StageId, boolean> = { hook: true, watch: true, try: tryPassed, practice: practicePassed, quick: quickResult === "right", done: false };
@@ -103,13 +105,11 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     stopWatch();
     stopSpeaking();
     if (next === "try") {
-      if (!(await tryXs.start())) return;
+      if (!(await tryXs.start(!entered.current.try))) return;
+      entered.current.try = true;
     } else if (next === "practice") {
-      if (!(await practiceXs.start())) return;
-      if (!practiceCleared.current) {
-        practiceCleared.current = true;
-        await practiceXs.clear(); // a blank roll: no ghost notes, none of the Try notes
-      }
+      if (!(await practiceXs.start(!entered.current.practice))) return; // a fresh clip: no ghost notes, none of the Try notes
+      entered.current.practice = true;
     } else if (next === "quick") {
       studyLog.beginExercise(sub.id, sub.version, "quick-check");
     } else if (next === "watch" && !watchSeen) {
@@ -119,7 +119,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     setTab("lesson");
     setReached((r) => Math.max(r, STAGES.findIndex((s) => s.id === next)));
   };
-  const next = () => void go(STAGES[stageIndex + 1]!.id);
+  const advance = () => void go(STAGES[stageIndex + 1]!.id);
   const back = () => void go(STAGES[stageIndex - 1]!.id);
 
   // Voice guidance reads the stage as it opens (Watch reads its own captions).
@@ -145,9 +145,9 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
       : stage === "watch"
         ? { readOnly: true, notes: watchIndex >= 0 ? toGuideNotes(steps[watchIndex]!.notes, false) : [] }
         : stage === "try"
-          ? { tools: sub.tryIt.tools, commands: false, notes: toGuideNotes(sub.tryIt.ghost, true), noteColor: tryXs.found ? wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses) : {} }
+          ? { tools: sub.tryIt.tools, commands: sub.tryIt.commands ?? false, notes: toGuideNotes(sub.tryIt.ghost, true), noteColor: tryXs.found ? wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses) : {} }
           : stage === "practice"
-            ? { tools: sub.practice.tools, commands: false, ...hintGuide(sub, practiceXs.hintsShown) }
+            ? { tools: sub.practice.tools, commands: sub.practice.commands ?? false, ...hintGuide(sub, practiceXs.hintsShown) }
             : { readOnly: true };
   const wrongCount = stage === "try" && tryXs.found ? Object.keys(wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses)).length : 0;
   const apply = () => {
@@ -253,7 +253,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 ✓ Check my work
               </button>
               <button className={smallBtn} onClick={practiceXs.hint} disabled={!nextHint || !practiceXs.found} data-testid="lesson-hint">
-                {nextHint ? `Hint ${practiceXs.hintsShown + 1}/3: ${nextHint}` : "No more hints"}
+                {nextHint ? `Hint ${practiceXs.hintsShown + 1}/3: ${hintLabel(sub, practiceXs.hintsShown)}` : "No more hints"}
               </button>
               <button className={smallBtn} onClick={practiceXs.listen} disabled={!practiceXs.found}>
                 {practiceXs.listening ? "■ Stop" : "▶ Listen"}
@@ -336,7 +336,12 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
               <button className={ghostBtn} onClick={apply} data-testid="lesson-apply">
                 Apply it in the studio →
               </button>
-              <button className={solidBtn} onClick={onBackToPath} data-testid="back-to-path-done">
+              {nextSub && (
+                <button className={solidBtn} onClick={nextSub.open} data-testid="next-sub-lesson">
+                  Next: {nextSub.title} →
+                </button>
+              )}
+              <button className={nextSub ? ghostBtn : solidBtn} onClick={onBackToPath} data-testid="back-to-path-done">
                 Back to the learning path
               </button>
             </div>
@@ -354,7 +359,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
         <span className="text-xs text-slate-500">
           {stage === "try" && !tryPassed ? "Pass the check to continue" : stage === "practice" && !practicePassed ? "Pass the check to continue" : stage === "quick" && quickResult !== "right" ? "Answer correctly to continue" : ""}
         </span>
-        <button className={solidBtn} disabled={!canAdvance[stage]} onClick={next} data-testid="stage-next">
+        <button className={solidBtn} disabled={!canAdvance[stage]} onClick={advance} data-testid="stage-next">
           {STAGES[stageIndex + 1] ? `Next: ${STAGES[stageIndex + 1]!.label} →` : "Next →"}
         </button>
       </div>

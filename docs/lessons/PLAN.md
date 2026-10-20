@@ -371,3 +371,23 @@ Try (ghosts, red note, locked Next, real mouse click draws), Practice (blank, th
 (wrong then right), Done recap, completed event stored, path shows Done, search lists planned items as Soon, earlier lessons open,
 no study records without a session, no console errors. Unit tests: 143 desktop (new: root check, sub-lesson data validity,
 helpers, curriculum). Not verified: voice guidance, Watch sound quality (could not listen), the other modules (not written).
+
+## M0 complete; shared practice track; more check kinds (2026-10-20)
+
+- **All six M0 sub-lessons** are written (`content/m0.ts`), alongside M3 "The root note". M1, M2, the rest of M3, M4 and M5
+  are still listed as planned.
+- **One shared practice track.** Every sub-lesson now uses one track/clip (`Lesson: Practice`) that is reset to each stage's
+  length and starting notes on first entry, instead of one track per lesson: the project holds at most 16 tracks and the
+  path has about 40 sub-lessons. Consequence: the learner's result stays in that clip until the next sub-lesson starts.
+- **Starting notes** for Try and Practice (something to move, fix or continue), optional edit-strip commands per stage,
+  optional custom hint wording, and a "Next sub-lesson" button on Done.
+- **New pure checks** (for the remaining modules too): `slots` (place exactly these notes, with optional pitch / time / length
+  windows), `tempo` (reads the project tempo), `all` (combine checks), `chordsAtTicks` (chords at any beat), `inSet` (melody from a
+  given note set), `chordSet` (free progression from a chord list, start/end/no-repeat rules), `chordToneMelody` (chord tones on
+  strong beats), `repeatBars` (motif, repeat, variation); chords can require a `bass` note; the chord feedback now names the
+  major/minor third mix-up ("E♭ makes it minor: raise it one row (a semitone) to E").
+- **Automatic validation of every sub-lesson** (`allSubLessons.test.ts`): plain data, every stage written, guide notes in range,
+  Try ghost passes and Try start does not, Practice answer passes and Practice start does not, hint levels, rows cover the
+  answer, Watch steps sound, setup ops valid. 201 desktop tests.
+- **In the built app, 36/36:** every written sub-lesson driven Hook → Watch → Try → Practice (3 hints) → Quick check (wrong,
+  then right) → Done → next, path shows Done, no console errors. Not verified: sound quality, voice guidance.

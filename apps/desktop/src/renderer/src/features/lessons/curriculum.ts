@@ -1,4 +1,4 @@
-import { LESSONS } from "./content";
+import { LESSONS, SUB_LESSONS } from "./content";
 import { m3RootNote } from "./content/m3-root-note";
 import type { Lesson, SubLesson } from "./types";
 
@@ -105,7 +105,7 @@ export const MODULES: PathModule[] = [
 ];
 
 /** Sub-lessons with content, by id. */
-export const BUILT: Record<string, SubLesson> = { [m3RootNote.id]: m3RootNote };
+export const BUILT: Record<string, SubLesson> = Object.fromEntries(SUB_LESSONS.map((s) => [s.id, s]));
 
 export const isBuilt = (id: string) => id in BUILT;
 
@@ -141,4 +141,11 @@ export function searchPath(query: string): PathHit[] {
 export function moduleProgress(m: PathModule, isDone: (id: string) => boolean) {
   const built = m.items.filter((i) => isBuilt(i.id));
   return { built: built.length, done: built.filter((i) => isDone(i.id)).length, total: m.items.length };
+}
+
+/** The next sub-lesson after `id` in path order that has content, or null. */
+export function nextBuilt(id: string): { id: string; title: string } | null {
+  const flat = MODULES.flatMap((m) => m.items);
+  const i = flat.findIndex((it) => it.id === id);
+  return flat.slice(i + 1).find((it) => isBuilt(it.id)) ?? null;
 }

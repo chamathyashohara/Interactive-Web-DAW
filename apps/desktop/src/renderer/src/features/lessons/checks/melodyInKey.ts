@@ -19,7 +19,7 @@ export function checkMelodyInKey(clip: Clip, spec: Spec): CheckResult {
   const keyName = `${spec.key} major`;
 
   const notes = Object.values(clip.notes)
-    .filter((n) => !n.muted)
+    .filter((n) => !n.muted && n.pitch >= (spec.minPitch ?? 0))
     .sort((a, b) => a.startTick - b.startTick || a.pitch - b.pitch);
 
   const outOfKey = notes.filter((n) => !scale.has(pitchClass(n.pitch)));

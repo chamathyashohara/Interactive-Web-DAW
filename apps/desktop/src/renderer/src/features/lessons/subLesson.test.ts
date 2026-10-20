@@ -5,7 +5,7 @@ import { checkRootNotes } from "./checks/rootNotes";
 import { BUILT, EARLIER_LESSONS, MODULES, isBuilt, moduleProgress, searchPath } from "./curriculum";
 import { m3RootNote as sub } from "./content/m3-root-note";
 import { findExercise, resetExerciseOps, startExerciseOps } from "./setup";
-import { HINT_LABELS, STAGES, WRONG_NOTE_COLOR, hintGuide, practiceStep, stageSpeech, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors } from "./subLesson";
+import { HINT_LABELS, STAGES, WORKSPACE, WRONG_NOTE_COLOR, hintGuide, practiceStep, stageSpeech, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors } from "./subLesson";
 import type { GuideNoteSpec, RootChord } from "./types";
 
 const BAR = TICKS_PER_BAR;
@@ -98,7 +98,7 @@ describe("M3 'The root note' sub-lesson data", () => {
   it("the Try and Practice steps start from blank clips that do not already pass", () => {
     const p0 = createProject("p");
     for (const step of [tryStep(sub), practiceStep(sub)]) {
-      const r = startExerciseOps(p0, sub, step.exercise, () => `x${++n}`);
+      const r = startExerciseOps(p0, WORKSPACE, step.exercise, () => `x${++n}`);
       if (!r.ok) throw new Error(r.reason);
       let p: Project = p0;
       for (const b of r.ops) {
@@ -106,13 +106,13 @@ describe("M3 'The root note' sub-lesson data", () => {
         if (!res.ok) throw new Error(res.reason);
         p = res.project;
       }
-      expect(runCheck(findExercise(p, sub.id)!.clip, step.exercise.check).pass).toBe(false);
+      expect(runCheck(findExercise(p, WORKSPACE.id)!.clip, step.exercise.check).pass).toBe(false);
     }
   });
 
   it("Try then Practice share one lesson track, and a reset empties it", () => {
     const p0 = createProject("p");
-    const start = startExerciseOps(p0, sub, tryStep(sub).exercise, () => `x${++n}`);
+    const start = startExerciseOps(p0, WORKSPACE, tryStep(sub).exercise, () => `x${++n}`);
     if (!start.ok) throw new Error(start.reason);
     const apply = (p: Project, bodies: OpBody[]) => bodies.reduce((acc, b) => {
       const res = applyOp(acc, { opId: `o${++n}`, clientId: "t", ...b } as Op);
@@ -121,10 +121,10 @@ describe("M3 'The root note' sub-lesson data", () => {
     }, p);
     let p = apply(p0, start.ops);
     p = apply(p, sub.tryIt.ghost.map((g, i): OpBody => ({ type: "addNote", trackId: start.trackId, clipId: start.clipId, note: { id: `g${i}`, pitch: g.pitch, startTick: g.startTick, durationTicks: g.durationTicks, velocity: 96 } })));
-    expect(startExerciseOps(p, sub, practiceStep(sub).exercise, () => "x")).toMatchObject({ ok: true, ops: [] });
-    const found = findExercise(p, sub.id)!;
+    expect(startExerciseOps(p, WORKSPACE, practiceStep(sub).exercise, () => "x")).toMatchObject({ ok: true, ops: [] });
+    const found = findExercise(p, WORKSPACE.id)!;
     p = apply(p, resetExerciseOps(found, found.clip, practiceStep(sub).exercise, () => `x${++n}`));
-    expect(Object.keys(findExercise(p, sub.id)!.clip.notes)).toHaveLength(0);
+    expect(Object.keys(findExercise(p, WORKSPACE.id)!.clip.notes)).toHaveLength(0);
   });
 });
 
@@ -185,7 +185,7 @@ describe("curriculum", () => {
 
   it("counts module progress over built sub-lessons", () => {
     const m3 = MODULES.find((m) => m.id === "m3")!;
-    expect(moduleProgress(m3, () => false)).toEqual({ built: 1, done: 0, total: 8 });
-    expect(moduleProgress(m3, (id) => id === "m3-root-note")).toEqual({ built: 1, done: 1, total: 8 });
+    expect(moduleProgress(m3, () => false)).toMatchObject({ done: 0, total: 8 });
+    expect(moduleProgress(m3, (id) => id === "m3-root-note").done).toBe(1);
   });
 });

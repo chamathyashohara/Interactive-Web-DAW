@@ -3,7 +3,7 @@ import type { GuideNote } from "../../pianoRoll/PianoRoll";
 import { notesToEvents, type PreviewEvent } from "./audio";
 import type { ExerciseStep } from "./useExercise";
 import { pitchClass, pitchClassOf } from "./theory";
-import type { GuideNoteSpec, SubLesson, WatchStep } from "./types";
+import type { GuideNoteSpec, StarterNote, SubLesson, WatchStep } from "./types";
 
 /** Pure helpers for the 7-stage player: turning sub-lesson data into what the piano roll and the exercise hook need. */
 
@@ -19,16 +19,27 @@ export const STAGES: { id: StageId; label: string }[] = [
 
 export const WRONG_NOTE_COLOR = "#ef4444";
 
+/**
+ * Every sub-lesson uses one shared practice track and clip in the project (the project can only hold 16 tracks, and the
+ * course has about 40 sub-lessons). Starting a stage resets that clip to the stage's length and starting notes.
+ */
+export const WORKSPACE = { id: "practice", title: "Practice" } as const;
+
+const starters = (specs?: GuideNoteSpec[]): StarterNote[] => (specs ?? []).map(({ pitch, startTick, durationTicks }) => ({ pitch, startTick, durationTicks }));
+
 export const tryStep = (sub: SubLesson): ExerciseStep => ({
   kind: "exercise",
   id: "try",
   title: "Try it",
   goal: sub.tryIt.instruction,
-  exercise: { instrument: "synth", bars: sub.bars, starterNotes: [], check: sub.tryIt.check, hints: [] },
+  exercise: { instrument: "synth", bars: sub.bars, starterNotes: starters(sub.tryIt.starter), check: sub.tryIt.check, hints: [] },
 });
 
 /** The three hint levels, in the order they are revealed. */
 export const HINT_LABELS = ["Reminder", "Show me the rows", "Show me the answer"] as const;
+
+/** Level 2 only says "rows" when there are rows to highlight. */
+export const hintLabel = (sub: SubLesson, index: number): string => (index === 1 && sub.practice.hints.rows.length === 0 ? "More help" : (HINT_LABELS[index] ?? ""));
 
 export const practiceStep = (sub: SubLesson): ExerciseStep => ({
   kind: "exercise",
@@ -38,9 +49,9 @@ export const practiceStep = (sub: SubLesson): ExerciseStep => ({
   exercise: {
     instrument: "synth",
     bars: sub.bars,
-    starterNotes: [],
+    starterNotes: starters(sub.practice.starter),
     check: sub.practice.check,
-    hints: [sub.practice.hints.reminder, "The highlighted rows are where the right notes live.", "The answer is shown as ghost notes. Place your notes on top of them."],
+    hints: sub.practice.hints.texts ?? [sub.practice.hints.reminder, "The highlighted rows are where the right notes live.", "The answer is shown as ghost notes. Place your notes on top of them."],
   },
 });
 

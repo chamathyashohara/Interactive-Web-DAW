@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Project } from "@daw/shared";
 import { LESSONS } from "./content";
-import { BUILT, MODULES, searchPath, type PathHit } from "./curriculum";
+import { BUILT, MODULES, nextBuilt, searchPath, type PathHit } from "./curriculum";
 import { lessonEvents } from "./events";
 import { ArrowLeft, ArrowRight, BookIcon, ConceptIcon, SearchIcon, SpeakerIcon } from "./Icons";
 import { overallProgress } from "./learnModel";
@@ -171,6 +171,10 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               onOpenClip={onOpenClip}
               onExit={exit}
               onBackToPath={() => show({ kind: "path" })}
+              next={(() => {
+                const n = nextBuilt(sub.id);
+                return n ? { title: n.title, open: () => show({ kind: "sub", id: n.id }) } : null;
+              })()}
               voice={voice}
               canSpeak={canSpeak}
             />

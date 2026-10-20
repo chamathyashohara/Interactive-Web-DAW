@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Project } from "@daw/shared";
+import { TICKS_PER_BAR, songTicks, type OpBody, type Project } from "@daw/shared";
 import { playClip, type Preview } from "./audio";
 import { runCheck } from "./checks";
 import { lessonEvents } from "./events";
@@ -23,9 +23,12 @@ export function useExercise(
   onOpenClip: (trackId: string, clipId: string | null) => void,
   /** false for practice-only stages that must not complete the lesson (for example a guided Try). */
   completes = true,
+  /** Where the exercise lives in the project, when it is not the lesson's own track (sub-lessons share one practice track). */
+  workspace?: Pick<Lesson, "id" | "title">,
 ) {
   const ex = step.exercise;
-  const found = findExercise(project, lesson.id);
+  const where = workspace ?? lesson;
+  const found = findExercise(project, where.id);
   const [started, setStarted] = useState(false);
   const [result, setResult] = useState<CheckResult | null>(null);
   const [hintsShown, setHintsShown] = useState(0);
@@ -43,12 +46,20 @@ export function useExercise(
     [],
   );
 
-  /** Puts the exercise into the project (or reuses it) and shows it in the piano roll. */
-  const start = async (): Promise<boolean> => {
-    const r = startExerciseOps(project, lesson, ex, uuid);
+  /**
+   * Puts the exercise into the project (or reuses it) and shows it in the piano roll. With `fresh`, an existing clip is
+   * reset to this exercise's length and starting notes first (a shared practice track is reused by every stage).
+   */
+  const start = async (fresh = false): Promise<boolean> => {
+    const r = startExerciseOps(project, where, ex, uuid);
     if (!r.ok) return setError(r.reason), false;
-    if (r.ops.length) {
-      const res = await window.daw.dispatchBatch(r.ops);
+    let ops: OpBody[] = r.ops;
+    if (!ops.length && fresh && found) {
+      const lengthen: OpBody[] = songTicks(project) < ex.bars * TICKS_PER_BAR ? [{ type: "setSongLength", bars: ex.bars }] : [];
+      ops = [...lengthen, ...resetExerciseOps(found, found.clip, ex, uuid)];
+    }
+    if (ops.length) {
+      const res = await window.daw.dispatchBatch(ops);
       if (!res.ok) return setError(`Could not set up the exercise: ${res.reason ?? "unknown error"}`), false;
     }
     setError("");
@@ -60,7 +71,7 @@ export function useExercise(
 
   const check = () => {
     if (!found) return;
-    const r = runCheck(found.clip, ex.check);
+    const r = runCheck(found.clip, ex.check, { tempo: project.tempo });
     setResult(r);
     setChecks((n) => n + 1);
     studyLog.recordCheck(r.score, r.pass);

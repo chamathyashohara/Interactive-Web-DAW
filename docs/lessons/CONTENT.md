@@ -149,3 +149,20 @@ Summary: Every chord is named after one note: its root. Learn to find it.
 Questions for the reviewer:
 - Is the first letter rule enough for chords such as F♯ minor or B♭ major (root F♯, B♭)? A later sub-lesson would cover sharps and flats in names.
 - Should Practice also ask for the root in a low octave (bass note) to link to M4's "Rhythm and a bass note"?
+
+# M0: Meet the piano roll (all six sub-lessons, version 1)
+
+Tools are introduced one at a time; each sub-lesson's roll only offers the tools taught so far. Full text is in
+`content/m0.ts`; this is the outline for review.
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Tools | Quick check |
+|---|---|---|---|---|
+| What you see | Place C4 at the start of bar 1 | C4, D4, E4 on beats 1-3 | Draw | Moving a note up makes it sound higher |
+| Play, loop, tempo | Set the tempo to 60 BPM (a pattern is given) | Tempo 140 BPM and a note on each beat of bar 1 | Draw | At the end, playback loops to the start |
+| Draw and delete | Draw C4 on beats 1-4, delete beat 3 | Delete G4 on beats 2 and 4, draw E4 at bar 2 | Draw, Delete | The Delete tool removes a note |
+| Move and resize | Move C4 (beat 1) to E4 on beat 3, two beats long | Fix three misplaced notes: C4 b1, E4 b2 (1 beat), G4 b3 (2 beats) | + Select | Dragging up/down changes pitch |
+| Select, copy, undo | Duplicate a C-E pair onto beats 3-4 | Duplicate G-E until it fills bars 1-2 (8 notes) | + Select all, copy, paste, duplicate | Ctrl+Z undoes |
+| Mini challenge (Twinkle Twinkle) | Line one: C C G G A A G | Line two on your own: F F E E D D C | all of the above | Ctrl+Z is the fastest fix |
+
+Each has a Hook (with sound), a four-step Watch, three-level Practice hints and a recap. Note: the tempo set in
+"Play, loop, tempo" stays in the learner's project (the recap says so).
