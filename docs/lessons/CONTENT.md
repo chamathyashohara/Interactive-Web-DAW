@@ -198,3 +198,18 @@ rows (root, +4, +7 for major; root, +3, +7 for minor). Full text in `content/m3.
 
 Feedback for chords now names the classic mix-up directly, e.g. "E♭ makes it minor: raise it one row (a semitone) to E",
 and for inversions "Your lowest note is C. Make E the lowest note by moving it below the others."
+
+# M2: Scales and keys (all seven sub-lessons, version 1)
+
+Beginner wording: scales are built by counting rows (whole step W = 2 rows, half step H = 1 row), white keys first.
+Full text in `content/m2.ts`.
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Quick check |
+|---|---|---|---|
+| What a scale is | C major up, C4 to C5 | C major down, C5 to C4 | A scale is notes in order to the octave |
+| Major scale pattern | C major with W/H labels | From G4 with W W H W W W H (G major, F#) | The pattern is W W H W W W H |
+| Major scale from any note | D major (F#, C#) | F major (B♭) | F major's black key is B♭ |
+| Degrees and the key | Degrees 1, 3, 5 of C major | Degrees 1, 4, 5, 1 of G major | Degree 5 of C major is G |
+| Natural minor | A minor, A3 to A4 (white keys) | E minor (F#) | A minor shares C major's notes |
+| In key vs out of key | 6-note melody in C major; black keys turn red | Fix the 2 out-of-key notes in a given melody | F# is out of C major |
+| Pentatonic (optional) | C pentatonic up; F and B turn red | Own 8-note melody in C D E G A, ending on C | F and B are left out |

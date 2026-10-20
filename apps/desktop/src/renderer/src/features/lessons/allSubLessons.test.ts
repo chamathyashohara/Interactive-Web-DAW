@@ -28,7 +28,7 @@ describe("every sub-lesson on the path", () => {
     }
   });
 
-  for (const done of ["m0", "m1", "m3"]) {
+  for (const done of ["m0", "m1", "m2", "m3"]) {
     it(`${done.toUpperCase()} is complete`, () => {
       for (const item of MODULES.find((m) => m.id === done)!.items) expect(BUILT[item.id], item.id).toBeDefined();
     });

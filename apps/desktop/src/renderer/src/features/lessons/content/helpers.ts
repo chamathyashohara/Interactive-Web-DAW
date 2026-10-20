@@ -86,3 +86,13 @@ export const quick = (question: string, options: string[], correct: number, expl
 export const target = (name: string, bar: number, beat: number, length: number) => ({ pitch: pitch(name), startTick: at(bar, beat), durationTicks: beats(length) });
 
 export const MATCH = { tolerance: { start: 150, duration: 150 }, velocityRange: [1, 127] as [number, number] };
+
+/** Placement slots for notes played one after another (like `run`): each note at its exact pitch and moment. */
+export function slotsForRun(names: string[], bar: number, beat: number, each = 1): Slot[] {
+  const start = at(bar, beat);
+  return names.map((name, i) => {
+    const tick = start + i * beats(each);
+    const where = `bar ${Math.floor(tick / BAR) + 1}, beat ${(tick % BAR) / BEAT + 1}`;
+    return { label: `${name} at ${where}`, pitchMin: pitch(name), pitchMax: pitch(name), startMin: tick - TOL, startMax: tick + TOL };
+  });
+}
