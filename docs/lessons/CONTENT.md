@@ -179,3 +179,22 @@ Tools: Draw, Select, Delete and the copy/duplicate strip (all taught in M0). Ful
 | Octaves and middle C | C4, C5, C3 | G4, the G an octave up, the E an octave below E4 | An octave is 12 keys |
 | Semitones and whole tones | From C4: a semitone up, a whole tone up | From E4: semitone up, whole tone up, semitone down (watch E-F) | A whole tone is 2 semitones |
 | Note lengths and beats | Half note, then two quarter notes | Whole note; four eighths and a half note | 4 quarter notes in a whole note |
+
+# M3: Chords (all eight sub-lessons, version 1)
+
+Written for complete beginners: one idea per sub-lesson, short sentences, white keys first, chords built by counting
+rows (root, +4, +7 for major; root, +3, +7 for minor). Full text in `content/m3.ts` (and `m3-root-note.ts`).
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Quick check |
+|---|---|---|---|
+| What a chord is | Stack C4 E4 G4 on beat 1 | Bar 1: any 3 notes together; bar 2: 3 notes one after another | Notes that start together |
+| The root note | C major, root first | Only the root of C, G, F, Am | Root of F minor is F |
+| Intervals | C+E (4 rows) on beat 1, C+G (7 rows) on beat 3 | Major third above D4, fifth above A3, minor third above E4 | A fifth is 7 rows |
+| Major triad | G major (G B D) | C, F, D, A major | C major = C E G |
+| Minor triad | Turn C major into C minor (the E starts red) | A, D, E, C minor | Lower the middle note one row |
+| Reading chord names | Build "Dm" | Chart \| C \| Am \| F \| G \| | "Em" = E minor |
+| Chords of a key | The white-key chord on E (E minor) | White-key chords starting on F, A, D, G | A minor belongs to C major |
+| Inversions (optional) | Move C4 up an octave: E at the bottom | F/A, G/B, C/G, Am/C | E G C = C major, 1st inversion |
+
+Feedback for chords now names the classic mix-up directly, e.g. "E♭ makes it minor: raise it one row (a semitone) to E",
+and for inversions "Your lowest note is C. Make E the lowest note by moving it below the others."

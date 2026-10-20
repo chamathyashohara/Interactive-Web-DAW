@@ -28,7 +28,7 @@ describe("every sub-lesson on the path", () => {
     }
   });
 
-  for (const done of ["m0", "m1"]) {
+  for (const done of ["m0", "m1", "m3"]) {
     it(`${done.toUpperCase()} is complete`, () => {
       for (const item of MODULES.find((m) => m.id === done)!.items) expect(BUILT[item.id], item.id).toBeDefined();
     });
@@ -75,14 +75,13 @@ describe("every sub-lesson on the path", () => {
         for (const row of sub.practice.hints.rows) expect(row).toBeLessThanOrEqual(83);
       });
 
-      it("Try: the finished state (the ghost notes) passes, the starting state does not, and following the ghosts shows nothing red", () => {
+      it("Try: the finished state (the ghost notes) passes, the starting state does not, and following the ghosts shows nothing red (a starting note may be red: it is the one to fix)", () => {
         const done = runCheck(clipOf(sub, sub.tryIt.ghost), sub.tryIt.check, ctxFor(sub.tryIt.check));
         expect(done.feedback.length).toBeGreaterThan(0);
         expect(done.pass, `ghost does not pass: ${done.feedback}`).toBe(true);
         const start = runCheck(clipOf(sub, sub.tryIt.starter ?? []), sub.tryIt.check, { tempo: 120 });
         expect(start.pass, "Try is already met at the start").toBe(false);
         expect(wrongNoteColors(clipOf(sub, sub.tryIt.ghost), sub.tryIt.allowedPitchClasses)).toEqual({});
-        expect(wrongNoteColors(clipOf(sub, sub.tryIt.starter ?? []), sub.tryIt.allowedPitchClasses)).toEqual({});
       });
 
       it("Practice: the level-3 answer passes, the starting state does not, and the hint levels add what they promise", () => {

@@ -128,6 +128,26 @@ describe("M3 'The root note' sub-lesson data", () => {
   });
 });
 
+describe("major/minor third feedback", () => {
+  const bar1 = (...pitches: number[]) => clipOf(...pitches.map((p) => note(p, 0)));
+  it("names the third that makes a chord minor and says which way to move it", () => {
+    const r = runCheck(bar1(60, 63, 67), { kind: "chordsPerBar", chords: [{ name: "C major", notes: ["C", "E", "G"] }] });
+    expect(r.feedback).toBe("Bar 1 should be C major (C, E and G). E♭ makes it minor: raise it one row (a semitone) to E.");
+  });
+  it("and the other way round", () => {
+    const r = runCheck(bar1(60, 64, 67), { kind: "chordsPerBar", chords: [{ name: "C minor", notes: ["C", "Eb", "G"] }] });
+    expect(r.feedback).toBe("Bar 1 should be C minor (C, E♭ and G). E makes it major: lower it one row (a semitone) to E♭.");
+  });
+  it("uses sharps the way the chord is spelled (A major vs A minor)", () => {
+    const r = runCheck(bar1(57, 60, 64), { kind: "chordsPerBar", chords: [{ name: "A major", notes: ["A", "C#", "E"] }] });
+    expect(r.feedback).toBe("Bar 1 should be A major (A, C# and E). C makes it minor: raise it one row (a semitone) to C#.");
+  });
+  it("explains a wrong bottom note for an inversion", () => {
+    const r = runCheck(bar1(60, 64, 67), { kind: "chordsPerBar", chords: [{ name: "C major", notes: ["C", "E", "G"], bass: "E" }] });
+    expect(r.feedback).toBe("Bar 1 should be C major (C, E and G) with E at the bottom. Your lowest note is C. Make E the lowest note by moving it below the others.");
+  });
+});
+
 describe("sub-lesson helpers", () => {
   it("turns specs into guide notes: ghosts are dashed, roots are marked", () => {
     const g = toGuideNotes(sub.tryIt.ghost, true);
@@ -167,7 +187,8 @@ describe("curriculum", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of Object.keys(BUILT)) expect(ids).toContain(id);
     expect(isBuilt("m3-root-note")).toBe(true);
-    expect(isBuilt("m3-intervals")).toBe(false);
+    expect(isBuilt("m3-intervals")).toBe(true);
+    expect(isBuilt("m4-other-classics")).toBe(false);
   });
 
   it("does not reuse an id of the earlier lessons", () => {

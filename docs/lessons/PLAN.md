@@ -396,3 +396,9 @@ helpers, curriculum). Not verified: voice guidance, Watch sound quality (could n
 
 All six M1 Notes sub-lessons are written (`content/m1.ts`). Unit tests 250/250 (every sub-lesson validated); in the built
 app every M1 sub-lesson was driven end to end, 31/31, no console errors. M2, the rest of M3, M4 and M5 remain planned.
+
+## M3 complete (2026-10-20)
+
+All eight M3 Chords sub-lessons (`content/m3.ts`), beginner wording. Chord feedback spells flats as ♭ and names the
+major/minor third mix-up and wrong bottom notes. Unit tests 311/311; in the built app every M3 sub-lesson driven end to end,
+41/41, no console errors. Remaining: M2, M4, M5.
