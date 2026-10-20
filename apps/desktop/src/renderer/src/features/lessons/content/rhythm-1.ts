@@ -3,7 +3,7 @@ import type { Lesson } from "../types";
 /** Lesson 3. Readable copy for review: docs/lessons/CONTENT.md (keep both in sync). */
 export const rhythm1: Lesson = {
   id: "rhythm-1",
-  version: 1,
+  version: 2,
   title: "Rhythm",
   concept: "rhythm",
   summary: "Program a basic drum beat: kick, snare and hi-hat in one bar.",
@@ -16,6 +16,8 @@ export const rhythm1: Lesson = {
         "Music is organised in bars, and most pop and dance music has four beats in every bar. Count them out loud: 1, 2, 3, 4.",
         "Between the beats are the offbeats. Counting eighth notes, you say: 1 and 2 and 3 and 4 and.",
       ],
+      tryIt: "Tap your foot on 1, 2, 3, 4 and clap on 2 and 4. That clap is where the snare goes.",
+      tips: ["The numbers along the top of the piano roll are bars.", "The grid size (1/4, 1/8, 1/16) sets how finely notes snap."],
     },
     {
       kind: "explain",
@@ -26,6 +28,7 @@ export const rhythm1: Lesson = {
         "The classic pattern: kick on every beat (1, 2, 3, 4), snare on beats 2 and 4, and closed hi-hat on every eighth note (1 and 2 and 3 and 4 and).",
         "Press Play: the clip loops, so you can hear whether it grooves.",
       ],
+      tips: ["On a drum track each row is a drum, not a pitch.", "Drum hits can be short: only the start of the note matters."],
     },
     {
       kind: "exercise",
@@ -52,5 +55,10 @@ export const rhythm1: Lesson = {
         ],
       },
     },
+  ],
+  recap: [
+    "Most pop music has four beats in a bar, with offbeats in between.",
+    "Kick on every beat gives the pulse; snare on 2 and 4 gives the backbeat.",
+    "Hi-hats on every eighth note keep the time steady.",
   ],
 };

@@ -316,3 +316,29 @@ Test hygiene note: my first in-app runs wrote lesson progress into the machine's
 (`%APPDATA%\@daw\desktop`) because `--user-data-dir` pointed at a folder that did not exist. I removed those keys
 (`lessons.progress.v1`, `lessons.study.v1`, `probe`); the app recreates an empty `lessons.study.v1` on launch.
 The DAW project data was never touched (`DAW_DATA_DIR` was a temp folder).
+
+## Learn view redesign (2026-10-20)
+
+The side panel was replaced by a full-page **Learn view** (opened by the studio's Lessons button, closed with Open Studio /
+Back to Studio), following the supplied mockups: header with lesson icon, title and overall progress, Previous/Next lesson,
+tabs (Lesson, Notes, Practice, Summary), a pinned Back/Next row, the **real piano roll** on the exercise clip beside the
+lesson with a transport bar (play, time, tempo) and tool buttons, a step tracker, and a Need-help box with Replay.
+Extras chosen by the owner: Notes tab, Summary tab, voice guidance with Replay, lesson search.
+
+Code: `LearnView.tsx` (page, search, voice toggle), `LessonPage.tsx` (tabs, tracker, help), `PianoPane.tsx` (transport +
+piano roll), `useExercise.ts` (all exercise behaviour, unchanged semantics), `learnModel.ts` (pure search/progress/speech text,
+unit tested), `speech.ts`, `Icons.tsx`, `StudySection.tsx`. `LessonPanel.tsx` was removed (its logic moved into `useExercise.ts`
+and `StudySection.tsx`). Lesson data gained optional `tryIt`/`tips` per explain step and a required `recap`; all lessons are now
+`version: 2`. `App.tsx`: the Lessons button now sets one flag and, when set, App returns `<LearnView>` early (the studio
+state in App, such as selected track and zoom, is kept). The earlier side-panel wrapper div was removed again, so the net App.tsx change is smaller.
+
+Verified in the built app (13/13): view replaces the studio; Next/Start practice; failing then passing check; summary and 25 %
+progress; notes persisted; search finds and opens a lesson; Open Studio returns to the DAW; no console errors. Screenshots were
+checked by eye. **Not verified:** voice guidance (needs a Windows speech voice and ears), Play audio through the engine.
+
+Privacy and ethics notes for the new features:
+- **Notes** are free text typed by the learner. They are stored only in local storage (`lessons.notes.v1`), are never written to the
+  study log, never exported and never sent anywhere. The Notes tab says so. If the ethics committee wants no free text at all
+  on study machines, the Notes tab can be hidden for study sessions.
+- **Voice guidance** uses the operating system's offline speech voices; no audio or text leaves the computer.
+- The learner's last-opened lesson and the voice toggle are stored locally (`lessons.last.v1`, `lessons.voice.v1`).

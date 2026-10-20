@@ -5,7 +5,7 @@ import { Mixer } from "./components/Mixer";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H } from "./pianoRoll/geometry";
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
-import { LessonPanel } from "./features/lessons/LessonPanel";
+import { LearnView } from "./features/lessons/LearnView";
 import { engineStateStore, exportStore, projectStore, statusStore, useStore } from "./store";
 
 const TOOLS: { id: Tool; label: string; key: string; title: string }[] = [
@@ -175,6 +175,8 @@ export function App() {
     const r = await window.daw.exportWav();
     if (!r.ok && !r.canceled) exportStore.set({ state: "error", id: "-", message: r.reason ?? "unknown error" });
   };
+  // The lessons take over the whole window; the studio stays mounted-state-wise (selection, zoom) in App.
+  if (lessonsOpen) return <LearnView project={project} onOpenClip={selectTrackClip} onExit={() => setLessonsOpen(false)} />;
 
   return (
     <div className="flex h-full flex-col">
@@ -227,7 +229,7 @@ export function App() {
           <button className={`${btn} ${idle}`} onClick={() => void exportWav()} title="Render the whole song to a WAV file" data-testid="export-wav">
             ⤓ Export WAV
           </button>
-          <button className={`${btn} ${lessonsOpen ? active : idle}`} onClick={() => setLessonsOpen(!lessonsOpen)} aria-pressed={lessonsOpen} title="Show or hide the lessons" data-testid="lessons-toggle">
+          <button className={`${btn} ${idle}`} onClick={() => setLessonsOpen(true)} title="Open the lessons" data-testid="lessons-toggle">
             Lessons
           </button>
           <button className={`${btn} ${mixerOpen ? active : idle}`} onClick={() => setMixerOpen(!mixerOpen)} aria-pressed={mixerOpen} title="Show or hide the mixer">
@@ -242,8 +244,7 @@ export function App() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div onPointerDownCapture={() => setFocus("arrangement")}>
           <Arrangement project={project} selectedTrackId={track.id} selectedClipId={clip?.id ?? null} snap={snap} keysEnabled={focus === "arrangement"} height={arrHeight} onSelect={selectTrackClip} />
         </div>
@@ -256,8 +257,6 @@ export function App() {
             </div>
           )}
         </div>
-      </div>
-      {lessonsOpen && <LessonPanel project={project} onOpenClip={selectTrackClip} onClose={() => setLessonsOpen(false)} />}
       </div>
       {mixerOpen &&<Mixer project={project} selectedId={track.id} onSelect={setSelectedTrackId} />}
       <StatusBar />

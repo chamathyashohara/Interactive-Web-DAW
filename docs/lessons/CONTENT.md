@@ -93,3 +93,15 @@ Summary: Clean up a played-in melody: fix timing, length, loudness and a doubled
 Questions for the reviewer:
 - Is the target tune in lesson 4 simple enough to hear what is wrong?
 - Is "eight notes minimum" right for lesson 2, or should it be shorter for first-time users?
+
+## Added in version 2 of every lesson (Learn view)
+
+Each explain step may carry a "Try it" call-out and short Tips, and each lesson has a "What you learned" recap for the
+Summary tab. The text lives in `content/*.ts`; the recap lines are:
+
+- Chords: A triad is three notes a third apart: root, third and fifth. / Inversions and octaves don't change which chord it is. / In C major, C – G – Am – F (I – V – vi – IV) is a progression used in countless songs.
+- Melody: A melody is a line of single notes, one at a time. / The key of C major uses only the white keys: C, D, E, F, G, A, B. / Moving by steps sounds smooth; ending on the home note (C) sounds finished.
+- Rhythm: Most pop music has four beats in a bar, with offbeats in between. / Kick on every beat gives the pulse; snare on 2 and 4 gives the backbeat. / Hi-hats on every eighth note keep the time steady.
+- MIDI editing: MIDI stores notes, not sound, so every note can be fixed after it is played. / Quantize pulls notes onto the grid; dragging a note's edge changes its length. / The velocity lane controls how loud each note is; Delete removes doubled notes.
+
+For the reviewer: please read the Try it and Tips lines in the app (or in `content/*.ts`) as well.

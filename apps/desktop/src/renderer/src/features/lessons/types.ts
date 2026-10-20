@@ -48,7 +48,16 @@ export interface Exercise {
 }
 
 export type Step =
-  | { kind: "explain"; id: string; title: string; body: string[] }
+  | {
+      kind: "explain";
+      id: string;
+      title: string;
+      body: string[];
+      /** Optional "try this" call-out shown under the text. */
+      tryIt?: string;
+      /** Optional short tips shown as a list. */
+      tips?: string[];
+    }
   | { kind: "exercise"; id: string; title: string; goal: string; exercise: Exercise };
 
 export interface Lesson {
@@ -60,6 +69,8 @@ export interface Lesson {
   concept: Concept;
   summary: string;
   steps: Step[];
+  /** What the learner should take away; shown on the Summary tab. */
+  recap: string[];
 }
 
 export interface CheckResult {

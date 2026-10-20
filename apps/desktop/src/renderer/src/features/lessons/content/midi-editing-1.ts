@@ -3,7 +3,7 @@ import type { Lesson } from "../types";
 /** Lesson 4. Readable copy for review: docs/lessons/CONTENT.md (keep both in sync). */
 export const midiEditing1: Lesson = {
   id: "midi-editing-1",
-  version: 1,
+  version: 2,
   title: "MIDI editing",
   concept: "midi-editing",
   summary: "Clean up a played-in melody: fix timing, length, loudness and a doubled note.",
@@ -16,6 +16,8 @@ export const midiEditing1: Lesson = {
         "MIDI does not record sound. It records which notes you played: the pitch, when each one started, how long it lasted, and how hard you hit it (the velocity).",
         "Because it is just data, every note can be edited after you play it: moved, stretched, made louder or quieter, or deleted.",
       ],
+      tryIt: "Look at the velocity lane under the piano roll: each note has a bar, and taller bars are louder notes.",
+      tips: ["Undo (Ctrl+Z) reverses any edit.", "Select several notes by dragging a box around them with the Select tool."],
     },
     {
       kind: "explain",
@@ -67,5 +69,10 @@ export const midiEditing1: Lesson = {
         ],
       },
     },
+  ],
+  recap: [
+    "MIDI stores notes, not sound, so every note can be fixed after it is played.",
+    "Quantize pulls notes onto the grid; dragging a note's edge changes its length.",
+    "The velocity lane controls how loud each note is; Delete removes doubled notes.",
   ],
 };

@@ -5,7 +5,7 @@ const BAR = 3840;
 /** Lesson 1. Readable copy for review: docs/lessons/CONTENT.md (keep both in sync). */
 export const chords1: Lesson = {
   id: "chords-1",
-  version: 1,
+  version: 2,
   title: "Chords",
   concept: "chords",
   summary: "Build the four chords of the most common pop progression: C – G – Am – F.",
@@ -19,6 +19,8 @@ export const chords1: Lesson = {
         "To build a triad on the piano roll, start on a note (the root), skip one white key and take the next, then skip one more and take the next. From C that gives C, E and G: a C major chord.",
         "The notes can be in any order or octave: E-G-C is still a C major chord (an inversion).",
       ],
+      tryIt: "Find C, E and G on the keyboard at the left of the piano roll. They are three white keys with one white key between each.",
+      tips: ["Higher notes are higher up in the piano roll.", "Notes that start at the same time sound together as a chord.", "Click a key on the keyboard to hear that note."],
     },
     {
       kind: "explain",
@@ -29,6 +31,7 @@ export const chords1: Lesson = {
         "C major (C-E-G), G major (G-B-D), A minor (A-C-E) and F major (F-A-C). Musicians call this progression I – V – vi – IV.",
         "Each chord usually lasts one bar. Press Play to hear how it moves away from C and comes back.",
       ],
+      tips: ["Major chords sound bright, minor chords sound darker.", "Roman numerals (I, V, vi, IV) name a chord by its place in the key, so the same pattern works in any key."],
     },
     {
       kind: "exercise",
@@ -59,5 +62,10 @@ export const chords1: Lesson = {
         ],
       },
     },
+  ],
+  recap: [
+    "A triad is three notes a third apart: root, third and fifth.",
+    "Inversions and octaves don't change which chord it is.",
+    "In C major, C – G – Am – F (I – V – vi – IV) is a progression used in countless songs.",
   ],
 };
