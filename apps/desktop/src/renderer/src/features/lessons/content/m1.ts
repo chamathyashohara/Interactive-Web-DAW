@@ -20,7 +20,7 @@ export const m1HighLow: SubLesson = {
   bars: 2,
   hook: {
     headline: "High and low",
-    text: ["Every note has a pitch: how high or low it sounds. On the piano roll, higher rows are higher pitches.", "Press Hear it: a low note, then a high one."],
+    text: ["Every note has a pitch: how high or low it sounds. On the piano roll, higher rows are higher pitches.", "Press Play example: a low note, then a high one."],
     notes: [g("C3", 1, 1, 2), g("C5", 1, 3, 2)],
   },
   watch: {
@@ -77,7 +77,7 @@ export const m1NoteNames: SubLesson = {
   bars: 2,
   hook: {
     headline: "Seven letters",
-    text: ["Notes are named with just seven letters: A B C D E F G. After G, the letters start again at A.", "Press Hear it: the white keys from C up to the next C."],
+    text: ["Notes are named with just seven letters: A B C D E F G. After G, the letters start again at A.", "Press Play example: the white keys from C up to the next C."],
     notes: run(["C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5"], 1, 1, 0.5, [...LETTERS, "C"]),
   },
   watch: {
@@ -283,7 +283,7 @@ export const m1NoteLengths: SubLesson = {
   bars: 2,
   hook: {
     headline: "How long does it last?",
-    text: ["A whole note lasts four beats, a half note two, a quarter note one, and an eighth note half a beat.", "Press Hear it: the same pitch, held for different lengths."],
+    text: ["A whole note lasts four beats, a half note two, a quarter note one, and an eighth note half a beat.", "Press Play example: the same pitch, held for different lengths."],
     notes: [g("C4", 1, 1, 2), g("C4", 1, 3, 1), g("C4", 1, 4, 0.5), g("C4", 1, 4.5, 0.5)],
   },
   watch: {

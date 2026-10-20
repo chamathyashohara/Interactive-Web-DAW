@@ -179,7 +179,8 @@ describe("sub-lesson helpers", () => {
 
 describe("curriculum", () => {
   it("matches the outline: M0-M5 and their sub-lesson counts", () => {
-    expect(MODULES.map((m) => [m.code, m.items.length])).toEqual([["M0", 6], ["M1", 6], ["M2", 7], ["M3", 8], ["M4", 6], ["M5", 5]]);
+    expect(MODULES.map((m) => [m.code, m.items.length])).toEqual([["L1", 7], ["L2", 6], ["L3", 7], ["L4", 8], ["L5", 6], ["L6", 5]]);
+    expect(MODULES.map((m) => m.id)).toEqual(["m0", "m1", "m2", "m3", "m4", "m5"]);
   });
 
   it("has unique ids, and every built sub-lesson is on the path", () => {
@@ -202,7 +203,8 @@ describe("curriculum", () => {
     expect(searchPath("motif")[0]).toMatchObject({ kind: "sub", built: true });
     expect(searchPath("pentatonic")[0]).toMatchObject({ kind: "sub", built: true });
     expect(searchPath("snare")[0]).toMatchObject({ kind: "earlier", id: "rhythm-1" });
-    expect(searchPath("chords m3").length).toBeGreaterThan(1);
+    expect(searchPath("chords l4").length).toBeGreaterThan(1);
+    expect(searchPath("beats bars")[0]).toMatchObject({ id: "m0-beats-bars", where: "L1 Meet the piano roll (training first)" });
     expect(searchPath("")).toEqual([]);
   });
 

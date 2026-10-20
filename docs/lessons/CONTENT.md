@@ -106,7 +106,7 @@ Summary tab. The text lives in `content/*.ts`; the recap lines are:
 
 For the reviewer: please read the Try it and Tips lines in the app (or in `content/*.ts`) as well.
 
-# Learning path (modules M0-M5)
+# Learning path (lessons L1-L6; internal module ids m0-m5)
 
 The Learn view opens on the learning path from the course outline: M0 Meet the piano roll, M1 Notes, M2 Scales and
 keys, M3 Chords, M4 Chord progressions, M5 Melody (all sub-lesson titles are in `curriculum.ts`). A sub-lesson follows
@@ -114,7 +114,7 @@ Hook, Watch, Try, Practice (feedback inside, with three hint levels), Quick chec
 written so far; the rest are listed as planned. The four earlier lessons above stay available under "Earlier lessons"
 until they are folded into modules (chords into M3/M4, melody into M5, rhythm and MIDI editing as new modules).
 
-## M3 sub-lesson 2: The root note (`m3-root-note`, version 1)
+## L4 sub-lesson 2: The root note (`m3-root-note`, version 1)
 
 Summary: Every chord is named after one note: its root. Learn to find it.
 
@@ -150,7 +150,7 @@ Questions for the reviewer:
 - Is the first letter rule enough for chords such as F♯ minor or B♭ major (root F♯, B♭)? A later sub-lesson would cover sharps and flats in names.
 - Should Practice also ask for the root in a low octave (bass note) to link to M4's "Rhythm and a bass note"?
 
-# M0: Meet the piano roll (all six sub-lessons, version 1)
+# L1 (internal id m0): Meet the piano roll (all six sub-lessons, version 1)
 
 Tools are introduced one at a time; each sub-lesson's roll only offers the tools taught so far. Full text is in
 `content/m0.ts`; this is the outline for review.
@@ -158,6 +158,7 @@ Tools are introduced one at a time; each sub-lesson's roll only offers the tools
 | Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Tools | Quick check |
 |---|---|---|---|---|
 | What you see | Place C4 at the start of bar 1 | C4, D4, E4 on beats 1-3 | Draw | Moving a note up makes it sound higher |
+| Beats and bars (new) | A 1-beat note on beat 3 of bar 1 (the beat is highlighted) | A 2-beat note on bar 1 beat 1, a 1-beat note on bar 2 beat 4 | Draw | 4 beats in a bar |
 | Play, loop, tempo | Set the tempo to 60 BPM (a pattern is given) | Tempo 140 BPM and a note on each beat of bar 1 | Draw | At the end, playback loops to the start |
 | Draw and delete | Draw C4 on beats 1-4, delete beat 3 | Delete G4 on beats 2 and 4, draw E4 at bar 2 | Draw, Delete | The Delete tool removes a note |
 | Move and resize | Move C4 (beat 1) to E4 on beat 3, two beats long | Fix three misplaced notes: C4 b1, E4 b2 (1 beat), G4 b3 (2 beats) | + Select | Dragging up/down changes pitch |
@@ -167,7 +168,7 @@ Tools are introduced one at a time; each sub-lesson's roll only offers the tools
 Each has a Hook (with sound), a four-step Watch, three-level Practice hints and a recap. Note: the tempo set in
 "Play, loop, tempo" stays in the learner's project (the recap says so).
 
-# M1: Notes (all six sub-lessons, version 1)
+# L2 (internal id m1): Notes (all six sub-lessons, version 1)
 
 Tools: Draw, Select, Delete and the copy/duplicate strip (all taught in M0). Full text in `content/m1.ts`.
 
@@ -180,7 +181,7 @@ Tools: Draw, Select, Delete and the copy/duplicate strip (all taught in M0). Ful
 | Semitones and whole tones | From C4: a semitone up, a whole tone up | From E4: semitone up, whole tone up, semitone down (watch E-F) | A whole tone is 2 semitones |
 | Note lengths and beats | Half note, then two quarter notes | Whole note; four eighths and a half note | 4 quarter notes in a whole note |
 
-# M3: Chords (all eight sub-lessons, version 1)
+# L4 (internal id m3): Chords (all eight sub-lessons, version 1)
 
 Written for complete beginners: one idea per sub-lesson, short sentences, white keys first, chords built by counting
 rows (root, +4, +7 for major; root, +3, +7 for minor). Full text in `content/m3.ts` (and `m3-root-note.ts`).
@@ -199,7 +200,7 @@ rows (root, +4, +7 for major; root, +3, +7 for minor). Full text in `content/m3.
 Feedback for chords now names the classic mix-up directly, e.g. "E♭ makes it minor: raise it one row (a semitone) to E",
 and for inversions "Your lowest note is C. Make E the lowest note by moving it below the others."
 
-# M2: Scales and keys (all seven sub-lessons, version 1)
+# L3 (internal id m2): Scales and keys (all seven sub-lessons, version 1)
 
 Beginner wording: scales are built by counting rows (whole step W = 2 rows, half step H = 1 row), white keys first.
 Full text in `content/m2.ts`.
@@ -214,7 +215,7 @@ Full text in `content/m2.ts`.
 | In key vs out of key | 6-note melody in C major; black keys turn red | Fix the 2 out-of-key notes in a given melody | F# is out of C major |
 | Pentatonic (optional) | C pentatonic up; F and B turn red | Own 8-note melody in C D E G A, ending on C | F and B are left out |
 
-# M4: Chord progressions (all six sub-lessons, version 1)
+# L5 (internal id m4): Chord progressions (all six sub-lessons, version 1)
 
 Beginner wording: chords take turns, I is home, V is tense, Roman numerals are scale degrees (capitals major, small
 letters minor). Full text in `content/m4.ts`.
@@ -228,7 +229,7 @@ letters minor). Full text in `content/m4.ts`.
 | Your own progression | Choose F and G for the middle of C _ _ C | Own 4 chords from C major: start and end on C, no repeats in a row (any valid answer passes) | Ending on I sounds finished |
 | Rhythm and a bass note | Chop a long C chord into hits on beats 1 and 3 | Add low root bass notes (C, then G) under given chord hits | The bass plays the root |
 
-# M5: Melody (all five sub-lessons, version 1)
+# L6 (internal id m5): Melody (all five sub-lessons, version 1)
 
 Beginner wording. In the melody-over-chords lessons the chords sit low (below C4) and the melody above, so the checks only
 judge notes at or above C4 as melody. Full text in `content/m5.ts`.
@@ -244,3 +245,17 @@ judge notes at or above C4 as melody. Full text in `content/m5.ts`.
 **The whole learning path (M0-M5, 39 sub-lessons) is now written.** The four "Earlier lessons" stay available; chords and
 melody are covered by M3-M5, while the drum Rhythm and "Fix the recording" MIDI-editing lessons are not part of the outline
 and remain under Earlier lessons.
+
+
+# Display names, beats and bars (2026-10-21)
+
+- Lessons are shown as **L1-L6** (formerly shown as M0-M5). Internal ids stay `m0`-`m5` (they are part of every
+  sub-lesson id, saved progress and study logs), so nothing already recorded changes.
+- New **L1 sub-lesson 2, "Beats and bars"** (`content/m0-beats-bars.ts`): a beat is one steady step of time, four beats
+  make a bar, bars are numbered along the top, and a note's length is how many beats it covers (1, 2, 4 beats), shown
+  step by step in Watch before any lesson asks for "beat 3 of bar 2" or "2 beats long".
+- In every Try and Practice the ruler numbers each beat (1 2 3 4), the target bars/beats are highlighted in green on the
+  roll (with the length, e.g. "2 beats"), and a "Where your notes go" picture shows each bar as four beat boxes with the
+  notes drawn as long as they should last.
+- In every Hook, **Hear it** now reads the Hook aloud; the musical example moved to **Play example** (the Hook texts
+  were updated from "Press Hear it" to "Press Play example").

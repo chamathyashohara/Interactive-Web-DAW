@@ -35,7 +35,15 @@ function ModuleCard({ m, onOpen }: { m: PathModule; onOpen: (subId: string) => v
                 </span>
                 <span className="min-w-0 flex-1 truncate">{it.title}</span>
                 {it.optional && <span className="text-[10px] text-slate-500">optional</span>}
-                {built ? <span className="rounded bg-emerald-300/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-200">{done ? "Done" : "Start"}</span> : <span className="text-[10px] text-slate-600">Soon</span>}
+                {built ? (
+                  done ? (
+                    <span className="rounded bg-emerald-300/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-200">Done</span>
+                  ) : (
+                    <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-900">Start</span>
+                  )
+                ) : (
+                  <span className="text-[10px] text-slate-600">Soon</span>
+                )}
               </button>
             </li>
           );

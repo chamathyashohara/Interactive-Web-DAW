@@ -20,7 +20,7 @@ export const m3WhatIsAChord: SubLesson = {
   bars: 2,
   hook: {
     headline: "Notes together",
-    text: ["A melody plays notes one after another. A chord plays several notes at the same time.", "Press Hear it: three notes one by one, then the same three together."],
+    text: ["A melody plays notes one after another. A chord plays several notes at the same time.", "Press Play example: three notes one by one, then the same three together."],
     notes: [...run(["C4", "E4", "G4"], 1, 1, 1), ...chordAt(2, 1, 2, ["C4", "E4", "G4"])],
   },
   watch: {
@@ -79,7 +79,7 @@ export const m3Intervals: SubLesson = {
   bars: 2,
   hook: {
     headline: "Distance between notes",
-    text: ["An interval is the distance between two notes. Count it in semitones: the number of rows from one note to the other.", "Press Hear it: C with E (4 rows apart), then C with G (7 rows apart)."],
+    text: ["An interval is the distance between two notes. Count it in semitones: the number of rows from one note to the other.", "Press Play example: C with E (4 rows apart), then C with G (7 rows apart)."],
     notes: [...chordAt(1, 1, 2, ["C4", "E4"]), ...chordAt(1, 3, 2, ["C4", "G4"])],
   },
   watch: {
@@ -149,7 +149,7 @@ export const m3MajorTriad: SubLesson = {
   bars: 4,
   hook: {
     headline: "The happy chord",
-    text: ["A major triad has three notes: the root, the note 4 rows above it, and the note 7 rows above it.", "Press Hear it: C major. Bright and happy."],
+    text: ["A major triad has three notes: the root, the note 4 rows above it, and the note 7 rows above it.", "Press Play example: C major. Bright and happy."],
     notes: chordAt(1, 1, 2, ["C4", "E4", "G4"], { root: true }),
   },
   watch: {
@@ -197,7 +197,7 @@ export const m3MinorTriad: SubLesson = {
   bars: 4,
   hook: {
     headline: "The sad chord",
-    text: ["A minor triad is the major recipe with one change: the middle note is one row lower. Root, +3 rows, +7 rows.", "Press Hear it: C major, then C minor. Can you hear the mood change?"],
+    text: ["A minor triad is the major recipe with one change: the middle note is one row lower. Root, +3 rows, +7 rows.", "Press Play example: C major, then C minor. Can you hear the mood change?"],
     notes: [...chordAt(1, 1, 2, ["C4", "E4", "G4"]), ...chordAt(1, 3, 2, ["C4", "Eb4", "G4"])],
   },
   watch: {

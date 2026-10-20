@@ -9,6 +9,7 @@ import { LearningPath } from "./LearningPath";
 import { LessonPage } from "./LessonPage";
 import { onVoicesReady, speechAvailable, stopSpeaking } from "./speech";
 import { browserStore, readJson, writeJson } from "./storage";
+import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
 import { SubLessonPage } from "./SubLessonPage";
 
@@ -25,7 +26,15 @@ export interface LearnViewProps {
   onExit: () => void;
 }
 
-type View = { kind: "path" } | { kind: "sub"; id: string } | { kind: "earlier"; id: string };
+type View = LearnViewState;
+
+/** The view saved last time, if it still exists (a sub-lesson or lesson could have been renamed or removed). */
+function restoredView(): View {
+  const v = lessonState.view();
+  if (v.kind === "sub" && BUILT[v.id]) return v;
+  if (v.kind === "earlier" && LESSONS.some((l) => l.id === v.id)) return v;
+  return { kind: "path" };
+}
 
 function PathSearch({ onOpen }: { onOpen: (hit: PathHit) => void }) {
   const [query, setQuery] = useState("");
@@ -83,7 +92,7 @@ function PathSearch({ onOpen }: { onOpen: (hit: PathHit) => void }) {
 export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   const [, bump] = useState(0);
   useEffect(() => lessonEvents.onLessonCompleted(() => bump((n) => n + 1)), []);
-  const [view, setView] = useState<View>({ kind: "path" });
+  const [view, setView] = useState<View>(restoredView);
 
   const [voice, setVoice] = useState(() => readJson(store, VOICE_KEY, false));
   const [canSpeak, setCanSpeak] = useState(speechAvailable);
@@ -93,6 +102,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   const show = (v: View) => {
     stopSpeaking();
     setView(v);
+    lessonState.setView(v);
   };
   const exit = () => {
     stopSpeaking();
@@ -171,6 +181,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               onOpenClip={onOpenClip}
               onExit={exit}
               onBackToPath={() => show({ kind: "path" })}
+              moduleCode={module?.code ?? ""}
               next={(() => {
                 const n = nextBuilt(sub.id);
                 return n ? { title: n.title, open: () => show({ kind: "sub", id: n.id }) } : null;

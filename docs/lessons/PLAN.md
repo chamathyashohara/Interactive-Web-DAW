@@ -427,3 +427,26 @@ the setup), and the lesson piano roll shows a banner with a one-click fix whenev
 another track soloed, track or master fader at 0); pure helper `audibility.ts` with tests. Verified with the engine's own
 meters in the built app, 7/7: muted preview is silent, Unmute brings it back, solo elsewhere is detected and cleared, and a
 new stage unmutes by itself.
+
+
+## Beginner and navigation improvements (2026-10-21)
+
+1. **Beats and bars**: new L1 sub-lesson "Beats and bars"; beat numbers on the ruler; target positions highlighted on the
+   roll and drawn in a "Where your notes go" beat counter, derived from each exercise's own check (`timeTargets`).
+2. **Progress kept between the lessons and the studio**: the Learn view reopens on the same sub-lesson and stage; Try/Practice
+   no longer reset the shared practice clip when it still holds that stage's notes; when another stage or sub-lesson used the
+   clip in between, the learner's notes for this stage are saved and restored; hint level, passed stages, the quick-check
+   answer and the piano-roll tool/zoom/grid are kept (`lessonState.ts`, local storage). Earlier lessons keep their tab/step.
+   Cause of the old behaviour: the "first entry" flag lived in the page, so every visit reset the clip and started at Hook.
+3. **L1-L6** display codes (internal ids unchanged).
+4. Path **Start** chip is white with dark text; **Done** stays green.
+5. **Replay** never overlaps: one speech controller (generation counter; waits until the speech engine is idle before
+   speaking) used by every voice line.
+6. Hook **Hear it** speaks the Hook; **Play example** plays the notes.
+7. **Watch** lights each key while it sounds and scrolls the roll so the key is visible (follows each note when a phrase
+   spans more than the view). Implemented with an ease-out scroll driven by animation frames (Chromium's smooth scrolling
+   was cancelled by the roll's re-renders), jumping directly when the window is hidden.
+
+PianoRoll additions (optional `guide` fields, no change when unused): `columns`, `countBeats`, `activeKeys`, `focus`.
+Verified in the built app: 27/27 requirement checks (speech spied for overlap, Web Audio spied for piano notes, key
+visibility measured, notes compared after studio round-trip, other sub-lesson and app restart).

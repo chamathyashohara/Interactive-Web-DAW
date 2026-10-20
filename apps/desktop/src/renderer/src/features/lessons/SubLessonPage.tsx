@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { TICKS_PER_BAR, createTrack, type Project } from "@daw/shared";
+import { PPQ, TICKS_PER_BAR, createTrack, type Project } from "@daw/shared";
 import type { PianoRollGuide } from "../../pianoRoll/PianoRoll";
-import { notesToEvents, playEvents, type Preview } from "./audio";
+import { notesToEvents, playEvents, type Preview, type PreviewEvent } from "./audio";
+import { BeatCounter } from "./BeatCounter";
+import { lessonState, needsFreshClip, type WorkStage } from "./lessonState";
 import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerIcon } from "./Icons";
 import { NotesTab } from "./LessonPage";
 import { PianoPane } from "./PianoPane";
 import { ResultCard } from "./ResultCard";
 import { speak, stopSpeaking } from "./speech";
 import { studyLog } from "./studyLog";
-import { HINT_LABELS, STAGES, WORKSPACE, hintGuide, hintLabel, practiceStep, stageSpeech, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors, type StageId } from "./subLesson";
-import type { SubLesson } from "./types";
+import { HINT_LABELS, STAGES, WORKSPACE, hintGuide, hintLabel, practiceStep, stageSpeech, timeTargets, toGuideNotes, tryStep, watchEvents, watchStepMs, wrongNoteColors, type StageId } from "./subLesson";
+import type { StarterNote, SubLesson } from "./types";
 import { useExercise } from "./useExercise";
 
 const ghostBtn = "rounded-xl px-4 py-2 text-sm font-medium text-slate-200 ring-1 ring-white/10 transition-colors hover:bg-white/5 disabled:opacity-40";
@@ -24,6 +26,8 @@ export interface SubLessonPageProps {
   onOpenClip: (trackId: string, clipId: string | null) => void;
   onExit: () => void;
   onBackToPath: () => void;
+  /** The module's display code, e.g. "L4". */
+  moduleCode: string;
   /** The next ready sub-lesson on the path, if any. */
   next: { title: string; open: () => void } | null;
   voice: boolean;
@@ -36,13 +40,59 @@ function Card({ children, tone = "plain" }: { children: React.ReactNode; tone?: 
 }
 
 /** One sub-lesson as a guided flow: Hook, Watch, Try, Practice (feedback inside), Quick check, Done. */
-export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, next: nextSub, voice, canSpeak }: SubLessonPageProps) {
+export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, moduleCode, next: nextSub, voice, canSpeak }: SubLessonPageProps) {
+  // Where the learner was in this sub-lesson (kept when they visit the studio, another lesson, or restart the app).
+  const [saved] = useState(() => lessonState.sub(sub.id));
   const tryXs = useExercise(sub, tryStep(sub), project, onOpenClip, false, WORKSPACE);
-  const practiceXs = useExercise(sub, practiceStep(sub), project, onOpenClip, true, WORKSPACE);
-  const [stage, setStage] = useState<StageId>("hook");
-  const [reached, setReached] = useState(0);
+  const practiceXs = useExercise(sub, practiceStep(sub), project, onOpenClip, true, WORKSPACE, saved?.hints ?? 0);
+  const [stage, setStage] = useState<StageId>(saved?.stage ?? "hook");
+  const [reached, setReached] = useState(saved?.reached ?? 0);
   const [tab, setTab] = useState<"lesson" | "notes">("lesson");
   const stageIndex = STAGES.findIndex((s) => s.id === stage);
+
+  // ---- Keys that light up while a demonstration plays, and where the roll should scroll to ----
+  const [activeKeys, setActiveKeys] = useState<number[]>([]);
+  const [demoFocus, setDemoFocus] = useState<PianoRollGuide["focus"]>();
+  const keyTimers = useRef<number[]>([]);
+  const clearKeys = () => {
+    keyTimers.current.forEach((t) => window.clearTimeout(t));
+    keyTimers.current = [];
+    setActiveKeys([]);
+  };
+  /**
+   * Lights each key while its note sounds (same timing as the preview, which starts 60 ms after the call). As each note
+   * starts, the roll is asked to show that key; it only scrolls when the key is out of view, so a short phrase that fits
+   * stays still, and a phrase spanning octaves follows the notes.
+   */
+  const lightKeys = (events: PreviewEvent[], key: string) => {
+    clearKeys();
+    const ticksPerSecond = (project.tempo / 60) * PPQ;
+    events.forEach((e, i) => {
+      keyTimers.current.push(
+        window.setTimeout(() => {
+          setActiveKeys((k) => [...k, e.pitch]);
+          setDemoFocus({ key: `${key}-note-${i}`, pitches: [e.pitch], tick: Math.round(e.time * ticksPerSecond) });
+        }, 60 + e.time * 1000),
+      );
+      keyTimers.current.push(
+        window.setTimeout(
+          () =>
+            setActiveKeys((k) => {
+              const i = k.indexOf(e.pitch);
+              return i < 0 ? k : [...k.slice(0, i), ...k.slice(i + 1)];
+            }),
+          60 + (e.time + e.duration) * 1000,
+        ),
+      );
+    });
+  };
+  /** Plays a demonstration: scrolls its keys into view first, then sounds it and lights each key as it plays. */
+  const demo = (notes: { pitch: number; startTick: number; durationTicks: number }[], events: PreviewEvent[], key: string) => {
+    if (notes.length) setDemoFocus({ key, pitches: notes.map((n) => n.pitch), tick: Math.min(...notes.map((n) => n.startTick)) });
+    lightKeys(events, key);
+    audio.current?.stop();
+    audio.current = playEvents(events, "synth", Math.max(2.5, ...events.map((e) => e.time + e.duration)));
+  };
 
   // ---- Watch: the roll draws the notes itself, step by step, with sound and captions ----
   const steps = sub.watch.steps;
@@ -55,6 +105,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     token.current++;
     audio.current?.stop();
     audio.current = null;
+    clearKeys();
     setWatchRunning(false);
   };
   const runWatch = async () => {
@@ -64,8 +115,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     for (const [i, step] of steps.entries()) {
       if (mine !== token.current) return;
       setWatchIndex(i);
-      audio.current?.stop();
-      audio.current = playEvents(watchEvents(step, project.tempo), "synth", 2.5);
+      demo(step.notes, watchEvents(step, project.tempo), `watch-${i}-${mine}`);
       if (voice && canSpeak) speak(step.caption);
       await sleep(watchStepMs(step));
     }
@@ -78,14 +128,15 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     () => () => {
       token.current++;
       audio.current?.stop();
+      keyTimers.current.forEach((t) => window.clearTimeout(t));
       stopSpeaking();
     },
     [],
   );
 
   // ---- Quick check ----
-  const [picked, setPicked] = useState<number | null>(null);
-  const [quickResult, setQuickResult] = useState<"right" | "wrong" | null>(null);
+  const [picked, setPicked] = useState<number | null>(saved?.quickPicked ?? null);
+  const [quickResult, setQuickResult] = useState<"right" | "wrong" | null>(saved?.quickRight ? "right" : null);
   const [quickTries, setQuickTries] = useState(0);
   const answerQuick = () => {
     if (picked === null) return;
@@ -96,20 +147,52 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
   };
 
   // ---- Stage flow ----
-  const entered = useRef({ try: false, practice: false }); // first entry resets the shared clip; later visits keep the learner's work
-  const tryPassed = tryXs.result?.pass ?? false;
-  const practicePassed = practiceXs.result?.pass ?? false;
+  const [tryPassed, setTryPassed] = useState(saved?.tryPassed ?? false);
+  const [practicePassed, setPracticePassed] = useState(saved?.practicePassed ?? false);
+  useEffect(() => {
+    if (tryXs.result?.pass) setTryPassed(true);
+  }, [tryXs.result]);
+  useEffect(() => {
+    if (practiceXs.result?.pass) setPracticePassed(true);
+  }, [practiceXs.result]);
+
+  /**
+   * Opens Try or Practice on the shared practice clip. If the clip still holds this stage's notes (the learner went to the
+   * studio and came back), it is left exactly as it is. If it holds something else, that work is saved first, and this
+   * stage's own saved notes come back (or its starting notes, the first time).
+   */
+  const enterWork = async (st: WorkStage): Promise<boolean> => {
+    const xs = st === "try" ? tryXs : practiceXs;
+    const owner = lessonState.owner();
+    const fresh = needsFreshClip(owner, sub.id, st);
+    const clip = (practiceXs.found ?? tryXs.found)?.clip;
+    if (fresh && owner && clip) {
+      const notes: StarterNote[] = Object.values(clip.notes).map(({ pitch, startTick, durationTicks, velocity }) => ({ pitch, startTick, durationTicks, velocity }));
+      lessonState.saveWork(owner.subId, owner.stage, notes);
+    }
+    if (!(await xs.start(fresh, fresh ? lessonState.work(sub.id, st) : undefined))) return false;
+    lessonState.setOwner({ subId: sub.id, stage: st });
+    return true;
+  };
+
+  // Coming back to a sub-lesson that was left in Try or Practice: reopen it as it was (no reset).
+  useEffect(() => {
+    if (stage === "try" || stage === "practice") void enterWork(stage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Remember the learner's place.
+  useEffect(() => {
+    lessonState.saveSub(sub.id, { stage, reached, hints: practiceXs.hintsShown, tryPassed, practicePassed, quickPicked: picked, quickRight: quickResult === "right" });
+  }, [sub.id, stage, reached, practiceXs.hintsShown, tryPassed, practicePassed, picked, quickResult]);
   const canAdvance: Record<StageId, boolean> = { hook: true, watch: true, try: tryPassed, practice: practicePassed, quick: quickResult === "right", done: false };
 
   const go = async (next: StageId) => {
     stopWatch();
     stopSpeaking();
-    if (next === "try") {
-      if (!(await tryXs.start(!entered.current.try))) return;
-      entered.current.try = true;
-    } else if (next === "practice") {
-      if (!(await practiceXs.start(!entered.current.practice))) return; // a fresh clip: no ghost notes, none of the Try notes
-      entered.current.practice = true;
+    clearKeys();
+    if (next === "try" || next === "practice") {
+      if (!(await enterWork(next))) return;
     } else if (next === "quick") {
       studyLog.beginExercise(sub.id, sub.version, "quick-check");
     } else if (next === "watch" && !watchSeen) {
@@ -139,16 +222,35 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
   const real = practiceXs.found ?? tryXs.found;
   const editing = stage === "try" || stage === "practice";
   const shown = editing || stage === "quick" || stage === "done" ? (real ?? virtual) : virtual;
-  const guide: PianoRollGuide =
+  const tryTargets = timeTargets(sub.tryIt.check, sub.bars);
+  const practiceTargets = timeTargets(sub.practice.check, sub.bars);
+  const columns = (targets: typeof tryTargets) => targets.map((t) => ({ startTick: t.startTick, durationTicks: t.durationTicks, label: t.label }));
+  const practicePitches = practiceXs.hintsShown >= 2 ? sub.practice.hints.rows : (sub.practice.starter ?? []).map((n) => n.pitch);
+  const base: PianoRollGuide =
     stage === "hook"
       ? { readOnly: true, notes: toGuideNotes(sub.hook.notes, false) }
       : stage === "watch"
         ? { readOnly: true, notes: watchIndex >= 0 ? toGuideNotes(steps[watchIndex]!.notes, false) : [] }
         : stage === "try"
-          ? { tools: sub.tryIt.tools, commands: sub.tryIt.commands ?? false, notes: toGuideNotes(sub.tryIt.ghost, true), noteColor: tryXs.found ? wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses) : {} }
+          ? {
+              tools: sub.tryIt.tools,
+              commands: sub.tryIt.commands ?? false,
+              notes: toGuideNotes(sub.tryIt.ghost, true),
+              noteColor: tryXs.found ? wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses) : {},
+              columns: columns(tryTargets),
+              ...(sub.tryIt.ghost.length ? { focus: { key: `try-${sub.id}`, pitches: sub.tryIt.ghost.map((g) => g.pitch) } } : {}),
+            }
           : stage === "practice"
-            ? { tools: sub.practice.tools, commands: sub.practice.commands ?? false, ...hintGuide(sub, practiceXs.hintsShown) }
+            ? {
+                tools: sub.practice.tools,
+                commands: sub.practice.commands ?? false,
+                ...hintGuide(sub, practiceXs.hintsShown),
+                columns: columns(practiceTargets),
+                ...(practicePitches.length ? { focus: { key: `practice-${sub.id}-${practiceXs.hintsShown >= 2}`, pitches: practicePitches } } : {}),
+              }
             : { readOnly: true };
+  const demoing = stage === "hook" || stage === "watch";
+  const guide: PianoRollGuide = { ...base, countBeats: true, ...(demoing ? { activeKeys, ...(demoFocus ? { focus: demoFocus } : {}) } : {}) };
   const wrongCount = stage === "try" && tryXs.found ? Object.keys(wrongNoteColors(tryXs.found.clip, sub.tryIt.allowedPitchClasses)).length : 0;
   const apply = () => {
     const f = practiceXs.found ?? tryXs.found;
@@ -156,7 +258,10 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
     stopSpeaking();
     onExit();
   };
-  const hearHook = () => playEvents(notesToEvents(sub.hook.notes, project.tempo), "synth", 2.5);
+  /** "Hear it": the Hook read aloud (voice guidance), never the piano. */
+  const hearHook = () => speak([sub.hook.headline, ...sub.hook.text].join(". "));
+  /** "Play example": the Hook's musical example, with its keys lit up on the keyboard. */
+  const playHookExample = () => demo(sub.hook.notes, notesToEvents(sub.hook.notes, project.tempo), `hook-${Date.now()}`);
   const nextHint = practiceXs.hintsShown < HINT_LABELS.length ? HINT_LABELS[practiceXs.hintsShown] : null;
   const restart = tryXs.removed || practiceXs.removed;
 
@@ -166,7 +271,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
         return (
           <Card>
             <div className="text-xs text-slate-500">
-              {sub.moduleId.toUpperCase()} · {sub.title}
+              {moduleCode} · {sub.title}
             </div>
             <h2 className="mt-1 text-3xl font-semibold text-white">{sub.hook.headline}</h2>
             {sub.hook.text.map((t) => (
@@ -174,9 +279,20 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 {t}
               </p>
             ))}
-            <button onClick={hearHook} className="mt-5 flex items-center gap-2 rounded-xl bg-violet-500/25 px-4 py-2.5 text-sm font-semibold text-violet-100 hover:bg-violet-500/40" data-testid="hook-hear">
-              <SpeakerIcon size={17} /> Hear it
-            </button>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                onClick={hearHook}
+                disabled={!canSpeak}
+                title={canSpeak ? "Read this aloud" : "No speech voice is installed on this computer"}
+                className="flex items-center gap-2 rounded-xl bg-violet-500/25 px-4 py-2.5 text-sm font-semibold text-violet-100 hover:bg-violet-500/40 disabled:opacity-40"
+                data-testid="hook-hear"
+              >
+                <SpeakerIcon size={17} /> Hear it
+              </button>
+              <button onClick={playHookExample} className="flex items-center gap-2 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-100 ring-1 ring-white/10 hover:bg-white/10" data-testid="hook-play">
+                ▶ Play example
+              </button>
+            </div>
           </Card>
         );
       case "watch": {
@@ -225,6 +341,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 Start over
               </button>
             </div>
+            <BeatCounter targets={tryTargets} bars={sub.bars} />
             {tryXs.error && <p className="text-sm text-rose-300">{tryXs.error}</p>}
             {tryXs.result && <ResultCard result={tryXs.result} />}
             <ul className="list-disc space-y-1 pl-6 text-sm text-slate-400">
@@ -262,6 +379,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 Reset
               </button>
             </div>
+            <BeatCounter targets={practiceTargets} bars={sub.bars} />
             {practiceXs.error && <p className="text-sm text-rose-300">{practiceXs.error}</p>}
             {practiceXs.result && <ResultCard result={practiceXs.result} />}
             {practiceXs.hintsShown > 0 && (

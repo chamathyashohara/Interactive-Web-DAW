@@ -46,6 +46,17 @@ export interface PianoRollGuide {
   commands?: boolean;
   /** No editing at all (for demonstrations). */
   readOnly?: boolean;
+  /** Time spans to highlight across the grid (where to place notes), with an optional short label in the ruler. */
+  columns?: { startTick: number; durationTicks: number; label?: string }[];
+  /** Number every beat in the ruler (1 2 3 4), for learners who are still counting. */
+  countBeats?: boolean;
+  /** Keyboard keys to light up (for example the notes sounding right now in a demonstration). */
+  activeKeys?: number[];
+  /**
+   * Bring these pitches (and optionally this moment) into view, scrolling smoothly and only when they are not already
+   * visible. `key` changes each time a new focus is wanted.
+   */
+  focus?: { key: string; pitches: number[]; tick?: number };
 }
 
 interface Props {
@@ -136,6 +147,62 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
     el.scrollTop = Math.max(0, pitchToY(center, rowH) + RULER_H - el.clientHeight / 2);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track.id, clip.id]);
+
+  // Guided focus: scroll just enough to show the given pitches / moment, smoothly, and never when they are already visible.
+  const focusKey = guide?.focus?.key;
+  // Our own short ease-out scroll (the browser's smooth scrolling gets cancelled by the roll's re-renders while a
+  // demonstration lights keys). While it runs, visibility is judged from where it is heading.
+  const scrollAnim = useRef<{ frame: number; top: number; left: number } | null>(null);
+  const animateScroll = (el: HTMLDivElement, top: number, left: number) => {
+    if (scrollAnim.current) cancelAnimationFrame(scrollAnim.current.frame);
+    if (document.visibilityState === "hidden") {
+      // No animation frames run in a hidden window: go straight there.
+      scrollAnim.current = null;
+      el.scrollTop = top;
+      el.scrollLeft = left;
+      return;
+    }
+    const fromTop = el.scrollTop;
+    const fromLeft = el.scrollLeft;
+    const t0 = performance.now();
+    const DURATION = 280;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / DURATION);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.scrollTop = fromTop + (top - fromTop) * e;
+      el.scrollLeft = fromLeft + (left - fromLeft) * e;
+      scrollAnim.current = k < 1 ? { frame: requestAnimationFrame(step), top, left } : null;
+    };
+    scrollAnim.current = { frame: requestAnimationFrame(step), top, left };
+  };
+  useEffect(() => () => {
+    if (scrollAnim.current) cancelAnimationFrame(scrollAnim.current.frame);
+  }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    const f = guide?.focus;
+    if (!el || !f || !f.pitches.length) return;
+    const curTop = scrollAnim.current?.top ?? el.scrollTop;
+    const curLeft = scrollAnim.current?.left ?? el.scrollLeft;
+    const top = RULER_H + Math.min(...f.pitches.map((p) => pitchToY(p, rowH)));
+    const bottom = RULER_H + Math.max(...f.pitches.map((p) => pitchToY(p, rowH))) + rowH;
+    const viewTop = curTop + RULER_H;
+    const viewBottom = curTop + el.clientHeight - VEL_H;
+    const margin = rowH;
+    let nextTop = curTop;
+    if (top < viewTop + margin || bottom > viewBottom - margin) {
+      const visible = el.clientHeight - VEL_H - RULER_H;
+      nextTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, (top + bottom) / 2 - RULER_H - visible / 2));
+    }
+    let nextLeft = curLeft;
+    if (f.tick !== undefined) {
+      const x = tickToPx(f.tick, pxPerBeat);
+      const visibleW = el.clientWidth - KEYS_W;
+      if (x < curLeft || x > curLeft + visibleW - 60) nextLeft = Math.max(0, x - 40);
+    }
+    if (Math.abs(nextTop - curTop) > 2 || Math.abs(nextLeft - curLeft) > 2) animateScroll(el, nextTop, nextLeft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey]);
 
   // ---- editing commands (buttons + shortcuts) ----
   const targets = () => (selectedNotes.length ? selectedNotes : notes);
@@ -473,6 +540,21 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                 </div>
               ))}
               {Array.from({ length: bars * 4 }, (_, i) => (i % 4 === 0 ? null : <div key={i} className="absolute bottom-0 h-1.5 border-l border-white/20" style={{ left: i * beatPx }} />))}
+              {guide?.countBeats &&
+                Array.from({ length: bars * 4 }, (_, i) =>
+                  i % 4 === 0 ? null : (
+                    <div key={`beat-${i}`} className="pointer-events-none absolute top-0 pl-1 text-[9px] leading-[22px] text-slate-500" style={{ left: i * beatPx }} data-beat-number={(i % 4) + 1}>
+                      {(i % 4) + 1}
+                    </div>
+                  ),
+                )}
+              {guide?.columns?.map((c, i) =>
+                c.label ? (
+                  <div key={`col-label-${i}`} className="pointer-events-none absolute top-0.5 z-10 truncate rounded bg-emerald-300 px-1 text-[9px] leading-[14px] font-semibold text-slate-900" style={{ left: tickToPx(c.startTick, pxPerBeat) + 1, maxWidth: Math.max(24, tickToPx(c.durationTicks, pxPerBeat) - 2) }}>
+                    {c.label}
+                  </div>
+                ) : null,
+              )}
               <div className="absolute right-0 bottom-0 left-0 h-[3px]" style={{ background: track.color, opacity: 0.6 }} title="Loop region" />
             </div>
           </div>
@@ -492,9 +574,14 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                     }}
                     onPointerUp={() => window.daw.preview(track.id, p, 100, false)}
                     onPointerCancel={() => window.daw.preview(track.id, p, 100, false)}
-                    className={`flex items-center justify-end overflow-hidden border-b pr-1 text-[9px] whitespace-nowrap ${
-                      isBlackKey(p) ? "border-black/50 bg-[#1d212b] text-slate-500 hover:bg-[#2a3040]" : "border-slate-300/40 bg-[#e8ecf2] text-slate-700 hover:bg-white"
+                    className={`flex items-center justify-end overflow-hidden border-b pr-1 text-[9px] whitespace-nowrap transition-colors ${
+                      guide?.activeKeys?.includes(p)
+                        ? "border-amber-500 bg-amber-300 font-bold text-slate-900"
+                        : isBlackKey(p)
+                          ? "border-black/50 bg-[#1d212b] text-slate-500 hover:bg-[#2a3040]"
+                          : "border-slate-300/40 bg-[#e8ecf2] text-slate-700 hover:bg-white"
                     }`}
+                    data-active={guide?.activeKeys?.includes(p) ? "true" : undefined}
                     style={{ height: rowH }}
                   >
                     {label}
@@ -519,6 +606,14 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                   key={p}
                   className={`absolute right-0 left-0 border-b ${isBlackKey(p) ? "border-white/[0.03] bg-[#0d1017]" : "border-white/[0.05] bg-[#131824]"} ${p % 12 === 0 ? "!border-white/15" : ""}`}
                   style={{ top: pitchToY(p, rowH), height: rowH }}
+                />
+              ))}
+              {guide?.columns?.map((c, i) => (
+                <div
+                  key={`col-${i}`}
+                  className="pointer-events-none absolute top-0 bottom-0 border-x border-emerald-300/50 bg-emerald-300/10"
+                  style={{ left: tickToPx(c.startTick, pxPerBeat), width: Math.max(3, tickToPx(c.durationTicks, pxPerBeat)) }}
+                  data-guide-column={i}
                 />
               ))}
               {guide?.rows?.map((p) => (

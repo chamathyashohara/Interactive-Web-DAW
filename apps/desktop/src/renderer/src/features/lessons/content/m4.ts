@@ -42,7 +42,7 @@ export const m4ChordsInTime: SubLesson = {
   bars: 2,
   hook: {
     headline: "Chords take turns",
-    text: ["In a song, chords take turns: one chord plays, then the next one takes over.", "Press Hear it: C, then G, then A minor, then F, one chord every two beats."],
+    text: ["In a song, chords take turns: one chord plays, then the next one takes over.", "Press Play example: C, then G, then A minor, then F, one chord every two beats."],
     notes: [...chordAt(1, 1, 2, C), ...chordAt(1, 3, 2, G), ...chordAt(2, 1, 2, AM), ...chordAt(2, 3, 2, F)],
   },
   watch: {
@@ -89,7 +89,7 @@ export const m4HomeTension: SubLesson = {
   bars: 4,
   hook: {
     headline: "Home and away",
-    text: ["Some chords feel like home. Others sound unfinished, as if they want to move. In C major, the C chord is home.", "Press Hear it: G (tense), then C (home), like arriving at your front door."],
+    text: ["Some chords feel like home. Others sound unfinished, as if they want to move. In C major, the C chord is home.", "Press Play example: G (tense), then C (home), like arriving at your front door."],
     notes: [...chordAt(1, 1, 2, G), ...chordAt(1, 3, 2, C)],
   },
   watch: {
@@ -288,7 +288,7 @@ export const m4RhythmBass: SubLesson = {
   bars: 2,
   hook: {
     headline: "Rhythm and a bass note",
-    text: ["A chord does not have to be one long block. Play it in a rhythm, and add a low bass note underneath.", "Press Hear it: a bass note on beat 1, with the chord hitting on beats 1 and 3."],
+    text: ["A chord does not have to be one long block. Play it in a rhythm, and add a low bass note underneath.", "Press Play example: a bass note on beat 1, with the chord hitting on beats 1 and 3."],
     notes: [g("C3", 1, 1, 4), ...HITS(1, C)],
   },
   watch: {

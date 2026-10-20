@@ -4,6 +4,7 @@ import { BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, PracticeIcon, Speak
 import { exerciseIndex, stepSpeechText } from "./learnModel";
 import { PianoPane } from "./PianoPane";
 import { speak, stopSpeaking } from "./speech";
+import { lessonState } from "./lessonState";
 import { browserStore, readJson, writeJson } from "./storage";
 import type { Lesson, Step } from "./types";
 import { useExercise, type ExerciseState, type ExerciseStep } from "./useExercise";
@@ -207,8 +208,15 @@ export function LessonPage({ lesson, project, onOpenClip, onExit, onNextLesson, 
   const exIdx = exerciseIndex(lesson);
   const exStep = lesson.steps[exIdx] as ExerciseStep;
   const xs = useExercise(lesson, exStep, project, onOpenClip);
-  const [tab, setTab] = useState<Tab>("lesson");
-  const [stepIndex, setStepIndex] = useState(0); // explain step shown on the Lesson tab
+  const [savedPos] = useState(() => lessonState.earlier(lesson.id));
+  const [tab, setTab] = useState<Tab>((savedPos?.tab as Tab | undefined) ?? "lesson");
+  const [stepIndex, setStepIndex] = useState(savedPos?.step ?? 0); // explain step shown on the Lesson tab
+  useEffect(() => lessonState.saveEarlier(lesson.id, { tab, step: stepIndex }), [lesson.id, tab, stepIndex]);
+  // Coming back to the Practice tab: reopen the exercise (it is never reset by this).
+  useEffect(() => {
+    if (tab === "practice") void xs.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [reached, setReached] = useState(0); // furthest step opened, for the tracker
 
   const activeStep = tab === "practice" ? exIdx : tab === "lesson" ? stepIndex : -1;

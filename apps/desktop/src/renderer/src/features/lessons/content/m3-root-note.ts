@@ -24,7 +24,7 @@ export const m3RootNote: SubLesson = {
     headline: "Every chord has a boss",
     text: [
       "It is called the root note, and it gives the chord its name.",
-      "Press Hear it. This is C major, and its root is C.",
+      "Press Play example. This is C major, and its root is C.",
     ],
     notes: chord(0, [60, 64, 67]),
   },

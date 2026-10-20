@@ -4,6 +4,7 @@ import { GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H, PITCH_MAX, PITCH_MIN, isBlackKey, p
 import { PianoRoll, type PianoRollGuide, type Tool } from "../../pianoRoll/PianoRoll";
 import { engineStateStore, statusStore, useStore } from "../../store";
 import { whySilent } from "./audibility";
+import { lessonState } from "./lessonState";
 import { BrushIcon, CursorIcon, EraserIcon, MuteIcon, PencilIcon, PlayIcon, ScissorsIcon, SpeakerIcon, StopIcon } from "./Icons";
 
 const TOOLS: { id: Tool; label: string; key: string; Icon: (p: { size?: number }) => React.JSX.Element }[] = [
@@ -71,11 +72,13 @@ export interface PianoPaneProps {
 export function PianoPane({ project, shown, guide, emptyText = "Your exercise opens here, in the same piano roll you use in the studio.", startLabel = "Start practice", onStart }: PianoPaneProps) {
   const status = useStore(statusStore);
   const engine = useStore(engineStateStore);
-  const [tool, setTool] = useState<Tool>("draw");
-  const [snap, setSnap] = useState(true);
-  const [gridTicks, setGridTicks] = useState<number>(GRID_OPTIONS[1].ticks);
-  const [pxPerBeat, setPxPerBeat] = useState(62);
-  const [rowH, setRowH] = useState(24);
+  const [savedPane] = useState(() => lessonState.pane());
+  const [tool, setTool] = useState<Tool>((savedPane?.tool as Tool | undefined) ?? "draw");
+  const [snap, setSnap] = useState(savedPane?.snap ?? true);
+  const [gridTicks, setGridTicks] = useState<number>(savedPane?.gridTicks ?? GRID_OPTIONS[1].ticks);
+  const [pxPerBeat, setPxPerBeat] = useState(savedPane?.pxPerBeat ?? 62);
+  const [rowH, setRowH] = useState(savedPane?.rowH ?? 24);
+  useEffect(() => lessonState.savePane({ tool, snap, gridTicks, pxPerBeat, rowH }), [tool, snap, gridTicks, pxPerBeat, rowH]);
   const playing = status?.playing ?? false;
   const songLen = songTicks(project);
   const toSeconds = (ticks: number) => (ticks * 60) / project.tempo / PPQ;

@@ -29,7 +29,7 @@ export const m5FromAScale: SubLesson = {
   bars: 2,
   hook: {
     headline: "Melodies come from scales",
-    text: ["A melody is a line of single notes. The easiest way to write one is to pick notes from a scale.", "In C major, any white keys you choose will fit. Press Hear it."],
+    text: ["A melody is a line of single notes. The easiest way to write one is to pick notes from a scale.", "In C major, any white keys you choose will fit. Press Play example."],
     notes: [...run(["E4", "D4", "C4", "D4", "E4", "E4"], 1, 1, 1), g("E4", 2, 3, 2)],
   },
   watch: {
@@ -132,7 +132,7 @@ export const m5MelodyRhythm: SubLesson = {
   bars: 2,
   hook: {
     headline: "Same notes, new rhythm",
-    text: ["A melody is not only which notes you play, but also when, and for how long. That is its rhythm.", "Press Hear it: the same four notes, first all even, then long, short, short, medium."],
+    text: ["A melody is not only which notes you play, but also when, and for how long. That is its rhythm.", "Press Play example: the same four notes, first all even, then long, short, short, medium."],
     notes: [...run(["C4", "D4", "E4", "G4"], 1, 1, 1), g("C4", 2, 1, 2), g("D4", 2, 3, 0.5), g("E4", 2, 3.5, 0.5), g("G4", 2, 4, 1)],
   },
   watch: {
@@ -199,7 +199,7 @@ export const m5Motif: SubLesson = {
   bars: 4,
   hook: {
     headline: "Say it again",
-    text: ["A motif is a short musical idea, just a few notes. Melodies repeat their motifs so we remember them.", "Press Hear it: a three-note motif, repeated, then changed a little."],
+    text: ["A motif is a short musical idea, just a few notes. Melodies repeat their motifs so we remember them.", "Press Play example: a three-note motif, repeated, then changed a little."],
     notes: [...MOTIF(1), ...MOTIF(2), ...MOTIF(3, ["C4", "D4", "G4"])],
   },
   watch: {

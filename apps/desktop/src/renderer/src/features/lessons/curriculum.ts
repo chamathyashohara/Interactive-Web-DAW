@@ -13,7 +13,9 @@ export interface PathItem {
   optional?: boolean;
 }
 export interface PathModule {
+  /** Internal id (m0-m5): part of every sub-lesson id, saved progress and study logs, so it never changes. */
   id: string;
+  /** What the learner sees (L1-L6). */
   code: string;
   title: string;
   items: PathItem[];
@@ -24,10 +26,11 @@ const item = (module: string, slug: string, title: string, optional = false): Pa
 export const MODULES: PathModule[] = [
   {
     id: "m0",
-    code: "M0",
+    code: "L1",
     title: "Meet the piano roll (training first)",
     items: [
       item("m0", "what-you-see", "What you see"),
+      item("m0", "beats-bars", "Beats and bars"),
       item("m0", "play-loop-tempo", "Play, loop, tempo"),
       item("m0", "draw-delete", "Draw and delete"),
       item("m0", "move-resize", "Move and resize"),
@@ -37,7 +40,7 @@ export const MODULES: PathModule[] = [
   },
   {
     id: "m1",
-    code: "M1",
+    code: "L2",
     title: "Notes",
     items: [
       item("m1", "high-low", "High and low"),
@@ -50,7 +53,7 @@ export const MODULES: PathModule[] = [
   },
   {
     id: "m2",
-    code: "M2",
+    code: "L3",
     title: "Scales and keys",
     items: [
       item("m2", "what-is-a-scale", "What a scale is"),
@@ -64,7 +67,7 @@ export const MODULES: PathModule[] = [
   },
   {
     id: "m3",
-    code: "M3",
+    code: "L4",
     title: "Chords",
     items: [
       item("m3", "what-is-a-chord", "What a chord is"),
@@ -79,7 +82,7 @@ export const MODULES: PathModule[] = [
   },
   {
     id: "m4",
-    code: "M4",
+    code: "L5",
     title: "Chord progressions",
     items: [
       item("m4", "chords-in-time", "Chords in time"),
@@ -92,7 +95,7 @@ export const MODULES: PathModule[] = [
   },
   {
     id: "m5",
-    code: "M5",
+    code: "L6",
     title: "Melody",
     items: [
       item("m5", "from-a-scale", "Melody from a scale"),

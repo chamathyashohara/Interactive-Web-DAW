@@ -24,7 +24,7 @@ export const m2WhatIsAScale: SubLesson = {
   bars: 2,
   hook: {
     headline: "A ladder of notes",
-    text: ["A scale is a set of notes climbing in order, like the rungs of a ladder, from one note up to the same note an octave higher.", "Press Hear it: the C major scale, the white keys from C to C."],
+    text: ["A scale is a set of notes climbing in order, like the rungs of a ladder, from one note up to the same note an octave higher.", "Press Play example: the C major scale, the white keys from C to C."],
     notes: run(C_MAJOR, 1, 1, 0.5),
   },
   watch: {
@@ -122,7 +122,7 @@ export const m2MajorAnyNote: SubLesson = {
   bars: 2,
   hook: {
     headline: "Same pattern, any start",
-    text: ["Start the W W H W W W H pattern on any note and you get that note's major scale.", "Starting on a note other than C, you will need some black keys. Press Hear it: D major."],
+    text: ["Start the W W H W W W H pattern on any note and you get that note's major scale.", "Starting on a note other than C, you will need some black keys. Press Play example: D major."],
     notes: run(D_MAJOR, 1, 1, 0.5),
   },
   watch: {
@@ -223,7 +223,7 @@ export const m2NaturalMinor: SubLesson = {
   bars: 2,
   hook: {
     headline: "The minor scale",
-    text: ["The natural minor scale sounds darker or sadder. Its pattern is W H W W H W W.", "A minor uses only the white keys, from A to A. Press Hear it."],
+    text: ["The natural minor scale sounds darker or sadder. Its pattern is W H W W H W W.", "A minor uses only the white keys, from A to A. Press Play example."],
     notes: run(A_MINOR, 1, 1, 0.5),
   },
   watch: {

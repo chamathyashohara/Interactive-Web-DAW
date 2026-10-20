@@ -1,6 +1,7 @@
 import { pitchLabel } from "../../../pianoRoll/geometry";
 import type { GuideNoteSpec, Slot, SubLesson } from "../types";
 import { BAR, BEAT, g, quick, rows, run, slotAt } from "./helpers";
+import { m0BeatsBars } from "./m0-beats-bars";
 
 /**
  * M0: Meet the piano roll (training first). Tools are introduced one at a time: each sub-lesson only offers the tools
@@ -18,7 +19,7 @@ export const m0WhatYouSee: SubLesson = {
   bars: 2,
   hook: {
     headline: "A map of music",
-    text: ["The piano roll is a grid. Up and down is pitch: higher notes sit higher. Left to right is time.", "Each coloured bar is one note. Press Hear it to hear three notes climbing the grid."],
+    text: ["The piano roll is a grid. Up and down is pitch: higher notes sit higher. Left to right is time.", "Each coloured bar is one note. Press Play example to hear three notes climbing the grid."],
     notes: run(["C4", "E4", "G4"], 1, 1, 1),
   },
   watch: {
@@ -296,7 +297,7 @@ export const m0MiniChallenge: SubLesson = {
   bars: 4,
   hook: {
     headline: "Your first tune",
-    text: ["You can draw, delete, move, resize, select and copy. Time to use them.", "Press Hear it: you probably know this one. The first line is C C G G A A G."],
+    text: ["You can draw, delete, move, resize, select and copy. Time to use them.", "Press Play example: you probably know this one. The first line is C C G G A A G."],
     notes: LINE_ONE,
   },
   watch: {
@@ -333,4 +334,4 @@ export const m0MiniChallenge: SubLesson = {
   recap: ["You can draw, delete, move, resize, select, duplicate and undo.", "Repeated ideas are quick to build with Duplicate.", "Twinkle Twinkle: C C G G A A G, F F E E D D C."],
 };
 
-export const M0: SubLesson[] = [m0WhatYouSee, m0PlayLoopTempo, m0DrawDelete, m0MoveResize, m0SelectCopyUndo, m0MiniChallenge];
+export const M0: SubLesson[] = [m0WhatYouSee, m0BeatsBars, m0PlayLoopTempo, m0DrawDelete, m0MoveResize, m0SelectCopyUndo, m0MiniChallenge];

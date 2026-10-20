@@ -108,3 +108,78 @@ export function stageSpeech(sub: SubLesson, stage: StageId, watchIndex = 0): str
       return `Well done. ${sub.recap.join(" ")}`;
   }
 }
+
+// ---- Where notes go: time targets for the beat/bar guide ----
+
+/** A span of time the learner must fill, for highlighting on the roll and in the beat counter. */
+export interface TimeTarget {
+  startTick: number;
+  durationTicks: number;
+  /** Short label for the ruler, e.g. "2 beats" or "chord". */
+  label: string;
+  /** True when the length is part of the task (so it is drawn as a length, not just a position). */
+  hasLength: boolean;
+}
+
+const BEAT_TICKS = 960;
+const BAR_TICKS = 3840;
+
+/** "1 beat", "2 beats", "½ beat", "1½ beats". */
+export function beatsLabel(ticks: number): string {
+  const b = Math.round((ticks / BEAT_TICKS) * 2) / 2;
+  const whole = Math.floor(b);
+  const half = b - whole === 0.5;
+  const text = `${whole ? whole : ""}${half ? "½" : ""}` || "0";
+  return `${text} beat${b === 1 || b === 0.5 ? "" : "s"}`;
+}
+
+/**
+ * Where (and for how long) the notes of an exercise go, read from its own check, so the roll can highlight the right
+ * bars and beats and the beat counter can show what a length looks like. Checks that leave timing free give none.
+ */
+export function timeTargets(spec: SubLesson["practice"]["check"], bars: number): TimeTarget[] {
+  const out: TimeTarget[] = [];
+  const add = (t: TimeTarget) => {
+    const same = out.find((o) => o.startTick === t.startTick);
+    if (!same) out.push(t);
+    else if (t.durationTicks > same.durationTicks) Object.assign(same, t);
+  };
+  const perBar = (n: number, label: string, beatTick = 0) => {
+    for (let bar = 0; bar < n; bar++) add({ startTick: bar * BAR_TICKS + beatTick, durationTicks: BEAT_TICKS, label, hasLength: false });
+  };
+  switch (spec.kind) {
+    case "slots":
+      for (const s of spec.slots) {
+        if (s.startMin === undefined || s.startMax === undefined) continue;
+        const start = Math.round((s.startMin + s.startMax) / 2);
+        const hasLength = s.durationMin !== undefined && s.durationMax !== undefined;
+        const duration = hasLength ? Math.round((s.durationMin! + s.durationMax!) / 2) : (s.durationMin ?? BEAT_TICKS);
+        add({ startTick: start, durationTicks: duration, label: hasLength || s.durationMin !== undefined ? beatsLabel(duration) : "note", hasLength: hasLength || s.durationMin !== undefined });
+      }
+      break;
+    case "chordsPerBar":
+      perBar(spec.chords.length, "chord");
+      break;
+    case "rootNotes":
+      perBar(spec.chords.length, "root");
+      break;
+    case "chordSet":
+      perBar(spec.bars, "chord");
+      break;
+    case "chordsAtTicks":
+      for (const c of spec.chords) add({ startTick: c.startTick, durationTicks: BEAT_TICKS, label: "chord", hasLength: false });
+      break;
+    case "chordToneMelody":
+      for (let bar = 0; bar < spec.rule.chords.length; bar++) for (const b of spec.rule.strongBeats) add({ startTick: bar * BAR_TICKS + b, durationTicks: BEAT_TICKS, label: "chord tone", hasLength: false });
+      break;
+    case "matchTarget":
+      for (const t of spec.target) add({ startTick: t.startTick, durationTicks: t.durationTicks, label: beatsLabel(t.durationTicks), hasLength: true });
+      break;
+    case "all":
+      for (const c of spec.checks) for (const t of timeTargets(c, bars)) add(t);
+      break;
+    default:
+      break;
+  }
+  return out.filter((t) => t.startTick >= 0 && t.startTick < bars * BAR_TICKS).sort((a, b) => a.startTick - b.startTick);
+}
