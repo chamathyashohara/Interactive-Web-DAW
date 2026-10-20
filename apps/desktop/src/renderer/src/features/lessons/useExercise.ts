@@ -58,6 +58,8 @@ export function useExercise(
       const lengthen: OpBody[] = songTicks(project) < ex.bars * TICKS_PER_BAR ? [{ type: "setSongLength", bars: ex.bars }] : [];
       ops = [...lengthen, ...resetExerciseOps(found, found.clip, ex, uuid)];
     }
+    // The lesson's own track must be audible: a mute set in the studio would make every key and note silent here.
+    if (found?.track.mute) ops = [...ops, { type: "updateTrack", trackId: found.trackId, changes: { mute: false } }];
     if (ops.length) {
       const res = await window.daw.dispatchBatch(ops);
       if (!res.ok) return setError(`Could not set up the exercise: ${res.reason ?? "unknown error"}`), false;

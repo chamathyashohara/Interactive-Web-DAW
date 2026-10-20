@@ -3,7 +3,8 @@ import { MAX_BPM, MIN_BPM, PPQ, songTicks, type Clip, type Project, type Track }
 import { GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H, PITCH_MAX, PITCH_MIN, isBlackKey, pitchLabel } from "../../pianoRoll/geometry";
 import { PianoRoll, type PianoRollGuide, type Tool } from "../../pianoRoll/PianoRoll";
 import { engineStateStore, statusStore, useStore } from "../../store";
-import { BrushIcon, CursorIcon, EraserIcon, MuteIcon, PencilIcon, PlayIcon, ScissorsIcon, StopIcon } from "./Icons";
+import { whySilent } from "./audibility";
+import { BrushIcon, CursorIcon, EraserIcon, MuteIcon, PencilIcon, PlayIcon, ScissorsIcon, SpeakerIcon, StopIcon } from "./Icons";
 
 const TOOLS: { id: Tool; label: string; key: string; Icon: (p: { size?: number }) => React.JSX.Element }[] = [
   { id: "select", label: "Select", key: "S", Icon: CursorIcon },
@@ -79,6 +80,7 @@ export function PianoPane({ project, shown, guide, emptyText = "Your exercise op
   const songLen = songTicks(project);
   const toSeconds = (ticks: number) => (ticks * 60) / project.tempo / PPQ;
   const tick = Math.min(status?.tick ?? 0, songLen);
+  const silence = shown && project.tracks[shown.track.id] ? whySilent(project, shown.track.id) : null;
   const allowedTools = guide?.tools;
   const visibleTools = guide?.readOnly ? [] : TOOLS.filter((t) => !allowedTools || allowedTools.includes(t.id));
   const activeTool: Tool = allowedTools && !allowedTools.includes(tool) ? (allowedTools[0] ?? "select") : tool;
@@ -150,6 +152,15 @@ export function PianoPane({ project, shown, guide, emptyText = "Your exercise op
         </label>
         {!engine.connected && <span className="ml-auto rounded-md bg-amber-400/10 px-2 py-0.5 text-amber-200">Audio engine offline · use Listen in Practice</span>}
       </div>
+      {silence && (
+        <div className="flex items-center gap-3 border-b border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm text-amber-100" role="alert" data-testid="silent-banner" data-reason={silence.reason}>
+          <SpeakerIcon size={16} />
+          <span className="min-w-0 flex-1">{silence.message}</span>
+          <button className="rounded-lg bg-amber-300 px-3 py-1 text-xs font-semibold text-slate-900 hover:bg-amber-200" onClick={() => void window.daw.dispatchBatch(silence.fix)} data-testid="silent-fix">
+            {silence.action}
+          </button>
+        </div>
+      )}
 
       {shown ? (
         <div className={`flex min-h-0 flex-1 flex-col ${shown.track.instrument === "drums" ? "" : "learn-roll"}`}>

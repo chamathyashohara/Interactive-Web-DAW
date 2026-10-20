@@ -417,3 +417,13 @@ sub-lesson driven end to end, 31/31, no console errors. Remaining: M5 Melody.
 
 All five M5 Melody sub-lessons (`content/m5.ts`). Every outline item of M0-M5 now has content (39 sub-lessons); a test
 enforces that. Unit tests 453/453 desktop, 31/31 shared. In the built app all 39 sub-lessons were driven end to end in one run (Hook, Watch, Try, Practice with 3 hints, Quick check, Done, next), 191/191 checks, no console errors.
+
+## Fix: silent keys and notes in lessons (2026-10-21)
+
+Report: no sound when clicking keys or drawing notes in Try/Practice, engine connected. Cause: the learner had muted the
+"Lesson: Practice" track (and the earlier lesson tracks) in the studio; the engine is silent for a muted track, previews
+included, and the lessons gave no sign of it. Fix: starting a lesson stage unmutes the lesson's own track (same batch as
+the setup), and the lesson piano roll shows a banner with a one-click fix whenever its track cannot be heard (muted,
+another track soloed, track or master fader at 0); pure helper `audibility.ts` with tests. Verified with the engine's own
+meters in the built app, 7/7: muted preview is silent, Unmute brings it back, solo elsewhere is detected and cleared, and a
+new stage unmutes by itself.
