@@ -19,6 +19,35 @@ import {
 
 export type Tool = "draw" | "paint" | "select" | "delete" | "mute" | "slice";
 
+/** A note drawn by a guide (lessons): never part of the project and never editable. */
+export interface GuideNote {
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  /** "ghost": dashed outline to follow ("ghost-root" for the root); "demo": solid, drawn by a demonstration ("root" for the root). */
+  style: "ghost" | "ghost-root" | "demo" | "root";
+  /** Short text inside the note, e.g. "root". */
+  label?: string;
+}
+
+/**
+ * Optional teaching overlay used by the lessons. When omitted the piano roll behaves exactly as before.
+ * Everything here is display or restriction only: it never changes project data.
+ */
+export interface PianoRollGuide {
+  notes?: GuideNote[];
+  /** Pitch rows to highlight (e.g. a hint pointing at the right rows). */
+  rows?: number[];
+  /** CSS colour per real note id, e.g. red for a wrong note while learning. */
+  noteColor?: Record<string, string>;
+  /** Only these tools work; tool shortcuts outside the list are ignored. */
+  tools?: Tool[];
+  /** false hides the edit-strip commands (select all, copy, paste, duplicate, quantize, delete) and their shortcuts. */
+  commands?: boolean;
+  /** No editing at all (for demonstrations). */
+  readOnly?: boolean;
+}
+
 interface Props {
   track: Track;
   clip: Clip;
@@ -30,6 +59,8 @@ interface Props {
   pxPerBeat: number;
   rowH: number;
   onTool: (t: Tool) => void;
+  /** Teaching overlay (lessons only). */
+  guide?: PianoRollGuide;
 }
 
 type Drag =
@@ -60,7 +91,14 @@ const Playhead = memo(function Playhead({ pxPerBeat, clipStart, clipLength }: { 
 
 const btn = "rounded px-2 py-0.5 text-[11px] font-medium bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5";
 
-export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxPerBeat, rowH, onTool }: Props) {
+export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, rowH, onTool: requestTool, guide }: Props) {
+  const allowed = guide?.tools;
+  const tool: Tool = allowed && !allowed.includes(requestedTool) ? (allowed[0] ?? "select") : requestedTool;
+  const onTool = (t: Tool) => {
+    if (!allowed || allowed.includes(t)) requestTool(t);
+  };
+  const readOnly = guide?.readOnly ?? false;
+  const commands = !readOnly && guide?.commands !== false;
   const clipId = clip.id;
   const noteClip: NoteClip = { trackId: track.id, clipId, lengthTicks: clip.lengthTicks };
   const notes = useMemo(() => Object.values(clip.notes), [clip.notes]);
@@ -125,12 +163,13 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
   const cmdSelectAll = () => setSelected(new Set(notes.map((n) => n.id)));
 
   useEffect(() => {
-    if (!keysEnabled) return;
+    if (!keysEnabled || readOnly) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA")) return;
       const k = e.key.toLowerCase();
       if (e.ctrlKey || e.metaKey) {
+        if (!commands) return;
         if (k === "a") (e.preventDefault(), cmdSelectAll());
         else if (k === "c") (e.preventDefault(), cmdCopy());
         else if (k === "v") (e.preventDefault(), cmdPaste());
@@ -144,7 +183,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
       else if (k === "e") onTool("delete");
       else if (k === "m") onTool("mute");
       else if (k === "c") onTool("slice");
-      else if (k === "q") cmdQuantize();
+      else if (k === "q" && commands) cmdQuantize();
       else if ((k === "delete" || k === "backspace") && liveSelected.size) cmdDelete();
     };
     window.addEventListener("keydown", onKey);
@@ -168,7 +207,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
 
   // ---- grid pointer handling ----
   const onGridPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || readOnly) return;
     const { x, y } = gridPoint(e);
     const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
     const note = hit ? clip.notes[hit.dataset.noteId!] : undefined;
@@ -345,6 +384,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
     const noteEl = (e.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
     if (!noteEl) return;
     e.preventDefault();
+    if (readOnly || (allowed && !allowed.includes("delete"))) return;
     batch(deleteOps(noteClip, [noteEl.dataset.noteId!]));
   };
 
@@ -355,7 +395,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
   };
   const onVelDown = (e: React.PointerEvent) => {
     const el = (e.target as HTMLElement).closest<HTMLElement>("[data-vel-id]");
-    if (!el || e.button !== 0) return;
+    if (!el || e.button !== 0 || readOnly) return;
     const id = el.dataset.velId!;
     velRef.current!.setPointerCapture(e.pointerId);
     setSelected(new Set([id]));
@@ -399,12 +439,16 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
           {track.name}
           <span className="text-slate-600">· {isDrums ? "Drums" : "Synth"} · {clip.name ?? "Clip"}</span>
         </span>
-        <button className={btn} onClick={cmdSelectAll} title="Select all (Ctrl+A)">Select all</button>
-        <button className={btn} disabled={!liveSelected.size} onClick={cmdCopy} title="Copy (Ctrl+C)">Copy</button>
-        <button className={btn} onClick={cmdPaste} title="Paste at the playhead (Ctrl+V)">Paste</button>
-        <button className={btn} disabled={!liveSelected.size} onClick={cmdDuplicate} title="Duplicate after the selection (Ctrl+D)">Duplicate</button>
-        <button className={btn} disabled={!notes.length} onClick={cmdQuantize} title="Quantize selected notes (or all) to the grid (Q)">Quantize</button>
-        <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
+        {commands && (
+          <>
+            <button className={btn} onClick={cmdSelectAll} title="Select all (Ctrl+A)">Select all</button>
+            <button className={btn} disabled={!liveSelected.size} onClick={cmdCopy} title="Copy (Ctrl+C)">Copy</button>
+            <button className={btn} onClick={cmdPaste} title="Paste at the playhead (Ctrl+V)">Paste</button>
+            <button className={btn} disabled={!liveSelected.size} onClick={cmdDuplicate} title="Duplicate after the selection (Ctrl+D)">Duplicate</button>
+            <button className={btn} disabled={!notes.length} onClick={cmdQuantize} title="Quantize selected notes (or all) to the grid (Q)">Quantize</button>
+            <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
+          </>
+        )}
         <span className="ml-auto text-[11px] text-slate-500" data-testid="selection-count">{liveSelected.size ? `${liveSelected.size} selected` : `${notes.length} notes`}</span>
       </div>
 
@@ -477,7 +521,28 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
                   style={{ top: pitchToY(p, rowH), height: rowH }}
                 />
               ))}
+              {guide?.rows?.map((p) => (
+                <div key={`row-${p}`} className="pointer-events-none absolute right-0 left-0 border-y border-amber-300/50 bg-amber-300/15" style={{ top: pitchToY(p, rowH), height: rowH }} data-guide-row={p} />
+              ))}
               <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: [lines(0.3, barPx), lines(0.13, beatPx), lines(0.05, gridPx)].join(",") }} />
+              {guide?.notes?.map((g, i) => (
+                <div
+                  key={`guide-${i}`}
+                  className={`pointer-events-none absolute flex items-center overflow-hidden rounded-[3px] px-1 text-[10px] font-semibold ${
+                    g.style === "ghost"
+                      ? "border-2 border-dashed border-white/60 bg-white/10 text-white/80"
+                      : g.style === "ghost-root"
+                        ? "border-2 border-dashed border-amber-300 bg-amber-300/15 text-amber-200"
+                        : g.style === "root"
+                          ? "bg-amber-400 text-slate-950 ring-2 ring-amber-200"
+                          : "bg-violet-500 text-white"
+                  }`}
+                  style={{ left: tickToPx(g.startTick, pxPerBeat), top: pitchToY(g.pitch, rowH) + 1, width: Math.max(4, tickToPx(g.durationTicks, pxPerBeat) - 1), height: rowH - 2 }}
+                  data-guide-note={g.style}
+                >
+                  {rowH >= 14 && (g.label ?? (isDrums ? "" : pitchLabel(g.pitch)))}
+                </div>
+              ))}
 
               {drag?.kind === "draw" && (
                 <div
@@ -517,7 +582,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
                       top: pitchToY(n.pitch, rowH) + 1,
                       width: Math.max(4, tickToPx(n.durationTicks, pxPerBeat) - 1),
                       height: rowH - 2,
-                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : track.color,
+                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : (guide?.noteColor?.[n.id] ?? track.color),
                       filter: isSel ? "brightness(1.3)" : undefined,
                       opacity: erasing ? 0.25 : n.muted ? 0.7 : 0.55 + (n.velocity / 127) * 0.45,
                       cursor: tool === "delete" ? "not-allowed" : tool === "mute" ? "pointer" : tool === "slice" ? "col-resize" : "grab",

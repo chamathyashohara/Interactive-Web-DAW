@@ -16,7 +16,14 @@ export type ExerciseStep = Extract<Step, { kind: "exercise" }>;
  * Hint, Reset, the Listen preview, the lesson-completed event and the study log. Mount it once per lesson (key the
  * component by lesson id) so its state starts fresh for each lesson.
  */
-export function useExercise(lesson: Lesson, step: ExerciseStep, project: Project, onOpenClip: (trackId: string, clipId: string | null) => void) {
+export function useExercise(
+  lesson: Pick<Lesson, "id" | "version" | "title" | "concept">,
+  step: ExerciseStep,
+  project: Project,
+  onOpenClip: (trackId: string, clipId: string | null) => void,
+  /** false for practice-only stages that must not complete the lesson (for example a guided Try). */
+  completes = true,
+) {
   const ex = step.exercise;
   const found = findExercise(project, lesson.id);
   const [started, setStarted] = useState(false);
@@ -57,7 +64,7 @@ export function useExercise(lesson: Lesson, step: ExerciseStep, project: Project
     setResult(r);
     setChecks((n) => n + 1);
     studyLog.recordCheck(r.score, r.pass);
-    if (r.pass) {
+    if (r.pass && completes) {
       lessonEvents.complete({
         type: "lesson-completed",
         schema: 1,
@@ -84,6 +91,15 @@ export function useExercise(lesson: Lesson, step: ExerciseStep, project: Project
     setError("");
     setResult(null);
     studyLog.recordReset();
+  };
+
+  /** Removes every note (no study-log entry): used when moving from a guided stage to a blank one. */
+  const clear = async () => {
+    if (!found) return;
+    const noteIds = Object.keys(found.clip.notes);
+    if (!noteIds.length) return;
+    await window.daw.dispatchBatch(noteIds.map((noteId) => ({ type: "deleteNote" as const, trackId: found.trackId, clipId: found.clipId, noteId })));
+    setResult(null);
   };
 
   /** The lesson's own preview sound (works without the audio engine). Toggles play / stop. */
@@ -115,6 +131,7 @@ export function useExercise(lesson: Lesson, step: ExerciseStep, project: Project
     check,
     hint,
     reset,
+    clear,
     listen,
   };
 }

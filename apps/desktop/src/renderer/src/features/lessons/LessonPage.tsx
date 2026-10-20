@@ -139,7 +139,7 @@ function PracticeTab({ step, xs, onStart }: { step: ExerciseStep; xs: ExerciseSt
   );
 }
 
-function NotesTab({ lessonId }: { lessonId: string }) {
+export function NotesTab({ lessonId }: { lessonId: string }) {
   const [text, setText] = useState(() => readJson<Record<string, string>>(store, NOTES_KEY, {})[lessonId] ?? "");
   useEffect(() => {
     const t = setTimeout(() => writeJson(store, NOTES_KEY, { ...readJson<Record<string, string>>(store, NOTES_KEY, {}), [lessonId]: text }), 300);
@@ -294,7 +294,13 @@ export function LessonPage({ lesson, project, onOpenClip, onExit, onNextLesson, 
             </div>
           )}
         </section>
-        <PianoPane xs={xs} project={project} onStart={() => void startPractice()} />
+        <PianoPane
+          project={project}
+          shown={xs.found}
+          emptyText={xs.removed ? "The exercise was removed (maybe by Undo). Start it again to continue." : undefined}
+          startLabel={xs.removed ? "Restart practice" : "Start practice"}
+          onStart={() => void startPractice()}
+        />
       </div>
 
       <div className="flex gap-4">

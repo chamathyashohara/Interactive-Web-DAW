@@ -49,7 +49,7 @@ export function findExercise(project: Project, lessonId: string): (ExerciseLocat
  * they already exist (the learner keeps their work); otherwise adds the missing parts, lengthening the song first
  * if it is shorter than the exercise.
  */
-export function startExerciseOps(project: Project, lesson: Lesson, exercise: Exercise, newNoteId: IdGen): SetupResult {
+export function startExerciseOps(project: Project, lesson: Pick<Lesson, "id" | "title">, exercise: Exercise, newNoteId: IdGen): SetupResult {
   const trackId = lessonTrackId(lesson.id);
   const clipId = lessonClipId(lesson.id);
   const length = exercise.bars * TICKS_PER_BAR;

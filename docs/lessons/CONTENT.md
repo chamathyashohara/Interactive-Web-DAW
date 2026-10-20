@@ -105,3 +105,47 @@ Summary tab. The text lives in `content/*.ts`; the recap lines are:
 - MIDI editing: MIDI stores notes, not sound, so every note can be fixed after it is played. / Quantize pulls notes onto the grid; dragging a note's edge changes its length. / The velocity lane controls how loud each note is; Delete removes doubled notes.
 
 For the reviewer: please read the Try it and Tips lines in the app (or in `content/*.ts`) as well.
+
+# Learning path (modules M0-M5)
+
+The Learn view opens on the learning path from the course outline: M0 Meet the piano roll, M1 Notes, M2 Scales and
+keys, M3 Chords, M4 Chord progressions, M5 Melody (all sub-lesson titles are in `curriculum.ts`). A sub-lesson follows
+Hook, Watch, Try, Practice (feedback inside, with three hint levels), Quick check, Done. Only **M3 "The root note"** is
+written so far; the rest are listed as planned. The four earlier lessons above stay available under "Earlier lessons"
+until they are folded into modules (chords into M3/M4, melody into M5, rhythm and MIDI editing as new modules).
+
+## M3 sub-lesson 2: The root note (`m3-root-note`, version 1)
+
+Summary: Every chord is named after one note: its root. Learn to find it.
+
+### Hook
+- "Every chord has a boss." It is called the root note, and it gives the chord its name.
+- Press Hear it: C major, root C (the chord is shown on the roll with the root marked).
+
+### Watch (the roll draws it, with sound; captions shown)
+1. A chord is several notes played at the same time. This one is made of three notes. (C E G)
+2. One of them is the root. Here it is C: the chord is named after it, so this is C major. (root marked)
+3. Change the root and you change the chord's name. With G as the root, we get G major. (G B D)
+4. Same idea again: F is the root, so this chord is F major. (F A C)
+5. Even for A minor, look at the first letter of the name: A. That is the root. (A C E)
+6. So to find a chord's root, read the first letter of its name. Now you try. (C marked)
+
+### Try (ghost notes; wrong notes turn red at once)
+- Build C major on beat 1 of bar 1. Start with the root, C, then add E and G. Follow the dashed ghost notes. A red note does not belong in the chord.
+- Red = any note whose pitch class is not C, E or G. Tools offered: Draw, Select, Delete (no clipboard or Quantize yet).
+- Check: C, E and G heard on beat 1 of bar 1 (the existing chords check).
+
+### Practice (blank roll, no ghost notes, same limited tools)
+- Place just the root note of each chord, one note per bar on beat 1: bar 1 C major, bar 2 G major, bar 3 F major, bar 4 A minor.
+- Check (`rootNotes`): in each bar exactly the root's pitch class sounds on beat 1, any octave. Feedback tells apart "B is part of G major, but it is not the root" from "F# is not even in G major", and asks for only the root if a whole chord is placed.
+- Hint 1: reminder ("The root is the note a chord is named after. Read the first letter of each chord's name."). Hint 2: the four root rows are highlighted on the roll. Hint 3: the answer is shown as ghost notes.
+
+### Quick check
+- "A chord is called F minor. Which note is its root?" F / A♭ / C / E (answer F). Wrong answer: "Not quite. Think about how a chord gets its name, then try again." Right answer shows the explanation.
+
+### Done
+- The root is the note a chord is named after. / Read the first letter of the chord's name to find it: G major → G, A minor → A. / Change the root and you change the chord, even if the pattern of notes stays the same.
+
+Questions for the reviewer:
+- Is the first letter rule enough for chords such as F♯ minor or B♭ major (root F♯, B♭)? A later sub-lesson would cover sharps and flats in names.
+- Should Practice also ask for the root in a low octave (bass note) to link to M4's "Rhythm and a bass note"?

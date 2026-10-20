@@ -342,3 +342,32 @@ Privacy and ethics notes for the new features:
   on study machines, the Notes tab can be hidden for study sessions.
 - **Voice guidance** uses the operating system's offline speech voices; no audio or text leaves the computer.
 - The learner's last-opened lesson and the voice toggle are stored locally (`lessons.last.v1`, `lessons.voice.v1`).
+
+## Seven-stage sub-lessons and the learning path (2026-10-20)
+
+New curriculum (modules M0-M5, ~40 sub-lessons, from the course outline) and a seven-stage flow per sub-lesson:
+**Hook, Watch, Try, Practice, Feedback, Quick check, Done.** Decisions agreed with the owner: (1) small additive hooks in the
+shared `PianoRoll` (see below), (2) a lesson-only version of red wrong notes (Try stage, driven by the sub-lesson's own allowed
+pitch classes; Component 2's general out-of-key overlay is separate and shares no code), (3) framework plus one finished
+sub-lesson first, (4) migrate the four earlier lessons into the modules later (they stay under "Earlier lessons" meanwhile).
+
+Built: the stage player (`SubLessonPage.tsx`), learning path screen (`LearningPath.tsx`, `curriculum.ts`), pure helpers
+(`subLesson.ts`), the new `rootNotes` check, `useExercise` generalised (Try and Practice share one lesson track; Try does not
+complete the lesson, Practice does), `audio.ts` `playEvents`, and **M3 "The root note"** end to end.
+
+- **Watch:** the roll is read-only and draws the demonstration itself as guide notes (root marked), with sound (the built-in preview
+  synth, so it works without the engine) and captions; optional voice reads the captions.
+- **Try:** the real clip with dashed ghost notes; notes outside the allowed pitch classes turn red immediately; Next is locked until the check passes.
+- **Practice:** a blank roll, no ghosts, Try notes cleared once on first entry; three hint levels: reminder text, highlighted rows, then the answer as ghost notes.
+- **Tools taught so far:** the roll only offers the tools a sub-lesson lists (here Draw, Select, Delete) and hides the clipboard/Quantize strip.
+- **Recording:** every Check and hint is logged by the existing study log with step ids `try`, `practice`, `quick-check` (only while a study session is on).
+
+PianoRoll change (additive, optional `guide` prop; nothing changes when it is omitted): `GuideNote`/`PianoRollGuide` types,
+dashed or solid guide notes drawn under the real notes, highlighted rows, a per-note colour map, a tool allow-list, hiding the
+edit-strip commands and their shortcuts, and a read-only mode. Needs the piano-roll owner's OK before it is committed.
+
+Verified in the built app, 29/29: path with six modules; planned items not clickable; Hook, Watch (captions advance, root marked),
+Try (ghosts, red note, locked Next, real mouse click draws), Practice (blank, three hint levels, targeted feedback), quick check
+(wrong then right), Done recap, completed event stored, path shows Done, search lists planned items as Soon, earlier lessons open,
+no study records without a session, no console errors. Unit tests: 143 desktop (new: root check, sub-lesson data validity,
+helpers, curriculum). Not verified: voice guidance, Watch sound quality (could not listen), the other modules (not written).

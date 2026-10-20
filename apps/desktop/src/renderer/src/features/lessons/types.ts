@@ -1,4 +1,5 @@
 import type { InstrumentKind } from "@daw/shared";
+import type { Tool } from "../../pianoRoll/PianoRoll";
 
 /**
  * Lessons are plain data (no functions), so they could equally be JSON. Behaviour lives in the check kinds
@@ -35,7 +36,15 @@ export type CheckSpec =
   | { kind: "chordsPerBar"; chords: ChordTarget[] }
   | { kind: "melodyInKey"; key: string; scale: "major"; minNotes: number; endOn?: string; monophonic: boolean }
   | { kind: "drumPattern"; voices: DrumVoice[]; tolerance: number }
-  | { kind: "matchTarget"; target: StarterNote[]; tolerance: { start: number; duration: number }; velocityRange: [number, number] };
+  | { kind: "matchTarget"; target: StarterNote[]; tolerance: { start: number; duration: number }; velocityRange: [number, number] }
+  | { kind: "rootNotes"; chords: RootChord[] };
+
+/** One bar of a "place the root" exercise: the chord's name, its root and its notes (to explain near-misses). */
+export interface RootChord {
+  name: string;
+  root: string;
+  notes: string[];
+}
 
 export interface Exercise {
   instrument: InstrumentKind;
@@ -80,4 +89,72 @@ export interface CheckResult {
   /** The first concrete problem in plain words, or a success message. */
   feedback: string;
   items: { label: string; ok: boolean }[];
+}
+
+// ---- Sub-lessons: the 7-stage format (hook, watch, try, practice, feedback, quick check, done) ----
+
+/** A note drawn by a guide (never part of the project). `root` marks the root note. */
+export interface GuideNoteSpec {
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  root?: boolean;
+  label?: string;
+}
+
+export interface WatchStep {
+  /** Shown (and optionally spoken) while this step plays. */
+  caption: string;
+  /** Everything visible on the roll during this step. */
+  notes: GuideNoteSpec[];
+  /** Pitches to sound when the step appears; defaults to all of `notes`. */
+  play?: number[];
+}
+
+export interface QuickCheckQuestion {
+  question: string;
+  options: string[];
+  correct: number;
+  explanation: string;
+}
+
+/** The three hint levels: a reminder, then highlighted rows, then the answer as ghost notes. */
+export interface HintPlan {
+  reminder: string;
+  rows: number[];
+  answer: GuideNoteSpec[];
+}
+
+export interface SubLesson {
+  /** Stable id used in logs and the completed event, e.g. "m3-root-note". */
+  id: string;
+  version: number;
+  moduleId: string;
+  title: string;
+  summary: string;
+  concept: Concept;
+  /** Clip length in bars for Try and Practice. */
+  bars: number;
+  hook: { headline: string; text: string[]; notes: GuideNoteSpec[] };
+  watch: { steps: WatchStep[] };
+  tryIt: {
+    instruction: string;
+    tips: string[];
+    /** Ghost notes to follow. */
+    ghost: GuideNoteSpec[];
+    /** Placed notes whose pitch class is not in this list turn red at once. */
+    allowedPitchClasses: string[];
+    check: CheckSpec;
+    tools: Tool[];
+  };
+  practice: {
+    task: string;
+    /** What to do in each bar, listed beside the roll. */
+    items: string[];
+    check: CheckSpec;
+    tools: Tool[];
+    hints: HintPlan;
+  };
+  quickCheck: QuickCheckQuestion;
+  recap: string[];
 }

@@ -23,6 +23,12 @@ export function clipEvents(clip: Clip, tempo: number): PreviewEvent[] {
     .map((n) => ({ time: n.startTick * secondsPerTick, duration: n.durationTicks * secondsPerTick, pitch: n.pitch, gain: n.velocity / 127 }));
 }
 
+/** Pure: guide notes (a demonstration or a hint) as timed events. */
+export function notesToEvents(notes: { pitch: number; startTick: number; durationTicks: number }[], tempo: number, velocity = 100): PreviewEvent[] {
+  const secondsPerTick = 60 / tempo / PPQ;
+  return notes.map((n) => ({ time: n.startTick * secondsPerTick, duration: n.durationTicks * secondsPerTick, pitch: n.pitch, gain: velocity / 127 }));
+}
+
 export const clipSeconds = (clip: Clip, tempo: number) => (clip.lengthTicks * 60) / tempo / PPQ;
 export const pitchToHz = (pitch: number) => 440 * Math.pow(2, (pitch - 69) / 12);
 
@@ -116,8 +122,8 @@ function drum(c: AudioContext, out: AudioNode, e: PreviewEvent, at: number) {
   }
 }
 
-/** Plays the clip once from the start. Must be called from a user gesture (a click) so the browser allows audio. */
-export function playClip(clip: Clip, instrument: InstrumentKind, tempo: number): Preview {
+/** Plays timed events once. Must be called from a user gesture (a click) so the browser allows audio. */
+export function playEvents(events: PreviewEvent[], instrument: InstrumentKind, totalSeconds: number): Preview {
   const c = context();
   void c.resume();
   const master = c.createDynamicsCompressor(); // keeps three-note chords from clipping
@@ -126,7 +132,7 @@ export function playClip(clip: Clip, instrument: InstrumentKind, tempo: number):
   master.connect(level).connect(c.destination);
 
   const start = c.currentTime + 0.06;
-  for (const e of clipEvents(clip, tempo)) (instrument === "drums" ? drum : pitched)(c, master, e, start + e.time);
+  for (const e of events) (instrument === "drums" ? drum : pitched)(c, master, e, start + e.time);
 
   let ended = false;
   const listeners: (() => void)[] = [];
@@ -139,7 +145,7 @@ export function playClip(clip: Clip, instrument: InstrumentKind, tempo: number):
   const timer = setTimeout(() => {
     master.disconnect();
     finish();
-  }, (clipSeconds(clip, tempo) + 0.5) * 1000);
+  }, (totalSeconds + 0.5) * 1000);
 
   return {
     stop() {
@@ -151,4 +157,9 @@ export function playClip(clip: Clip, instrument: InstrumentKind, tempo: number):
       else listeners.push(cb);
     },
   };
+}
+
+/** Plays the clip once from the start. */
+export function playClip(clip: Clip, instrument: InstrumentKind, tempo: number): Preview {
+  return playEvents(clipEvents(clip, tempo), instrument, clipSeconds(clip, tempo));
 }
