@@ -4,6 +4,7 @@ import { M0 } from "./m0";
 import { M1 } from "./m1";
 import { M2 } from "./m2";
 import { M3 } from "./m3";
+import { M4 } from "./m4";
 import { melody1 } from "./melody-1";
 import { midiEditing1 } from "./midi-editing-1";
 import { rhythm1 } from "./rhythm-1";
@@ -12,4 +13,4 @@ import { rhythm1 } from "./rhythm-1";
 export const LESSONS: Lesson[] = [chords1, melody1, rhythm1, midiEditing1];
 
 /** Every written sub-lesson of the learning path (modules and their order are in curriculum.ts). */
-export const SUB_LESSONS: SubLesson[] = [...M0, ...M1, ...M2, ...M3];
+export const SUB_LESSONS: SubLesson[] = [...M0, ...M1, ...M2, ...M3, ...M4];

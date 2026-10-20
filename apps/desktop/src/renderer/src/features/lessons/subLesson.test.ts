@@ -188,7 +188,7 @@ describe("curriculum", () => {
     for (const id of Object.keys(BUILT)) expect(ids).toContain(id);
     expect(isBuilt("m3-root-note")).toBe(true);
     expect(isBuilt("m3-intervals")).toBe(true);
-    expect(isBuilt("m4-other-classics")).toBe(false);
+    expect(isBuilt("m5-motif")).toBe(false);
   });
 
   it("does not reuse an id of the earlier lessons", () => {
@@ -198,7 +198,7 @@ describe("curriculum", () => {
 
   it("searches built and planned sub-lessons and the earlier lessons", () => {
     expect(searchPath("root")[0]).toMatchObject({ kind: "sub", id: "m3-root-note", built: true });
-    expect(searchPath("classics")[0]).toMatchObject({ kind: "sub", built: false });
+    expect(searchPath("motif")[0]).toMatchObject({ kind: "sub", built: false });
     expect(searchPath("pentatonic")[0]).toMatchObject({ kind: "sub", built: true });
     expect(searchPath("snare")[0]).toMatchObject({ kind: "earlier", id: "rhythm-1" });
     expect(searchPath("chords m3").length).toBeGreaterThan(1);

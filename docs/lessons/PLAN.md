@@ -407,3 +407,8 @@ major/minor third mix-up and wrong bottom notes. Unit tests 311/311; in the buil
 
 All seven M2 Scales and keys sub-lessons (`content/m2.ts`), beginner wording. Unit tests 368/368; in the built app every M2
 sub-lesson driven end to end, 36/36, no console errors. Remaining: M4 Chord progressions, M5 Melody.
+
+## M4 complete (2026-10-20)
+
+All six M4 Chord progressions sub-lessons (`content/m4.ts`), beginner wording. Unit tests 417/417; in the built app every M4
+sub-lesson driven end to end, 31/31, no console errors. Remaining: M5 Melody.

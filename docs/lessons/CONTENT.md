@@ -213,3 +213,17 @@ Full text in `content/m2.ts`.
 | Natural minor | A minor, A3 to A4 (white keys) | E minor (F#) | A minor shares C major's notes |
 | In key vs out of key | 6-note melody in C major; black keys turn red | Fix the 2 out-of-key notes in a given melody | F# is out of C major |
 | Pentatonic (optional) | C pentatonic up; F and B turn red | Own 8-note melody in C D E G A, ending on C | F and B are left out |
+
+# M4: Chord progressions (all six sub-lessons, version 1)
+
+Beginner wording: chords take turns, I is home, V is tense, Roman numerals are scale degrees (capitals major, small
+letters minor). Full text in `content/m4.ts`.
+
+| Sub-lesson | Try (ghost notes) | Practice (no ghosts) | Quick check |
+|---|---|---|---|
+| Chords in time | C on beat 1, G on beat 3 (two beats each) | Am, F, C, G, two beats each | The old chord stops when the new one starts |
+| Home and tension | Answer G (tension) with C (home) | Finish C, F, G with the home chord | C is home in C major |
+| I–V–vi–IV | C, G, Am, F | The same in G major: G, D, Em, C | I–V–vi–IV in C is C, G, Am, F |
+| Other classics | I–IV–V–I: C, F, G, C | vi–IV–I–V worked out from the numbers: Am, F, C, G | I–IV–V–I in C is C, F, G, C |
+| Your own progression | Choose F and G for the middle of C _ _ C | Own 4 chords from C major: start and end on C, no repeats in a row (any valid answer passes) | Ending on I sounds finished |
+| Rhythm and a bass note | Chop a long C chord into hits on beats 1 and 3 | Add low root bass notes (C, then G) under given chord hits | The bass plays the root |
