@@ -4,7 +4,7 @@ import { LESSONS } from "./content";
 import { BUILT, MODULES, nextBuilt, searchPath, type PathHit } from "./curriculum";
 import { lessonEvents } from "./events";
 import { CollectionPage } from "./CollectionPage";
-import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
+import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
 import { overallProgress } from "./learnModel";
 import { LearningPath } from "./LearningPath";
 import { LessonPage } from "./LessonPage";
@@ -15,6 +15,10 @@ import { browserStore, readJson, writeJson } from "./storage";
 import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
 import { studyLog } from "./studyLog";
+import { KickPath } from "./studio/KickPath";
+import { STUDIO_LESSONS, nextStudioLesson, studioModuleOf } from "./studio/kickCurriculum";
+import { StudioLessonPage } from "./studio/StudioLessonPage";
+import { studioState } from "./studio/studioState";
 import { SubLessonPage } from "./SubLessonPage";
 
 if (import.meta.env.DEV) lessonEvents.onLessonCompleted((e) => console.info("[lessons] lesson-completed", e));
@@ -38,7 +42,8 @@ function restoredView(): View {
   if (v.kind === "sub" && BUILT[v.id]) return v;
   if (v.kind === "earlier" && LESSONS.some((l) => l.id === v.id)) return v;
   if (v.kind === "collection" && mainLesson(v.id)) return v;
-  if (v.kind === "path") return v;
+  if (v.kind === "path" || v.kind === "kick") return v;
+  if (v.kind === "studio" && STUDIO_LESSONS[v.id]) return v;
   return { kind: "lessons" };
 }
 
@@ -152,12 +157,19 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
     show({ kind: "sub", id });
   };
   const openHit = (h: PathHit) => (h.kind === "sub" ? openSub(h.id) : show({ kind: "earlier", id: h.id }));
-  /** Piano opens the existing L1-L6 learning path; the others open their (not yet available) collection page. */
-  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : { kind: "collection", id });
+  /** Piano opens the L1-L6 learning path, Kick Drums its own course; the others their (not yet available) collection page. */
+  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : id === "kick" ? { kind: "kick" } : { kind: "collection", id });
+  /** Opens a Kick Drums lesson; a finished one starts again from Learn. */
+  const openStudio = (id: string) => {
+    studioState.replay(id);
+    show({ kind: "studio", id });
+  };
   const openRelated = (r: RelatedLesson) => (r.kind === "sub" ? openSub(r.id) : show({ kind: "earlier", id: r.id }));
   const participant = studyLog.session()?.participant ?? null;
 
   const sub = view.kind === "sub" ? BUILT[view.id] : undefined;
+  const studio = view.kind === "studio" ? STUDIO_LESSONS[view.id] : undefined;
+  const studioModule = studio ? studioModuleOf(studio.id) : undefined;
   const earlierIndex = view.kind === "earlier" ? LESSONS.findIndex((l) => l.id === view.id) : -1;
   const earlier = earlierIndex >= 0 ? LESSONS[earlierIndex] : undefined;
   const progress = overallProgress(LESSONS, lessonEvents.isCompleted);
@@ -238,6 +250,54 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               <span className="text-slate-200">Piano</span>
             </nav>
             <LearningPath onOpenSub={openSub} onOpenEarlier={(id) => show({ kind: "earlier", id })} />
+          </>
+        )}
+
+        {view.kind === "kick" && (
+          <>
+            <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-400">
+              <button onClick={() => show({ kind: "lessons" })} className="flex items-center gap-2 hover:text-slate-200" data-testid="back-to-lessons">
+                <ArrowLeft size={16} /> All lessons
+              </button>
+              <span className="text-slate-600">/</span>
+              <span className="text-slate-200">Kick Drums</span>
+            </nav>
+            <KickPath onOpen={openStudio} />
+          </>
+        )}
+
+        {studio && (
+          <>
+            <button onClick={() => show({ kind: "kick" })} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-kick">
+              <ArrowLeft size={16} /> Back to Kick Drums
+            </button>
+            <div className="flex flex-wrap items-center gap-5">
+              <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500 text-white shadow-lg shadow-violet-500/25">
+                <DrumIcon size={30} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold tracking-widest text-violet-300 uppercase">
+                  {studioModule?.code} · {studioModule?.title} · {studio.id}
+                </div>
+                <h1 className="mt-0.5 text-3xl font-semibold text-white" data-testid="learn-title">
+                  {studio.title}
+                </h1>
+                <p className="mt-1 text-[15px] text-slate-400">{studio.summary}</p>
+              </div>
+            </div>
+            <StudioLessonPage
+              key={studio.id}
+              lesson={studio}
+              project={project}
+              moduleCode={studioModule?.code ?? ""}
+              onBackToPath={() => show({ kind: "kick" })}
+              next={(() => {
+                const n = nextStudioLesson(studio.id);
+                return n ? { title: n.title, open: () => openStudio(n.id) } : null;
+              })()}
+              voice={voice}
+              canSpeak={canSpeak}
+            />
           </>
         )}
 

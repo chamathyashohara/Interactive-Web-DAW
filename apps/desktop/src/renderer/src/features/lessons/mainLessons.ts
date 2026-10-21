@@ -1,7 +1,7 @@
 import { MODULES } from "./curriculum";
 
 /**
- * The four main lessons on the Lessons page. Only Piano has content: it opens the existing L1-L6 learning path. The
+ * The four main lessons on the Lessons page. Piano opens the L1-L6 learning path and Kick Drums its own course. The
  * others are ready to be connected to their own lesson pages later; until then they open a clear "not available yet"
  * page that links to the related lessons that do exist.
  */
@@ -44,11 +44,11 @@ export const MAIN_LESSONS: MainLesson[] = [
   {
     id: "kick",
     title: "Kick Drums",
-    description: "Learn how to create, program and shape powerful kick drums for your tracks.",
-    topics: ["Kick drum basics", "Sound design", "Punch and attack", "Layering", "EQ and compression", "Build your own kick"],
+    description: "Find drum sounds, build beats, and use them to shape a song: breakdown, build-up and drop.",
+    topics: ["Meet the sound browser", "Make a simple beat", "Snap, grid and loops", "Breakdown", "Build-up tension", "The drop"],
     accent: "purple",
-    available: false,
-    related: [{ kind: "earlier", id: "rhythm-1", title: "Rhythm", why: "Program a basic beat with a kick on every beat." }],
+    available: true,
+    related: [],
   },
   {
     id: "mixing",

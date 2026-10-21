@@ -271,3 +271,20 @@ Create your sound."
 | Kick Drums | Learn how to create, program and shape powerful kick drums for your tracks. | Kick drum basics, Sound design, Punch and attack, Layering, EQ and compression, Build your own kick | Coming soon (related: Rhythm) |
 | Mixing | Get your tracks sounding professional. Learn balance, EQ, compression and more. | Gain staging, EQ, Compression, Reverb and delay, Automation, Final mix | Coming soon |
 | DAW Features | Master the tools and workflow of your DAW. Work faster, stay organised and be more creative. | Navigation and workspace, Recording, Editing, Plug-ins and instruments, Automation, Project management | Coming soon (related: L1 What you see, MIDI editing) |
+
+## Kick Drums course (six stages; practical work in the lesson's own workspace)
+
+| Id | Lesson | Try (guided, target shown) | Practice (3 hints) | Practice check |
+| --- | --- | --- | --- | --- |
+| M12.1 | Meet the sound browser | Listen to a kick | Listen to a kick, a snare and a closed hat | Sounds heard include Kick, Snare, Closed Hat |
+| M12.2 | Drag a sound onto the arrangement | Drag any sound onto the arrangement | Drag a kick onto bar 1 | A Kick track with a clip in bar 1 |
+| M12.3 | Make a simple beat | Drag a kick onto bar 1 | One-bar beat: kick, snare, hat | Kick, Snare and Hat tracks with clips in bar 1 |
+| M12.4 | Snap and the grid | Grid 1/4, snare on beat 3 | Snare on beat 2 with the 1/4 grid | A Snare clip starting on beat 2 |
+| M12.5 | More layers: loops | Drag a drum loop onto bar 1 | Add a drum loop and a chord loop | At least two Loop tracks |
+| M12.6 | Fit to tempo | Set 100 BPM (a 90 BPM loop is there) | 100 BPM and the loop fits | Tempo 100 and the loop's Fit on |
+| M13.1 | The energy curve | Label the drop | Label intro, build-up, drop, breakdown | All four labels right |
+| M13.2 | The breakdown | Delete the drums in bars 9-16 | Drums and bass out of bars 9-16 | No drums or bass in bars 9-16; chords still play |
+| M13.3 | Build-up tension tools | Drop a riser on bar 15 | Snare roll in bars 15-16 and a riser under it | More, louder snare hits in bar 16 than 15, and a Riser over bars 15-16 |
+| M13.4 | The pause before the drop | Delete the snares on beat 4 of bar 16 | Every track silent on beat 4 of bar 16 | Nothing sounds there; the roll is still there |
+| M13.5 | The drop | An impact exactly on bar 17 | Impact, kick and bass back on bar 17 | Impact, a kick and a bass clip starting on bar 17 |
+| M13.6 | Final exercise | Delete the drums in bars 1-8 | 8 bars breakdown, 8 bars build-up, drop on 17 | No drums in 1-8; roll never thins out in 9-16 and ends denser; a riser ends on bar 17; kick and bass in bar 17 |

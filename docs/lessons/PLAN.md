@@ -482,3 +482,47 @@ a new run-through from Hook (`lessonState.replaySub`: quick check unanswered, hi
 starting notes), and a finished sub-lesson keeps every stage open with Next always available. It stays Done on the path.
 Verified: 15/15 replay checks (including after an app restart and with no saved progress), 27/27 page checks, 196/196
 regression.
+
+## Merge of develop (Chamath's M4: piano roll UI, unlocks, sample library) (2026-10-21)
+
+`origin/develop` (e2fbdb0) merged into feature/learning. Conflicts:
+- `App.tsx`: kept Chamath's toolbar; the Lessons button sits before Sounds.
+- `PianoRoll.tsx`: kept Chamath's UI (PianoKeys, window buttons, key help, red out-of-key notes, unlock locks) and
+  re-applied the lesson `guide` options. Additive changes: the window-button props are optional (the lessons' roll has
+  none), the lesson roll is never locked by beginner-mode unlocks (it is where those features are learned; the lesson
+  limits its own tools), a guide note colour wins over the red out-of-key colour, and `PianoKeys` gained `activeKeys`.
+- Rebuilt the engine (sample playback). Verified: all unit tests (shared, sounds, desktop), Chamath's pianoroll-ui
+  16/16, m4 50/50 and samples 73/73, the lesson regression 196/196.
+
+## Kick Drums course: M12 and M13 in the Piano lesson format (2026-10-21)
+
+The Kick Drums card opens its own course (`studio/`): **K1 Sounds and beats** (M12.1-M12.6) and **K2 Build-up and
+drop** (M13.1-M13.6), ids as in CURRICULUM.md. Each lesson uses the same template as the Piano sub-lessons:
+
+- Six stages (Hook, Watch, Try, Practice, Quick check, Done), Lesson/Notes tabs, the progress tracker, Need help with
+  Replay, voice guidance; stages unlock in order and a finished lesson can be replayed (`StudioLessonPage`).
+- All practical work happens inside the lesson, in the right-hand workspace (`StudioPane`), never in the main DAW: a
+  sound browser (chips, search, click or arrow keys to listen, drag to use) and an arrangement of the lesson's own tracks
+  (drop sounds, move clips with snap, Duplicate, Delete, mute, solo, Fit, BPM, grid 1 bar-1/32, playhead, Play). Lessons
+  that edit notes (M13.3, M13.4, M13.6) open the selected clip in the real piano roll below it. It edits the real
+  project through the shared ops, so Undo and the engine work as everywhere else.
+- Hook: explanation, Hear it, Play example (the sounds, lit in the browser). Watch: captions step by step, lighting
+  chips, sounds, bars and dashed targets, playing the example song's bars. Try: a small guided step with the target
+  shown. Practice: the full task from the table, three hints (the third shows the target).
+- Each Try/Practice starts from its own setup the first time it opens: a clear arrangement, a 90 BPM loop (M12.6) or the
+  example song (three lesson tracks over 24 bars in 8-bar clips; `studio/exampleSong.ts`). Start over sets it up again.
+- Only lesson tracks (`lesson-k-*`, `lesson-song-*`) are shown and checked; the learner's own tracks are never touched.
+- **Every lesson has its own workspace** (`studio/space.ts`): opening a lesson saves the previous lesson's tracks (with
+  its stage setup and listening) and takes them out of the song, then brings back the tracks this lesson had last time.
+  Only the open lesson's tracks are in the project, because a song holds at most 16 tracks. Saved in local storage, so
+  it survives restarts.
+- Checks (`studio/checks.ts`, pure, unit tested) read the project and the library categories; every message names the
+  track and bar. Passing Practice records the lesson (Done ticks, `lesson-completed`) and calls
+  `window.daw.completeLesson("M12.x")` for the DAW's progress and unlocks.
+- The lesson workspace is not locked by beginner mode (like the lessons' piano roll).
+
+Verified: 27 unit tests for content, Try/Practice checks, setups, the lesson-only view and workspace switching; 36/36
+in the built app (including M12.2 -> M12.4 -> M12.2 -> M12.4 keeping each lesson's own tracks)
+(template parts, no redirect, Hook/Watch, M12.1 with clicks in the lesson's sound list, M12.2 real drag-and-drop and
+dragging a clip, M12.4 grid 1/4 vs 1 bar, M13.2 example song, Watch, deleting clips, M13.3 riser drop and the notes
+editor, DAW `completedLessons`).

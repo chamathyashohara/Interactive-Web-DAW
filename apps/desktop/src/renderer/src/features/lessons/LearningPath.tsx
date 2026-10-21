@@ -2,8 +2,9 @@ import { EARLIER_LESSONS, MODULES, isBuilt, moduleProgress, type PathModule } fr
 import { lessonEvents } from "./events";
 import { CheckIcon, ConceptIcon } from "./Icons";
 
-function ModuleCard({ m, onOpen }: { m: PathModule; onOpen: (subId: string) => void }) {
-  const p = moduleProgress(m, lessonEvents.isCompleted);
+/** One module of a course; `ready` says which of its lessons can be opened (default: the Piano sub-lessons). */
+export function ModuleCard({ m, onOpen, ready = isBuilt }: { m: PathModule; onOpen: (subId: string) => void; ready?: (id: string) => boolean }) {
+  const p = moduleProgress(m, lessonEvents.isCompleted, ready);
   return (
     <section className="flex flex-col rounded-2xl border border-white/10 bg-[#11141c] p-5" data-testid={`module-${m.id}`}>
       <div className="flex items-center gap-3">
@@ -20,7 +21,7 @@ function ModuleCard({ m, onOpen }: { m: PathModule; onOpen: (subId: string) => v
       </div>
       <ul className="mt-4 flex flex-col gap-1">
         {m.items.map((it, i) => {
-          const built = isBuilt(it.id);
+          const built = ready(it.id);
           const done = lessonEvents.isCompleted(it.id);
           return (
             <li key={it.id}>

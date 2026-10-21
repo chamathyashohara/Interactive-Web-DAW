@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { MODULES, moduleProgress } from "./curriculum";
 import { lessonEvents } from "./events";
 import { ArrowRight, CheckIcon, DrumIcon, FadersIcon, GridIcon, PianoKeysIcon } from "./Icons";
+import { KICK_PATH } from "./studio/KickPath";
 import { MAIN_LESSONS, type Accent, type MainLesson, type MainLessonId } from "./mainLessons";
 
 /** Colour sets for the four cards (full class names, so Tailwind keeps them). */
@@ -191,6 +192,13 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
     },
     { done: 0, total: 0 },
   );
+  const kick = KICK_PATH.reduce(
+    (acc, m) => {
+      const p = moduleProgress(m, lessonEvents.isCompleted, () => true);
+      return { done: acc.done + p.done, total: acc.total + p.built };
+    },
+    { done: 0, total: 0 },
+  );
   return (
     <div className="relative" data-testid="lessons-home">
       <WaveBackdrop />
@@ -204,7 +212,7 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
       </div>
       <div className="relative mx-auto mt-8 grid max-w-5xl grid-cols-1 gap-6 md:grid-cols-2" data-testid="main-lessons-grid">
         {MAIN_LESSONS.map((l) => (
-          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : undefined} />
+          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : l.id === "kick" ? kick : undefined} />
         ))}
       </div>
       <div className="relative mt-8 flex items-center justify-center gap-4 text-sm text-slate-400">

@@ -141,8 +141,8 @@ export function searchPath(query: string): PathHit[] {
   return hits.sort((a, b) => Number(b.built) - Number(a.built));
 }
 
-export function moduleProgress(m: PathModule, isDone: (id: string) => boolean) {
-  const built = m.items.filter((i) => isBuilt(i.id));
+export function moduleProgress(m: PathModule, isDone: (id: string) => boolean, ready: (id: string) => boolean = isBuilt) {
+  const built = m.items.filter((i) => ready(i.id));
   return { built: built.length, done: built.filter((i) => isDone(i.id)).length, total: m.items.length };
 }
 

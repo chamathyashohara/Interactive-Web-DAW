@@ -9,8 +9,18 @@ import type { StarterNote } from "./types";
  * notes to bring back when the clip has been used by something else since, and the learner's position.
  */
 
-/** "lessons" is the main Lessons page; "path" is the Piano learning path (L1-L6); "collection" a main lesson not built yet. */
-export type LearnViewState = { kind: "lessons" } | { kind: "path" } | { kind: "collection"; id: string } | { kind: "sub"; id: string } | { kind: "earlier"; id: string };
+/**
+ * "lessons" is the main Lessons page; "path" is the Piano learning path (L1-L6); "kick" the Kick Drums course and "studio"
+ * one of its lessons; "collection" a main lesson not built yet.
+ */
+export type LearnViewState =
+  | { kind: "lessons" }
+  | { kind: "path" }
+  | { kind: "kick" }
+  | { kind: "collection"; id: string }
+  | { kind: "sub"; id: string }
+  | { kind: "earlier"; id: string }
+  | { kind: "studio"; id: string };
 export type WorkStage = "try" | "practice";
 
 export interface SubProgress {
