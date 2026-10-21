@@ -53,6 +53,9 @@ const peakIn = (wav, from, to) => { let m = 0; for (let i = from; i < to; i++) m
 try {
   await until(async () => (await c.evalJs(`document.querySelector('[data-testid=engine-chip]')?.textContent ?? ''`)).includes("Engine connected"), 15000);
 
+  // The arrangement now snaps to the toolbar grid; these checks are about whole bars, so use the "1 bar" grid.
+  await c.evalJs(`(() => { const el = document.querySelector('[aria-label="Grid size"]'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(el, '3840'); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+
   // ---------- defaults ----------
   const p0 = await project();
   const c0 = Object.values(p0.tracks["track-1"].clips);

@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import { MAX_BPM, MIN_BPM, sortedClips } from "@daw/shared";
+import { ALL_KEYS, MAX_BPM, MIN_BPM, keyLabel, sortedClips, type FeatureId } from "@daw/shared";
 import { Arrangement } from "./components/Arrangement";
 import { Mixer } from "./components/Mixer";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H } from "./pianoRoll/geometry";
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
+import { SamplesPanel } from "./samples/SamplesPanel";
+import { WindowButtons } from "./pianoRoll/WindowButtons";
 import { engineStateStore, exportStore, projectStore, statusStore, useStore } from "./store";
+import { FeaturesPanel, UnlockToast } from "./unlock/FeaturesPanel";
+import { LockIcon } from "./unlock/LockIcon";
+import { useUnlock } from "./unlock/useUnlock";
 
-const TOOLS: { id: Tool; label: string; key: string; title: string }[] = [
-  { id: "draw", label: "Draw", key: "D", title: "Draw notes (D): click, or click and drag to set length" },
-  { id: "paint", label: "Paint", key: "P", title: "Paint a row of notes by dragging (P)" },
-  { id: "select", label: "Select", key: "S", title: "Select, move, resize; drag on empty space to box-select (S)" },
-  { id: "delete", label: "Delete", key: "E", title: "Delete notes by clicking or dragging over them (E). Right-click also deletes." },
-  { id: "mute", label: "Mute", key: "M", title: "Click a note to mute or unmute it (M)" },
-  { id: "slice", label: "Slice", key: "C", title: "Click a note to cut it in two at the snapped position (C)" },
+const TOOLS: { id: Tool; label: string; key: string; title: string; feature: FeatureId }[] = [
+  { id: "draw", label: "Draw", key: "D", title: "Draw notes (D): click, or click and drag to set length", feature: "tool.draw" },
+  { id: "paint", label: "Paint", key: "P", title: "Paint a row of notes by dragging (P)", feature: "tool.paint" },
+  { id: "select", label: "Select", key: "S", title: "Select, move, resize; drag on empty space to box-select (S)", feature: "tool.select" },
+  { id: "delete", label: "Delete", key: "E", title: "Delete notes by clicking or dragging over them (E). Right-click also deletes.", feature: "tool.delete" },
+  { id: "mute", label: "Mute", key: "M", title: "Click a note to mute or unmute it (M)", feature: "tool.mute" },
+  { id: "slice", label: "Slice", key: "C", title: "Click a note to cut it in two at the snapped position (C)", feature: "tool.slice" },
 ];
+
+const TOOL_FEATURE = Object.fromEntries(TOOLS.map((t) => [t.id, t.feature])) as Record<Tool, FeatureId>;
 
 const btn = "rounded-md px-2.5 py-1 text-xs font-medium transition-colors";
 const idle = "bg-white/5 text-slate-300 hover:bg-white/10";
@@ -128,13 +135,49 @@ export function App() {
   const status = useStore(statusStore);
   const [tool, setTool] = useState<Tool>("draw");
   const [snap, setSnap] = useState(true);
-  const [gridTicks, setGridTicks] = useState<number>(GRID_OPTIONS[2].ticks);
+  const [gridTicks, setGridTicks] = useState<number>(GRID_OPTIONS.find((g) => g.label === "1/16")!.ticks);
   const [pxPerBeat, setPxPerBeat] = useState(120);
   const [rowH, setRowH] = useState(DEFAULT_ROW_H);
   const [mixerOpen, setMixerOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [focus, setFocus] = useState<"arrangement" | "pianoroll">("pianoroll");
+  const [pianoOpen, setPianoOpen] = useState(true);
+  const [keyHelp, setKeyHelp] = useState(true);
+  const [featuresOpen, setFeaturesOpen] = useState(false);
+  const [samplesOpen, setSamplesOpen] = useState(() => {
+    try {
+      return localStorage.getItem("daw.samplesOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSamples = (open: boolean) => {
+    setSamplesOpen(open);
+    try {
+      localStorage.setItem("daw.samplesOpen", open ? "1" : "0");
+    } catch {
+      /* private window: the panel just does not remember its state */
+    }
+  };
+  const unlock = useUnlock();
+  const [pianoMax, setPianoMax] = useState(false);
+  // A locked tool cannot be chosen, by button or by shortcut key.
+  const chooseTool = (t: Tool) => {
+    if (unlock.can(TOOL_FEATURE[t])) setTool(t);
+  };
+  const toolLocked = !unlock.can(TOOL_FEATURE[tool]);
+  const mixerLocked = !unlock.can("mixer.panel");
+  const samplesLocked = !unlock.can("browser.samples");
+  useEffect(() => {
+    if (toolLocked) setTool("draw"); // beginner mode switched on while a now-locked tool was active
+  }, [toolLocked]);
+  useEffect(() => {
+    if (mixerLocked) setMixerOpen(false);
+  }, [mixerLocked]);
+  useEffect(() => {
+    if (samplesLocked) setSamplesOpen(false);
+  }, [samplesLocked]);
   const playing = useRef(false);
   playing.current = status?.playing ?? false;
 
@@ -149,6 +192,8 @@ export function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         void window.daw.redo();
+      } else if (e.key === "Escape" && pianoMax && !typing) {
+        setPianoMax(false);
       } else if (e.code === "Space" && !typing) {
         e.preventDefault();
         if (playing.current) window.daw.stop();
@@ -157,7 +202,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [pianoMax]);
 
   if (!project) return null;
   // The selected track may have just been deleted (or not exist yet): fall back to the first track.
@@ -193,24 +238,65 @@ export function App() {
 
         <div className="mx-1 h-5 w-px bg-white/10" />
         <div className="flex gap-1" role="toolbar" aria-label="Tools">
-          {TOOLS.map((t) => (
-            <button key={t.id} className={`${btn} ${tool === t.id ? active : idle}`} onClick={() => setTool(t.id)} title={t.title} aria-pressed={tool === t.id} data-tool={t.id}>
-              {t.label} <span className="ml-0.5 text-[9px] text-slate-500">{t.key}</span>
-            </button>
-          ))}
+          {TOOLS.map((t) => {
+            const locked = !unlock.can(t.feature);
+            return (
+              <button
+                key={t.id}
+                className={`${btn} ${tool === t.id ? active : idle} ${locked ? "cursor-not-allowed opacity-50" : ""}`}
+                disabled={locked}
+                onClick={() => chooseTool(t.id)}
+                title={locked ? unlock.reason(t.feature)! : t.title}
+                aria-pressed={tool === t.id}
+                data-tool={t.id}
+                data-locked={locked ? "true" : undefined}
+              >
+                {t.label} {locked ? <LockIcon className="ml-0.5" /> : <span className="ml-0.5 text-[9px] text-slate-500">{t.key}</span>}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mx-1 h-5 w-px bg-white/10" />
-        <button className={`${btn} ${snap ? active : idle}`} onClick={() => setSnap(!snap)} title="Snap to grid" aria-pressed={snap}>
-          ⌖ Snap
+        <button
+          className={`${btn} ${snap ? active : idle} ${!unlock.can("snap.grid") ? "cursor-not-allowed opacity-50" : ""}`}
+          disabled={!unlock.can("snap.grid")}
+          onClick={() => setSnap(!snap)}
+          title={unlock.reason("snap.grid") ?? "Snap to grid"}
+          aria-pressed={snap}
+          data-testid="snap-toggle"
+        >
+          ⌖ Snap {!unlock.can("snap.grid") && <LockIcon />}
         </button>
-        <select value={gridTicks} onChange={(e) => setGridTicks(Number(e.target.value))} className="rounded-md bg-white/5 px-2 py-1 text-xs text-slate-200 outline-none" aria-label="Grid size">
+        <select value={gridTicks} disabled={!unlock.can("snap.grid")} title={unlock.reason("snap.grid") ?? undefined} onChange={(e) => setGridTicks(Number(e.target.value))} className="rounded-md bg-white/5 px-2 py-1 text-xs text-slate-200 outline-none disabled:opacity-50" aria-label="Grid size">
           {GRID_OPTIONS.map((g) => (
             <option key={g.label} value={g.ticks} className="bg-[#12151c]">
               {g.label}
             </option>
           ))}
         </select>
+
+        <label className="flex items-center gap-1.5 text-xs text-slate-400" title={unlock.reason("key.help") ?? "The key of your song: the piano roll highlights its notes and marks notes outside it in red"}>
+          Key {!unlock.can("key.help") && <LockIcon />}
+          <select
+            value={project.key ? `${project.key.tonic}-${project.key.mode}` : "none"}
+            disabled={!unlock.can("key.help")}
+            onChange={(e) => {
+              const [tonic, mode] = e.target.value.split("-");
+              void window.daw.dispatch({ type: "setKey", key: e.target.value === "none" ? null : { tonic: Number(tonic), mode: mode as "major" | "minor" } });
+            }}
+            className="rounded-md bg-white/5 px-2 py-1 text-xs text-slate-200 outline-none disabled:opacity-50"
+            aria-label="Key"
+            data-testid="key-select"
+          >
+            <option value="none" className="bg-[#12151c]">No key</option>
+            {ALL_KEYS.map((k) => (
+              <option key={`${k.tonic}-${k.mode}`} value={`${k.tonic}-${k.mode}`} className="bg-[#12151c]">
+                {keyLabel(k)}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="flex items-center gap-1.5 text-xs text-slate-400">
           Zoom H
@@ -222,11 +308,40 @@ export function App() {
         </label>
 
         <div className="ml-auto flex gap-1">
-          <button className={`${btn} ${idle}`} onClick={() => void exportWav()} title="Render the whole song to a WAV file" data-testid="export-wav">
-            ⤓ Export WAV
+          <button
+            className={`${btn} ${idle} ${!unlock.can("export.wav") ? "cursor-not-allowed opacity-50" : ""}`}
+            disabled={!unlock.can("export.wav")}
+            onClick={() => void exportWav()}
+            title={unlock.reason("export.wav") ?? "Render the whole song to a WAV file"}
+            data-testid="export-wav"
+          >
+            ⤓ Export WAV {!unlock.can("export.wav") && <LockIcon />}
           </button>
-          <button className={`${btn} ${mixerOpen ? active : idle}`} onClick={() => setMixerOpen(!mixerOpen)} aria-pressed={mixerOpen} title="Show or hide the mixer">
-            Mixer
+          <button
+            className={`${btn} ${samplesOpen && !samplesLocked ? active : idle} ${samplesLocked ? "cursor-not-allowed opacity-50" : ""}`}
+            disabled={samplesLocked}
+            onClick={() => toggleSamples(!samplesOpen)}
+            aria-pressed={samplesOpen && !samplesLocked}
+            title={unlock.reason("browser.samples") ?? "Show or hide the sound browser: Starter sounds and your own sample packs"}
+            data-testid="samples-toggle"
+          >
+            Sounds {samplesLocked && <LockIcon />}
+          </button>
+          <button className={`${btn} ${pianoOpen ? active : idle}`} onClick={() => (setPianoOpen(!pianoOpen), setPianoMax(false))} aria-pressed={pianoOpen} title="Show or hide the piano roll" data-testid="piano-toggle">
+            Piano roll
+          </button>
+          <button
+            className={`${btn} ${mixerOpen ? active : idle} ${mixerLocked ? "cursor-not-allowed opacity-50" : ""}`}
+            disabled={mixerLocked}
+            onClick={() => setMixerOpen(!mixerOpen)}
+            aria-pressed={mixerOpen}
+            title={unlock.reason("mixer.panel") ?? "Show or hide the mixer"}
+            data-testid="mixer-toggle"
+          >
+            Mixer {mixerLocked && <LockIcon />}
+          </button>
+          <button className={`${btn} ${featuresOpen ? active : idle}`} onClick={() => setFeaturesOpen(!featuresOpen)} aria-pressed={featuresOpen} title="See which features are unlocked" data-testid="features-toggle">
+            Features
           </button>
           <button className={`${btn} ${idle} disabled:opacity-40`} disabled={!canUndo} onClick={() => void window.daw.undo()} title="Undo (Ctrl+Z)">
             ↶ Undo
@@ -237,22 +352,70 @@ export function App() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div onPointerDownCapture={() => setFocus("arrangement")}>
-          <Arrangement project={project} selectedTrackId={track.id} selectedClipId={clip?.id ?? null} snap={snap} keysEnabled={focus === "arrangement"} height={arrHeight} onSelect={selectTrackClip} />
+      <div className="flex min-h-0 flex-1">
+      {samplesOpen && !samplesLocked && <SamplesPanel onClose={() => toggleSamples(false)} />}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* Arrangement: hidden (but kept alive) while the piano roll is maximized; takes all the room when the roll is closed. */}
+        <div
+          className="min-h-0 flex-col"
+          style={{ display: pianoMax && pianoOpen ? "none" : "flex", flex: pianoOpen ? "0 0 auto" : "1 1 0%" }}
+          onPointerDownCapture={() => setFocus("arrangement")}
+        >
+          <Arrangement
+            project={project}
+            selectedTrackId={track.id}
+            selectedClipId={clip?.id ?? null}
+            snap={snap}
+            gridTicks={gridTicks}
+            keysEnabled={focus === "arrangement"}
+            height={pianoOpen ? arrHeight : "fill"}
+            onSelect={selectTrackClip}
+            onOpen={(trackId, clipId) => {
+              selectTrackClip(trackId, clipId);
+              setPianoOpen(true);
+              setFocus("pianoroll");
+            }}
+          />
         </div>
-        <div className="flex min-h-0 flex-1 flex-col" onPointerDownCapture={() => setFocus("pianoroll")}>
-          {clip ? (
-            <PianoRoll key={`${track.id}/${clip.id}`} track={track} clip={clip} keysEnabled={focus === "pianoroll"} tool={tool} snap={snap} gridTicks={gridTicks} pxPerBeat={pxPerBeat} rowH={rowH} onTool={setTool} />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-slate-500" data-testid="no-clip">
-              This track has no clips. Double-click its lane in the arrangement, or press “+ Clip”, to add one.
-            </div>
-          )}
-        </div>
+        {pianoOpen && (
+          <div className="flex min-h-0 flex-1 flex-col" onPointerDownCapture={() => setFocus("pianoroll")} data-testid="piano-panel" data-maximized={pianoMax ? "true" : undefined}>
+            {clip ? (
+              <PianoRoll
+                key={`${track.id}/${clip.id}`}
+                track={track}
+                clip={clip}
+                keysEnabled={focus === "pianoroll"}
+                tool={tool}
+                snap={snap}
+                gridTicks={gridTicks}
+                pxPerBeat={pxPerBeat}
+                rowH={rowH}
+                onTool={chooseTool}
+                musicKey={track.instrument === "sample" ? null : project.key}
+                keyHelp={keyHelp}
+                onToggleKeyHelp={() => setKeyHelp(!keyHelp)}
+                maximized={pianoMax}
+                onToggleMaximize={() => setPianoMax(!pianoMax)}
+                onClose={() => (setPianoOpen(false), setPianoMax(false), setFocus("arrangement"))}
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center justify-end border-b border-white/10 bg-[#12151c] px-3" style={{ height: 30 }}>
+                  <WindowButtons maximized={pianoMax} onToggleMaximize={() => setPianoMax(!pianoMax)} onClose={() => (setPianoOpen(false), setPianoMax(false), setFocus("arrangement"))} />
+                </div>
+                <div className="flex flex-1 items-center justify-center text-sm text-slate-500" data-testid="no-clip">
+                  This track has no clips. Double-click its lane in the arrangement, or press "+ Clip", to add one.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       </div>
       {mixerOpen && <Mixer project={project} selectedId={track.id} onSelect={setSelectedTrackId} />}
       <StatusBar />
+      {featuresOpen && <FeaturesPanel onClose={() => setFeaturesOpen(false)} />}
+      <UnlockToast />
     </div>
   );
 }

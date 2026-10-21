@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { createTrack, MAX_TRACKS, TRACK_COLORS, type InstrumentKind, type Project, type TrackFields } from "@daw/shared";
+import { createTrack, MAX_BPM, MAX_TRACKS, MIN_BPM, TRACK_COLORS, type InstrumentKind, type Project, type SampleRef, type TrackFields } from "@daw/shared";
+import { useUnlock } from "../unlock/useUnlock";
 import { Meter } from "./Meter";
 
 export const TRACK_ROW_H = 60;
 export const HEADER_W = 272;
 
 const update = (trackId: string, changes: Partial<TrackFields>, group?: string) => void window.daw.dispatch({ type: "updateTrack", trackId, changes }, group);
-const small = "flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold transition-colors";
+const small = "flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40";
 
 function NameField({ trackId, name }: { trackId: string; name: string }) {
   const [editing, setEditing] = useState(false);
@@ -54,9 +55,49 @@ interface HeaderProps {
   onSelect: () => void;
 }
 
+/** Loop tracks: the loop's own tempo and whether it follows the project tempo (time-stretched, pitch unchanged). */
+function SampleFit({ trackId, sample, projectTempo }: { trackId: string; sample: SampleRef; projectTempo: number }) {
+  const [draft, setDraft] = useState(sample.bpm ? String(sample.bpm) : "");
+  useEffect(() => setDraft(sample.bpm ? String(sample.bpm) : ""), [sample.bpm]);
+  const commit = () => {
+    const v = Math.round(Number(draft) * 100) / 100;
+    if (draft === "" && sample.bpm) void window.daw.dispatch({ type: "updateSample", trackId, changes: { bpm: null, fit: false } });
+    else if (Number.isFinite(v) && v >= MIN_BPM && v <= MAX_BPM && v !== sample.bpm) void window.daw.dispatch({ type: "updateSample", trackId, changes: { bpm: v, fit: sample.bpm ? sample.fit : true } }, `fit-${trackId}`);
+    else setDraft(sample.bpm ? String(sample.bpm) : "");
+  };
+  const fitting = !!sample.fit && !!sample.bpm;
+  return (
+    <span className="flex shrink-0 items-center gap-1" data-testid="sample-fit">
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        placeholder="BPM"
+        inputMode="decimal"
+        className="w-10 rounded bg-white/5 px-1 py-0.5 text-right font-mono text-[10px] text-amber-200 outline-none placeholder:text-slate-600"
+        title="The tempo this loop was made at. Type it if it is not known."
+        aria-label={`Original tempo of ${trackId}`}
+        data-testid="sample-bpm"
+      />
+      <button
+        className={`rounded px-1.5 py-0.5 text-[10px] ${fitting ? "bg-cyan-400/25 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"} disabled:opacity-40`}
+        disabled={!sample.bpm}
+        aria-pressed={fitting}
+        onClick={() => void window.daw.dispatch({ type: "updateSample", trackId, changes: { fit: !sample.fit } })}
+        title={!sample.bpm ? "Type the loop's tempo first" : fitting ? `Stretched from ${sample.bpm} to ${projectTempo} BPM, pitch unchanged. Click to play it as recorded.` : `Plays as recorded (${sample.bpm} BPM). Click to stretch it to the project tempo (${projectTempo} BPM).`}
+        data-testid="sample-fit-toggle"
+      >
+        {fitting && sample.bpm !== projectTempo ? `${sample.bpm}→${projectTempo}` : "Fit"}
+      </button>
+    </span>
+  );
+}
+
 /** One track's controls: colour, name, instrument, mute, solo, delete, volume and level meter. */
 export function TrackHeader({ project, trackId: id, index, selected, onSelect }: HeaderProps) {
   const t = project.tracks[id]!;
+  const unlock = useUnlock();
   return (
     <div
       data-testid="track-row"
@@ -72,21 +113,22 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect }:
         </label>
         <span className="w-4 text-center text-[10px] text-slate-500">{index + 1}</span>
         <NameField trackId={id} name={t.name} />
-        <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : "SYN"}</span>
-        <button className={`${small} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mute ${t.name}`} aria-pressed={t.mute} title="Mute">M</button>
-        <button className={`${small} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Solo ${t.name}`} aria-pressed={t.solo} title="Solo">S</button>
+        <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : t.instrument === "sample" ? "SMP" : "SYN"}</span>
+        <button className={`${small} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mute ${t.name}`} aria-pressed={t.mute} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Mute"}>M</button>
+        <button className={`${small} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Solo ${t.name}`} aria-pressed={t.solo} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Solo"}>S</button>
         <button
           className={`${small} bg-white/5 text-slate-500 hover:bg-rose-500/30 hover:text-rose-200 disabled:opacity-30 disabled:hover:bg-white/5 disabled:hover:text-slate-500`}
-          disabled={project.trackOrder.length <= 1}
+          disabled={project.trackOrder.length <= 1 || !unlock.can("tracks.multiple")}
           onClick={() => void window.daw.dispatch({ type: "deleteTrack", trackId: id })}
           aria-label={`Delete ${t.name}`}
-          title="Delete track (undoable)"
+          title={unlock.reason("tracks.multiple") ?? "Delete track (undoable)"}
         >
           ×
         </button>
       </div>
       <div className="mt-1 flex items-center gap-2 pl-[1.6rem]">
-        <input type="range" min={0} max={100} value={t.volume} onChange={(e) => update(id, { volume: Number(e.target.value) }, `vol-${id}`)} className="h-1 min-w-0 flex-1 cursor-pointer" style={{ accentColor: t.color }} aria-label={`Volume of ${t.name}`} />
+        {t.instrument === "sample" && t.sample?.gate && <SampleFit trackId={id} sample={t.sample} projectTempo={project.tempo} />}
+        <input type="range" min={0} max={100} value={t.volume} disabled={!unlock.can("mixer.panel")} title={unlock.reason("mixer.panel") ?? undefined} onChange={(e) => update(id, { volume: Number(e.target.value) }, `vol-${id}`)} className="h-1 min-w-0 flex-1 cursor-pointer" style={{ accentColor: t.color }} aria-label={`Volume of ${t.name}`} />
         <Meter orientation="horizontal" className="w-14" color={t.color} testId={`meter-list-${id}`} read={(s) => s?.levels[id] ?? 0} />
       </div>
     </div>
@@ -96,7 +138,9 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect }:
 /** The "+ Add track" button and its instrument menu. `onAdded` receives the new track's id so the caller can select it. */
 export function AddTrackRow({ project, onAdded }: { project: Project; onAdded: (trackId: string) => void }) {
   const [menu, setMenu] = useState(false);
+  const unlock = useUnlock();
   const full = project.trackOrder.length >= MAX_TRACKS;
+  const multipleLocked = !unlock.can("tracks.multiple");
 
   const add = (instrument: InstrumentKind) => {
     setMenu(false);
@@ -112,7 +156,8 @@ export function AddTrackRow({ project, onAdded }: { project: Project; onAdded: (
     <div className="relative shrink-0 border-r border-b border-white/10 bg-[#12151c] p-2" style={{ width: HEADER_W }}>
       <button
         className="w-full rounded-md border border-dashed border-white/20 py-1.5 text-xs text-slate-300 hover:border-cyan-400/50 hover:bg-cyan-400/5 disabled:opacity-40"
-        disabled={full}
+        disabled={full || multipleLocked}
+        title={unlock.reason("tracks.multiple") ?? undefined}
         onClick={() => setMenu(!menu)}
         data-testid="add-track"
       >
@@ -123,7 +168,7 @@ export function AddTrackRow({ project, onAdded }: { project: Project; onAdded: (
           <button className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10" onClick={() => add("synth")} data-testid="add-synth">
             Synth <span className="text-slate-500">— melodies, chords, bass</span>
           </button>
-          <button className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10" onClick={() => add("drums")} data-testid="add-drums">
+          <button className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" disabled={!unlock.can("tracks.drums")} title={unlock.reason("tracks.drums") ?? undefined} onClick={() => add("drums")} data-testid="add-drums">
             Drums <span className="text-slate-500">— kick, snare, hats…</span>
           </button>
         </div>

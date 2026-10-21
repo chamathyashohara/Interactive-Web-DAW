@@ -1,5 +1,6 @@
 #pragma once
 #include "Drums.h"
+#include "Samples.h"
 #include "Sequencer.h"
 #include "Synth.h"
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -25,6 +26,11 @@ public:
     };
 
     Sequencer sequencer;
+    /** The sample browser's audition voice (not part of any track). */
+    SamplePreview preview;
+
+    /** Fades out every playing sample on every track (transport stop). Any thread. */
+    void cutSamples() { cutSerial.fetch_add(1, std::memory_order_release); }
 
     void pushPreview(const PreviewMsg& m)
     {
@@ -50,10 +56,12 @@ public:
     {
         sampleRate = sr;
         sequencer.prepare(sr);
+        preview.prepare(sr);
         for (auto& s : slots)
         {
             s.synth.prepare(sr);
             s.drums.prepare(sr);
+            s.samp.prepare(sr);
             s.gain = 0.0f;
             s.pan = 0.0f;
         }
@@ -63,6 +71,8 @@ public:
         const size_t n = static_cast<size_t>(std::max(maxBlock, 8192));
         masterInitialised = false;
         tmp.assign(n, 0.0f);
+        sampL.assign(n, 0.0f);
+        sampR.assign(n, 0.0f);
         bufL.assign(n, 0.0f);
         bufR.assign(n, 0.0f);
     }
@@ -103,6 +113,22 @@ public:
             fifo.finishedRead(n1 + n2);
         }
 
+        // Which sample each slot plays comes from the current model (the audio thread reads it, never writes it).
+        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; }
+        if (m != nullptr)
+            for (const auto& tr : m->tracks)
+            {
+                const int s = std::clamp(tr.slot, 0, kMaxSlots - 1);
+                slotSample[s] = tr.sample.get();
+                slotGate[s] = tr.gate;
+            }
+        const int cut = cutSerial.load(std::memory_order_acquire);
+        if (cut != seenCut)
+        {
+            seenCut = cut;
+            for (auto& s : slots) s.samp.cut();
+        }
+
         eventCount = 0;
         sequencer.process(numSamples, *this);
 
@@ -124,7 +150,7 @@ public:
         // starts at the right level and pan instead of ramping in from zero.
         for (int s = 0; s < kMaxSlots; ++s)
         {
-            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive())
+            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive())
             {
                 slots[s].gain = targetGain[s];
                 slots[s].pan = targetPan[s];
@@ -152,12 +178,19 @@ public:
             if (e.type == 1)
             {
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
+                else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot]);
                 else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
             }
-            else slots[e.slot].synth.noteOff(e.pitch);
+            else
+            {
+                slots[e.slot].synth.noteOff(e.pitch);
+                slots[e.slot].samp.release(e.pitch);
+            }
         }
         if (cursor < numSamples)
             renderSegment(cursor, numSamples - cursor, targetGain, targetPan, localPeak);
+
+        preview.renderAdd(bufL.data(), bufR.data(), numSamples);
 
         // Master: smoothed gain, soft clip, peak meters.
         float pl = 0.0f, pr = 0.0f;
@@ -210,6 +243,7 @@ private:
     {
         Synth synth;
         DrumKit drums;
+        SampleVoices samp;
         float gain = 0.0f;
         float pan = 0.0f;
     };
@@ -218,7 +252,11 @@ private:
     Event events[kMaxEvents];
     int eventCount = 0;
     SlotState slots[kMaxSlots];
-    std::vector<float> tmp, bufL, bufR;
+    std::vector<float> tmp, bufL, bufR, sampL, sampR;
+    const SampleData* slotSample[kMaxSlots] = {};
+    bool slotGate[kMaxSlots] = {};
+    std::atomic<int> cutSerial{ 0 };
+    int seenCut = 0;
     float masterGain = 0.64f;
     bool masterInitialised = false;
     float invTau = 0.002f, sampleCoef = 0.002f;
@@ -262,9 +300,22 @@ private:
         if (pm.on)
         {
             if (instrument == kDrums) slots[slot].drums.trigger(pm.pitch, pm.velocity);
+            else if (instrument == kSample)
+            {
+                const SampleData* d = nullptr;
+                bool gate = false;
+                if (m != nullptr)
+                    for (const auto& tr : m->tracks)
+                        if (tr.slot == slot) { d = tr.sample.get(); gate = tr.gate; break; }
+                slots[slot].samp.trigger(d, pm.pitch, pm.velocity, gate);
+            }
             else slots[slot].synth.noteOn(pm.pitch, pm.velocity);
         }
-        else slots[slot].synth.noteOff(pm.pitch);
+        else
+        {
+            slots[slot].synth.noteOff(pm.pitch);
+            slots[slot].samp.release(pm.pitch);
+        }
     }
 
     void renderSegment(int start, int len, const float* targetGain, const float* targetPan, float* localPeak)
@@ -274,7 +325,7 @@ private:
         for (int s = 0; s < kMaxSlots; ++s)
         {
             SlotState& st = slots[s];
-            if (!st.synth.anyActive() && !st.drums.anyActive())
+            if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive())
             {
                 st.gain = targetGain[s]; // idle: no ramp needed
                 st.pan = targetPan[s];
@@ -293,13 +344,35 @@ private:
             float g = st.gain;
             float* L = bufL.data() + start;
             float* R = bufR.data() + start;
+            const bool hasSamples = st.samp.anyActive();
+            float* sl = sampL.data();
+            float* sr = sampR.data();
+            if (hasSamples)
+            {
+                juce::FloatVectorOperations::clear(sl, len);
+                juce::FloatVectorOperations::clear(sr, len);
+                st.samp.render(sl, sr, len);
+            }
+            // Stereo samples keep their width: pan acts as a balance (centre = unchanged). Everything else is panned as before.
+            const float p = st.pan;
+            const float balL = p > 0.0f ? std::cos(p * 1.57079633f) : 1.0f;
+            const float balR = p < 0.0f ? std::cos(-p * 1.57079633f) : 1.0f;
             for (int i = 0; i < len; ++i)
             {
                 g += (targetGain[s] - g) * sampleCoef;
                 const float v = t[i] * g;
-                L[i] += v * gl;
-                R[i] += v * gr;
-                pk = std::max(pk, std::fabs(v));
+                float lo = v * gl, ro = v * gr;
+                float spk = std::fabs(v);
+                if (hasSamples)
+                {
+                    const float sL = sl[i] * g, sR = sr[i] * g;
+                    lo += sL * balL;
+                    ro += sR * balR;
+                    spk = std::max(spk, std::max(std::fabs(sL), std::fabs(sR)));
+                }
+                L[i] += lo;
+                R[i] += ro;
+                pk = std::max(pk, spk);
             }
             st.gain = g;
             localPeak[s] = pk;

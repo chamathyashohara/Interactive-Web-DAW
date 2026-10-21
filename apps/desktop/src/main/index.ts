@@ -6,7 +6,10 @@ import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
 import type { OpBody, Project } from "@daw/shared";
 import { EngineBridge } from "./engine/engineBridge";
 import { SlotAllocator, toEngineSnapshot } from "./engine/snapshot";
+import { LibraryService } from "./library/libraryService";
+import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
+import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
 
 interface EngineState {
@@ -48,15 +51,39 @@ function createWindow() {
   else void win.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
+// End-to-end tests keep everything the app stores (settings, local storage, caches) out of the real user profile.
+if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
+
 app.whenReady().then(() => {
   const dataDir = process.env.DAW_DATA_DIR ?? path.join(app.getPath("userData"), "projects", "default");
   fs.mkdirSync(dataDir, { recursive: true });
   const service = new ProjectService(new LocalStore(dataDir));
 
+  // Learner progress (which lessons are done, whether features are gated). Per user, never part of a project.
+  const progress = new ProgressStore(process.env.DAW_PROGRESS_DIR ?? app.getPath("userData"), process.env.DAW_PROGRESS_MODE === "beginner" ? "beginner" : "all");
+  const publishProgress = () => sendToRenderer("progress:update", progress.get());
+
   const engine = new EngineBridge(resolveEnginePath(), process.env.DAW_ENGINE_BUFFER ? ["--buffer", process.env.DAW_ENGINE_BUFFER] : []);
 
+  // Sample library: the Starter packs plus the user's imported packs live in the user-data folder (never in a project or the repo).
+  const analyzer = new SampleAnalyzer((cmd) => engine.send(cmd), () => engine.running);
+  const library = new LibraryService(process.env.DAW_LIBRARY_DIR ?? path.join(app.getPath("userData"), "sample-library"), analyzer.analyze, process.env.DAW_STARTER_DIR);
+  let libraryStatus: { state: "preparing"; fraction: number } | { state: "ready" } | { state: "error"; message: string } = { state: "preparing", fraction: 0 };
+  const setLibraryStatus = (s: typeof libraryStatus) => {
+    libraryStatus = s;
+    sendToRenderer("library:status", s);
+  };
+  library
+    .init((done, total) => setLibraryStatus({ state: "preparing", fraction: done / total }))
+    .then(() => {
+      pushProjectToEngine(service.current); // sample tracks could not find their sounds before the library was ready
+      setLibraryStatus({ state: "ready" });
+      sendToRenderer("library:update", library.list());
+    })
+    .catch((err: unknown) => setLibraryStatus({ state: "error", message: err instanceof Error ? err.message : String(err) }));
+
   const slots = new SlotAllocator();
-  const pushProjectToEngine = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots) });
+  const pushProjectToEngine = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots, (id) => library.pathOf(id)) });
 
   engine.on("ready", (info) => {
     engineState.connected = true;
@@ -66,6 +93,7 @@ app.whenReady().then(() => {
     sendToRenderer("engine:state", engineState);
   });
   engine.on("down", () => {
+    analyzer.failAll("the audio engine stopped");
     engineState.connected = false;
     sendToRenderer("engine:state", engineState);
   });
@@ -78,6 +106,7 @@ app.whenReady().then(() => {
     else if (e.t === "exportDone") sendToRenderer("export:status", { state: "done", id: e.id, path: e.path, seconds: e.seconds, frames: e.frames, peak: e.peak });
     else sendToRenderer("export:status", { state: "error", id: e.id, message: e.message });
   });
+  engine.on("sampleInfo", (info) => analyzer.onInfo(info));
   engine.on("status", (status) => {
     // Translate engine slot meters into per-track levels for the UI.
     const levels: Record<string, number> = {};
@@ -131,6 +160,54 @@ app.whenReady().then(() => {
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
   });
+  ipcMain.handle("library:get", () => ({ status: libraryStatus, ...library.list() }));
+  ipcMain.on("library:preview", (_e, id: unknown) => {
+    const file = typeof id === "string" ? library.pathOf(id) : null;
+    if (file) engine.send({ t: "previewSample", path: file, gain: 0.8 });
+  });
+  ipcMain.on("library:stopPreview", () => engine.send({ t: "stopPreview" }));
+  ipcMain.handle("library:import", async (_e, mode: "zip" | "folder", explicitPath?: string) => {
+    if (libraryStatus.state !== "ready") return { ok: false, added: 0, duplicates: 0, failed: [], brandRemoved: null, reason: "The library is still being prepared." };
+    if (!engineState.connected) return { ok: false, added: 0, duplicates: 0, failed: [], brandRemoved: null, reason: "The audio engine is not running." };
+    let source: string | undefined;
+    const hook = process.env.DAW_E2E === "1" ? (explicitPath ?? process.env.DAW_E2E_IMPORT) : undefined;
+    if (hook) source = hook; // test hook: skip the dialog (never enabled in normal use)
+    else {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: mode === "zip" ? "Import a sample pack (.zip)" : "Import a folder of samples",
+        properties: mode === "zip" ? ["openFile"] : ["openDirectory"],
+        filters: mode === "zip" ? [{ name: "Zip archive", extensions: ["zip"] }] : undefined,
+      });
+      if (picked.canceled || picked.filePaths.length === 0) return { ok: false, canceled: true, added: 0, duplicates: 0, failed: [], brandRemoved: null };
+      source = picked.filePaths[0]!;
+    }
+    const result = await library.importPath(source, (p) => sendToRenderer("library:importProgress", p));
+    sendToRenderer("library:importProgress", { phase: "done", done: 0, total: 0 }); // whoever started the import, the window stops showing progress
+    if (result.ok) sendToRenderer("library:update", library.list());
+    return result;
+  });
+  ipcMain.handle("library:removePack", (_e, name: unknown) => {
+    const removed = typeof name === "string" && library.removePack(name);
+    if (removed) sendToRenderer("library:update", library.list());
+    return removed;
+  });
+  ipcMain.handle("progress:get", () => progress.get());
+  ipcMain.handle("progress:complete", (_e, lessonId: unknown) => {
+    const result = progress.completeLesson(lessonId);
+    if (result.ok && result.newlyCompleted) publishProgress();
+    return result;
+  });
+  ipcMain.handle("progress:setMode", (_e, mode: unknown) => {
+    const result = progress.setMode(mode);
+    publishProgress();
+    return result;
+  });
+  ipcMain.handle("progress:reset", () => {
+    const result = progress.reset();
+    publishProgress();
+    return result;
+  });
+  ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
 

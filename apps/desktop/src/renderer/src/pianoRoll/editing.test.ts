@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyOp, createProject, type Note, type Op, type OpBody, type Project } from "@daw/shared";
-import { clampGroupMove, copyNotes, deleteOps, duplicateOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps } from "./editing";
+import { clampGroupMove, copyNotes, deleteOps, duplicateOps, fixOutOfKeyOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps } from "./editing";
 
 const clip = { trackId: "track-1", clipId: "clip-1", lengthTicks: 15360 };
 const note = (id: string, pitch: number, startTick: number, durationTicks = 240, extra: Partial<Note> = {}): Note => ({ id, pitch, startTick, durationTicks, velocity: 90, ...extra });
@@ -96,5 +96,31 @@ describe("clampGroupMove", () => {
     expect(clampGroupMove(g, 500, 0, 15360, 36, 83)).toMatchObject({ dTick: 60 });
     expect(clampGroupMove(g, 0, 10, 15360, 36, 83)).toMatchObject({ dPitch: 3 });
     expect(clampGroupMove(g, 0, -10, 15360, 36, 83)).toMatchObject({ dPitch: -4 });
+  });
+});
+
+describe("fixOutOfKeyOps", () => {
+  const cMajor = { tonic: 0, mode: "major" as const };
+
+  it("moves only the notes outside the key, to the nearest in-key pitch (lower on a tie)", () => {
+    const notes = [note("a", 60, 0), note("b", 61, 240), note("c", 66, 480), note("d", 70, 720)]; // C, C#, F#, A#
+    const ops = fixOutOfKeyOps(clip, notes, cMajor);
+    expect(ops).toHaveLength(3);
+    const p = applyAll(withNotes(notes), ops);
+    expect(notesOf(p).map((n) => n.pitch)).toEqual([60, 60, 65, 69]); // C stays; C#->C; F#->F; A#->A
+  });
+
+  it("changes nothing when every note is already in key, and keeps time, length and velocity", () => {
+    const inKey = [note("a", 60, 0), note("b", 64, 240), note("c", 67, 480)];
+    expect(fixOutOfKeyOps(clip, inKey, cMajor)).toEqual([]);
+    const out = [note("x", 61, 100, 500)];
+    const p = applyAll(withNotes(out), fixOutOfKeyOps(clip, out, cMajor));
+    expect(notesOf(p)[0]).toMatchObject({ pitch: 60, startTick: 100, durationTicks: 500, velocity: 90 });
+  });
+
+  it("works in a minor key (A minor: G# is out, the nearest in-key note is G)", () => {
+    const aMinor = { tonic: 9, mode: "minor" as const };
+    const p = applyAll(withNotes([note("a", 68, 0)]), fixOutOfKeyOps(clip, [note("a", 68, 0)], aMinor));
+    expect(notesOf(p)[0]!.pitch).toBe(67);
   });
 });

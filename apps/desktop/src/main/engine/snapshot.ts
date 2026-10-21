@@ -31,6 +31,14 @@ export class SlotAllocator {
   }
 }
 
+/** How much a sample must be sped up (>1) or slowed down (<1) to follow the project tempo; null when it plays as recorded. */
+export function stretchRatioFor(projectTempo: number, sample: { bpm?: number; fit?: boolean }): number | null {
+  if (!sample.fit || !sample.bpm) return null;
+  const ratio = projectTempo / sample.bpm;
+  if (Math.abs(ratio - 1) < 0.0005) return null;
+  return Math.max(0.25, Math.min(4, ratio));
+}
+
 /** Mute/solo resolution: any soloed track silences all non-soloed ones; mute always silences. */
 export function isAudible(project: Project, trackId: string): boolean {
   const track = project.tracks[trackId];
@@ -40,7 +48,7 @@ export function isAudible(project: Project, trackId: string): boolean {
 }
 
 /** Flattens tracks -> clips -> notes into the absolute-tick note lists the audio engine plays. */
-export function toEngineSnapshot(project: Project, slots: SlotAllocator): EngineProjectSnapshot {
+export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleFile: (sampleId: string) => string | null = () => null): EngineProjectSnapshot {
   slots.sync(project);
   const loopTicks = songTicks(project); // playback loops over the song, not over the longest clip
   const tracks: EngineTrack[] = [];
@@ -54,13 +62,21 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator): Engine
         notes.push({ pitch: n.pitch, startTick: clip.startTick + n.startTick, durationTicks: n.durationTicks, velocity: n.velocity });
       }
     }
-    tracks.push({
+    const et: EngineTrack = {
       slot: slots.slotFor(trackId)!,
       instrument: track.instrument,
       gain: isAudible(project, trackId) ? volumeToGain(track.volume) : 0,
       pan: track.pan / 100,
       notes,
-    });
+    };
+    if (track.instrument === "sample" && track.sample) {
+      const file = sampleFile(track.sample.id);
+      if (file) et.samplePath = file;
+      et.gate = track.sample.gate;
+      const ratio = stretchRatioFor(project.tempo, track.sample);
+      if (ratio !== null) et.stretchRatio = ratio;
+    }
+    tracks.push(et);
   }
   return { ppq: project.ppq, tempo: project.tempo, loopTicks, masterGain: volumeToGain(project.masterVolume), tracks };
 }

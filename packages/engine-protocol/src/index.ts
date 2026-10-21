@@ -14,7 +14,7 @@ export interface EngineNote {
   velocity: number;
 }
 
-export type EngineInstrument = "synth" | "drums";
+export type EngineInstrument = "synth" | "drums" | "sample";
 
 export interface EngineTrack {
   /** Stable engine voice slot (0..15) for this track; keeps voices/meters stable across edits. */
@@ -25,6 +25,12 @@ export interface EngineTrack {
   /** -1 (left) .. 1 (right) */
   pan: number;
   notes: EngineNote[];
+  /** instrument "sample": absolute path of the audio file (omitted when the sound is not in this computer's library: the track is silent). */
+  samplePath?: string;
+  /** instrument "sample": a note-off cuts the sound (loops) instead of letting it play to its end. */
+  gate?: boolean;
+  /** instrument "sample": speed factor for time-stretching without changing pitch (project tempo / the sound's own tempo). Omitted = play as recorded. */
+  stretchRatio?: number;
 }
 
 /** Flattened, playable view of the project. Sent in full on (re)start and after each project change. */
@@ -45,7 +51,12 @@ export type EngineCommand =
   | { t: "setTempo"; bpm: number }
   | { t: "preview"; slot: number; pitch: number; velocity: number; on: boolean }
   /** Offline-render the current project to a 24-bit stereo 48 kHz WAV (song length + tail). Runs beside live playback. */
-  | { t: "exportWav"; id: string; path: string; tailSeconds: number };
+  | { t: "exportWav"; id: string; path: string; tailSeconds: number }
+  /** Decode a sample file and report its length and waveform. Runs on a worker thread; answered by a `sampleInfo` event. */
+  | { t: "analyzeSample"; id: string; path: string }
+  /** Audition a sample from the browser (replaces the one playing). Not part of any track. */
+  | { t: "previewSample"; path: string; gain: number }
+  | { t: "stopPreview" };
 
 export interface EngineStatus {
   t: "status";
@@ -60,6 +71,8 @@ export interface EngineStatus {
   /** Peak level (linear, post-fader) since the previous status message. */
   masterL: number;
   masterR: number;
+  /** How far through the browser preview is (0..1), or -1 when none is playing. */
+  preview: number;
   slots: number[];
 }
 
@@ -93,4 +106,8 @@ export interface ExportError {
 }
 export type ExportEvent = ExportProgress | ExportDone | ExportError;
 
-export type EngineEvent = EngineReady | EngineStatus | ExportEvent | { t: "error"; message: string };
+export type SampleInfo =
+  | { t: "sampleInfo"; id: string; ok: true; durationSec: number; sampleRate: number; channels: number; frames: number; peak: number; /** 96 values, 0..255 */ peaks: number[] }
+  | { t: "sampleInfo"; id: string; ok: false; message: string };
+
+export type EngineEvent = EngineReady | EngineStatus | ExportEvent | SampleInfo | { t: "error"; message: string };

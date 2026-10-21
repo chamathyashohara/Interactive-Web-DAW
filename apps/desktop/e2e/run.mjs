@@ -33,7 +33,7 @@ async function until(fn, timeout = 8000, step = 100) {
 
 function launch() {
   const child = spawn(electronExe, [appDir, `--remote-debugging-port=${PORT}`], {
-    env: (() => { const e = { ...process.env, DAW_DATA_DIR: dataDir, DAW_E2E: "1" }; delete e.ELECTRON_RUN_AS_NODE; return e; })(),
+    env: (() => { const e = { ...process.env, DAW_DATA_DIR: dataDir, DAW_PROGRESS_DIR: dataDir, DAW_LIBRARY_DIR: path.join(dataDir, "library"), DAW_STARTER_DIR: path.join(os.tmpdir(), "daw-e2e-starter"), DAW_USER_DATA: path.join(dataDir, "user"), DAW_E2E: "1" }; delete e.ELECTRON_RUN_AS_NODE; return e; })(),
     stdio: ["ignore", "ignore", "inherit"],
   });
   return child;
@@ -204,7 +204,7 @@ try {
 } finally {
   try { c.ws.close(); } catch {}
   try { execFileSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" }); } catch {}
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch {}
 }
 
 async function send_ctrl(client, k) {

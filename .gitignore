@@ -12,3 +12,9 @@ soak-m2.log
 .vscode/
 .claude/
 soak-m3.log
+
+# sample libraries (generated or licensed) never go in git
+sample-library/
+starter-lib/
+*.zip
+*.rar

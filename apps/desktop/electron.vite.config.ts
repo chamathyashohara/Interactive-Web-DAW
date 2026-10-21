@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 // Workspace packages ship TypeScript source, so they must be bundled, not externalised.
-const bundled = ["@daw/shared", "@daw/engine-protocol"];
+const bundled = ["@daw/shared", "@daw/engine-protocol", "@daw/sounds"];
 
 export default defineConfig({
   main: { build: { externalizeDeps: { exclude: bundled } } },

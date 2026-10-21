@@ -5,11 +5,15 @@
 #endif
 #include "AudioEngine.h"
 #include "Export.h"
+#include "Samples.h"
 #include "SelfTest.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <cstdio>
 #include <iostream>
 #include <memory>
@@ -25,7 +29,7 @@
 
 namespace
 {
-constexpr const char* kVersion = "0.3.0";
+constexpr const char* kVersion = "0.6.0";
 constexpr double kExportSampleRate = 48000.0; // exports do not depend on the audio device
 
 std::mutex gOutMutex;
@@ -46,7 +50,7 @@ std::string jsonEscape(const juce::String& s)
 class ModelStore
 {
 public:
-    explicit ModelStore(Sequencer& s) : sequencer(s) {}
+    ModelStore(Sequencer& s, SampleStore& st) : sequencer(s), samples(st) {}
     ~ModelStore()
     {
         sequencer.setModel(nullptr);
@@ -78,6 +82,8 @@ public:
         {
             if (now - retired[i].at > 2000) // the audio thread holds a model for at most one block
             {
+                // Its samples may still be playing (a long loop): they are freed only after the last voice has ended.
+                for (auto& tr : retired[i].model->tracks) samples.keep(tr.sample);
                 delete retired[i].model;
                 retired.erase(retired.begin() + static_cast<long>(i));
             }
@@ -88,12 +94,13 @@ public:
 private:
     struct Retired { PlaybackModel* model; juce::uint32 at; };
     Sequencer& sequencer;
+    SampleStore& samples;
     std::mutex mutex;
     PlaybackModel* current = nullptr;
     std::vector<Retired> retired;
 };
 
-PlaybackModel* parseModel(const juce::var& project)
+PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::vector<std::string>& problems)
 {
     auto* model = new PlaybackModel();
     model->ppq = std::max(1, static_cast<int>(project["ppq"]));
@@ -107,7 +114,20 @@ PlaybackModel* parseModel(const juce::var& project)
         {
             TrackModel tm;
             tm.slot = std::clamp(static_cast<int>(t["slot"]), 0, kMaxSlots - 1);
-            tm.instrument = t["instrument"].toString() == "drums" ? kDrums : kSynth;
+            const juce::String kind = t["instrument"].toString();
+            tm.instrument = kind == "drums" ? kDrums : (kind == "sample" ? kSample : kSynth);
+            if (tm.instrument == kSample)
+            {
+                tm.gate = static_cast<bool>(t["gate"]);
+                const std::string path = t["samplePath"].toString().toStdString();
+                if (!path.empty())
+                {
+                    std::string error;
+                    const double ratio = static_cast<double>(t["stretchRatio"]);
+                    tm.sample = ratio > 0.0 ? samples.getStretched(path, ratio, error) : samples.get(path, error);
+                    if (tm.sample == nullptr) problems.push_back("sample track: " + error);
+                }
+            }
             tm.gain = static_cast<float>(static_cast<double>(t["gain"]));
             tm.pan = std::clamp(static_cast<float>(static_cast<double>(t["pan"])), -1.0f, 1.0f);
             if (const auto* arr = t["notes"].getArray())
@@ -137,10 +157,10 @@ std::string statusJson(AudioEngine& engine, juce::AudioDeviceManager& dm)
     s += engine.sequencer.isPlaying() ? "true" : "false";
     char buf[512];
     std::snprintf(buf, sizeof(buf),
-                  ",\"tick\":%.2f,\"callbacks\":%llu,\"overruns\":%llu,\"peakLoad\":%.4f,\"xruns\":%d,\"masterL\":%.4f,\"masterR\":%.4f,\"slots\":[",
+                  ",\"tick\":%.2f,\"callbacks\":%llu,\"overruns\":%llu,\"peakLoad\":%.4f,\"xruns\":%d,\"masterL\":%.4f,\"masterR\":%.4f,\"preview\":%.4f,\"slots\":[",
                   engine.sequencer.getTick(), static_cast<unsigned long long>(engine.callbacks.load()),
                   static_cast<unsigned long long>(engine.overruns.load()), engine.peakLoad.load(), dm.getXRunCount(),
-                  engine.masterPeakL.exchange(0.0f), engine.masterPeakR.exchange(0.0f));
+                  engine.masterPeakL.exchange(0.0f), engine.masterPeakR.exchange(0.0f), static_cast<double>(engine.preview.fraction()));
     s += buf;
     for (int i = 0; i < kMaxSlots; ++i)
     {
@@ -171,7 +191,8 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     AudioEngine engine;
-    ModelStore models(engine.sequencer);
+    SampleStore samples;
+    ModelStore models(engine.sequencer, samples);
     juce::AudioDeviceManager deviceManager;
 
     bool audioOk = false;
@@ -212,6 +233,7 @@ int main(int argc, char** argv)
         {
             sendLine(statusJson(engine, deviceManager));
             models.purge();
+            samples.purge();
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
         }
     });
@@ -263,6 +285,35 @@ int main(int argc, char** argv)
         });
     };
 
+    // Sample jobs (decode for the browser preview, decode + waveform for imports) run on one worker thread,
+    // so slow disks never delay transport or note commands. Only the newest preview request is honoured.
+    std::mutex jobMutex;
+    std::condition_variable jobCv;
+    std::deque<std::function<void()>> jobs;
+    bool jobsClosed = false;
+    std::atomic<int> previewRequest{ 0 };
+    std::thread sampleThread([&] {
+        for (;;)
+        {
+            std::function<void()> job;
+            {
+                std::unique_lock<std::mutex> lock(jobMutex);
+                jobCv.wait(lock, [&] { return jobsClosed || !jobs.empty(); });
+                if (jobs.empty()) return;
+                job = std::move(jobs.front());
+                jobs.pop_front();
+            }
+            job();
+        }
+    });
+    auto enqueue = [&](std::function<void()> job) {
+        {
+            std::lock_guard<std::mutex> lock(jobMutex);
+            jobs.push_back(std::move(job));
+        }
+        jobCv.notify_one();
+    };
+
     // Command loop (blocks until the parent closes our stdin).
     std::string line;
     while (std::getline(std::cin, line))
@@ -274,12 +325,15 @@ int main(int argc, char** argv)
         if (type == "loadProject")
         {
             const auto project = msg["project"];
-            models.publish(parseModel(project));
+            std::vector<std::string> problems;
+            models.publish(parseModel(project, samples, problems));
+            for (const auto& p : problems) sendLine("{\"t\":\"error\",\"message\":" + jsonEscape(juce::String(p)) + "}");
             engine.sequencer.setBpm(static_cast<double>(project["tempo"]));
         }
         else if (type == "play") engine.sequencer.setPlaying(true);
         else if (type == "stop")
         {
+            engine.cutSamples();
             engine.sequencer.setPlaying(false);
             engine.sequencer.requestSeek(0.0);
         }
@@ -289,11 +343,64 @@ int main(int argc, char** argv)
             engine.pushPreview({ std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1), std::clamp(static_cast<int>(msg["pitch"]), 0, 127),
                                  std::clamp(static_cast<int>(msg["velocity"]), 1, 127), static_cast<bool>(msg["on"]) });
         else if (type == "exportWav") startExport(msg["id"].toString(), msg["path"].toString(), static_cast<double>(msg["tailSeconds"]));
+        else if (type == "analyzeSample")
+        {
+            const juce::String id = msg["id"].toString();
+            const std::string path = msg["path"].toString().toStdString();
+            enqueue([&, id, path] {
+                std::string error;
+                const auto data = samples.get(path, error);
+                if (data == nullptr)
+                {
+                    sendLine("{\"t\":\"sampleInfo\",\"id\":" + jsonEscape(id) + ",\"ok\":false,\"message\":" + jsonEscape(juce::String(error)) + "}");
+                    return;
+                }
+                std::string peaks = "[";
+                const auto p = samplePeaks(*data);
+                for (size_t i = 0; i < p.size(); ++i) peaks += (i ? "," : "") + std::to_string(p[i]);
+                peaks += "]";
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), ",\"ok\":true,\"durationSec\":%.4f,\"sampleRate\":%.0f,\"channels\":%d,\"frames\":%lld,\"peak\":%.5f,\"peaks\":",
+                              static_cast<double>(data->frames) / data->sampleRate, data->sampleRate, data->channels, static_cast<long long>(data->frames),
+                              static_cast<double>(data->peak));
+                sendLine("{\"t\":\"sampleInfo\",\"id\":" + jsonEscape(id) + buf + peaks + "}");
+            });
+        }
+        else if (type == "previewSample")
+        {
+            const std::string path = msg["path"].toString().toStdString();
+            const float gain = std::clamp(static_cast<float>(static_cast<double>(msg["gain"])), 0.0f, 2.0f);
+            const int request = ++previewRequest;
+            enqueue([&, path, gain, request] {
+                if (request != previewRequest.load()) return; // a newer click already replaced this one
+                std::string error;
+                const auto data = samples.get(path, error);
+                if (data == nullptr)
+                {
+                    sendLine("{\"t\":\"error\",\"message\":" + jsonEscape(juce::String("preview: " + error)) + "}");
+                    return;
+                }
+                if (request != previewRequest.load()) return;
+                samples.hold(data);
+                engine.preview.start(data.get(), gain);
+            });
+        }
+        else if (type == "stopPreview")
+        {
+            ++previewRequest; // cancels a preview that is still loading
+            engine.preview.stop();
+        }
         else if (type == "hello") sendLine(readyBuf);
     }
 
     cancelExport = true;
     if (exportThread.joinable()) exportThread.join();
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobsClosed = true;
+    }
+    jobCv.notify_one();
+    sampleThread.join();
     running = false;
     statusThread.join();
     deviceManager.removeAudioCallback(&engine);

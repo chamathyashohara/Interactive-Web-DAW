@@ -1,4 +1,5 @@
 import type { Clip, Note, Track } from "./model";
+import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
 export type TrackFields = Pick<Track, "name" | "color" | "volume" | "pan" | "mute" | "solo">;
@@ -28,6 +29,12 @@ export interface UpdateNoteOp extends OpBase {
   clipId: string;
   noteId: string;
   changes: Partial<NoteFields>;
+}
+/** Changes how a sample track follows the tempo: its original BPM (null = unknown) and whether it is stretched to the project tempo. */
+export interface UpdateSampleOp extends OpBase {
+  type: "updateSample";
+  trackId: string;
+  changes: { bpm?: number | null; fit?: boolean };
 }
 export interface SetTempoOp extends OpBase {
   type: "setTempo";
@@ -75,6 +82,12 @@ export interface SetSongLengthOp extends OpBase {
   bars: number;
 }
 
+export interface SetKeyOp extends OpBase {
+  type: "setKey";
+  /** null clears the key. */
+  key: ProjectKey | null;
+}
+
 export type Op =
   | AddNoteOp
   | DeleteNoteOp
@@ -83,11 +96,13 @@ export type Op =
   | AddTrackOp
   | DeleteTrackOp
   | UpdateTrackOp
+  | UpdateSampleOp
   | SetMasterVolumeOp
   | AddClipOp
   | DeleteClipOp
   | UpdateClipOp
-  | SetSongLengthOp;
+  | SetSongLengthOp
+  | SetKeyOp;
 
 type Body<T> = T extends Op ? Omit<T, "opId" | "clientId"> : never;
 /** An op before it is stamped with opId/clientId (what the UI sends to the main process). */
