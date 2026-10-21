@@ -503,7 +503,9 @@ drop** (M13.1-M13.6), ids as in CURRICULUM.md. Each lesson uses the same templat
   Replay, voice guidance; stages unlock in order and a finished lesson can be replayed (`StudioLessonPage`).
 - All practical work happens inside the lesson, in the right-hand workspace (`StudioPane`), never in the main DAW: a
   sound browser (chips, search, click or arrow keys to listen, drag to use) and an arrangement of the lesson's own tracks
-  (drop sounds, move clips with snap, Duplicate, Delete, mute, solo, Fit, BPM, grid 1 bar-1/32, playhead, Play). Lessons
+  (drop sounds, move clips with snap, change a clip's length by dragging its right edge (snapped, at least one beat,
+  one Undo step), Duplicate, Delete, mute, solo, Fit, BPM, grid 1 bar-1/32 (starts at 1/4 so clips move by beats; the
+  Grid and Snap choice is remembered for every lesson), playhead, Play). Lessons
   that edit notes (M13.3, M13.4, M13.6) open the selected clip in the real piano roll below it. It edits the real
   project through the shared ops, so Undo and the engine work as everywhere else.
 - Hook: explanation, Hear it, Play example (the sounds, lit in the browser). Watch: captions step by step, lighting

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MAX_BPM, MIN_BPM, PPQ, TICKS_PER_BAR, deleteClipOps, dropSampleOps, duplicateClipOps, moveClipOps, newClipOps, songTicks, type Clip, type OpBody, type Project, type Track } from "@daw/shared";
+import { MAX_BPM, MIN_BPM, MIN_CLIP_TICKS, PPQ, TICKS_PER_BAR, deleteClipOps, dropSampleOps, duplicateClipOps, moveClipOps, newClipOps, resizeClipOps, songTicks, type Clip, type OpBody, type Project, type Track } from "@daw/shared";
 import type { Category, IndexEntry } from "@daw/sounds";
 import { GRID_OPTIONS } from "../../../pianoRoll/geometry";
 import { CATEGORY_COLORS, sampleTag } from "../../../samples/sampleColors";
 import { categoryCounts, filterSamples } from "../../../samples/filter";
 import { libraryStore, previewIdStore, statusStore, useStore } from "../../../store";
 import { PianoPane } from "../PianoPane";
+import { browserStore, readJson, writeJson } from "../storage";
 import { LESSON_TRACK_PREFIX, lessonView } from "./checks";
 import { barTick } from "./exampleSong";
 import type { Target } from "./types";
@@ -34,7 +35,12 @@ const CATEGORY_ORDER: Category[] = ["Kick", "Snare", "Clap", "Hat", "Cymbal", "T
 const DRAG_TYPE = "application/x-lesson-sound";
 const LANE_H = 52;
 const HEAD_W = 176;
+/** Grabbing a clip this close to its right edge resizes it instead of moving it. */
+const RESIZE_PX = 8;
 const uuid = () => crypto.randomUUID();
+/** The learner's Grid and Snap choice, kept for every lesson (default: one beat, so clips can land on any beat). */
+const PANE_KEY = "lessons.studioPane.v1";
+const paneStore = browserStore();
 const btn = "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40 bg-white/5 text-slate-200 hover:bg-white/10";
 
 /** Plays a library sound in the engine and remembers it as heard (the listening tasks read that). */
@@ -134,6 +140,15 @@ function SoundBrowser({ guide }: { guide: StudioGuide }) {
 }
 
 /** Ticks from the left edge of a lane, snapped down to the grid (a drop lands on the line at or before the pointer). */
+/** "4 beats", "1 bar", "2 bars 1 beat". */
+function beatsText(ticks: number) {
+  const beats = Math.round(ticks / PPQ);
+  const bars = Math.floor(beats / 4);
+  const rest = beats % 4;
+  const parts = [bars ? `${bars} bar${bars === 1 ? "" : "s"}` : "", rest ? `${rest} beat${rest === 1 ? "" : "s"}` : ""].filter(Boolean);
+  return parts.join(" ") || `${(ticks / PPQ).toFixed(2)} beats`;
+}
+
 const snapTo = (ticks: number, grid: number, snap: boolean) => Math.max(0, snap ? Math.floor(ticks / grid) * grid : Math.round(ticks));
 
 /** `ready` is false while the lesson's own workspace is being swapped in (the previous lesson's tracks are hidden). */
@@ -144,11 +159,12 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
   const lib = useStore(libraryStore);
   const playing = status?.playing ?? false;
   const songLen = songTicks(project);
-  const [grid, setGrid] = useState<number>(GRID_OPTIONS[0].ticks);
-  const [snap, setSnap] = useState(true);
+  const [grid, setGrid] = useState<number>(() => readJson(paneStore, PANE_KEY, { grid: PPQ, snap: true }).grid);
+  const [snap, setSnap] = useState<boolean>(() => readJson(paneStore, PANE_KEY, { grid: PPQ, snap: true }).snap);
+  useEffect(() => writeJson(paneStore, PANE_KEY, { grid, snap }), [grid, snap]);
   const [pxPerBar, setPxPerBar] = useState(project.songBars > 12 ? 56 : 110);
   const [selected, setSelected] = useState<{ trackId: string; clipId: string } | null>(null);
-  type Drag = { trackId: string; clipId: string; x0: number; orig: number; start: number };
+  type Drag = { kind: "move" | "resize"; trackId: string; clipId: string; x0: number; orig: number; start: number; length: number };
   const [drag, setDragState] = useState<Drag | null>(null);
   // The ref sees every pointer event at once (events can arrive before React re-renders); the state draws it.
   const dragRef = useRef<Drag | null>(null);
@@ -215,14 +231,22 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
     } catch {
       // not a real pointer (keyboard or synthetic): the drag still works while the pointer stays over the clip
     }
-    setDrag({ trackId: t.id, clipId: c.id, x0: ev.clientX, orig: c.startTick, start: c.startTick });
+    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    const kind = rect.right - ev.clientX <= RESIZE_PX ? "resize" : "move";
+    setDrag({ kind, trackId: t.id, clipId: c.id, x0: ev.clientX, orig: kind === "move" ? c.startTick : c.lengthTicks, start: c.startTick, length: c.lengthTicks });
   };
   const clipMove = (ev: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag) return;
     const raw = drag.orig + ((ev.clientX - drag.x0) / pxPerBar) * TICKS_PER_BAR;
-    const start = snap ? Math.round(raw / grid) * grid : Math.round(raw);
-    if (start !== drag.start) setDrag({ ...drag, start: Math.max(0, start) });
+    const snapped = snap ? Math.round(raw / grid) * grid : Math.round(raw);
+    if (drag.kind === "move") {
+      if (snapped !== drag.start) setDrag({ ...drag, start: Math.max(0, snapped) });
+    } else {
+      // At least one beat long, and never past the end of the song.
+      const length = Math.max(MIN_CLIP_TICKS, Math.min(songLen - drag.start, snapped));
+      if (length !== drag.length) setDrag({ ...drag, length });
+    }
   };
   const clipUp = () => {
     const drag = dragRef.current;
@@ -230,7 +254,9 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
     const t = view.tracks[drag.trackId];
     const c = t?.clips[drag.clipId];
     setDrag(null);
-    if (t && c && drag.start !== c.startTick) void batch(moveClipOps(t.id, t, c, drag.start, songLen), "A clip cannot overlap another clip on the same track.");
+    if (!t || !c) return;
+    if (drag.kind === "move" && drag.start !== c.startTick) void batch(moveClipOps(t.id, t, c, drag.start, songLen), "A clip cannot overlap another clip on the same track.");
+    if (drag.kind === "resize" && drag.length !== c.lengthTicks) void batch(resizeClipOps(t.id, t, c, drag.length, songLen), "A clip cannot overlap the next clip on the same track.");
   };
   const laneDouble = (ev: React.MouseEvent<HTMLDivElement>, t: Track) => {
     if (readOnly || t.instrument === "sample") return;
@@ -285,7 +311,7 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
           <button className={`${btn} ${snap ? "!bg-emerald-400/15 !text-emerald-200" : ""}`} onClick={() => setSnap(!snap)} aria-pressed={snap} data-testid="ksnap">
             Snap {snap ? "on" : "off"}
           </button>
-          <label className="flex items-center gap-1.5 text-xs text-slate-400">
+          <label className="flex items-center gap-1.5 text-xs text-slate-400" title="Clips land on these lines: 1 bar = only the start of a bar, 1/4 = every beat, 1/8 and finer = in between">
             Grid
             <select value={grid} onChange={(e) => setGrid(Number(e.target.value))} className="rounded-lg bg-white/5 px-1.5 py-1 text-slate-100" aria-label="Grid size" data-testid="kgrid">
               {GRID_OPTIONS.map((g) => (
@@ -354,6 +380,7 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
                       <div className="relative" style={{ width, ...gridBg }} onDragOver={allowDrop} onDrop={(e) => onDrop(e, id)} onDoubleClick={(e) => laneDouble(e, t)} onPointerDown={() => setSelected(null)}>
                         {Object.values(t.clips).map((c) => {
                           const start = drag?.clipId === c.id ? drag.start : c.startTick;
+                          const length = drag?.clipId === c.id ? drag.length : c.lengthTicks;
                           const sel = selected?.clipId === c.id;
                           return (
                             <div
@@ -362,12 +389,15 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
                               onPointerMove={clipMove}
                               onPointerUp={clipUp}
                               className={`absolute top-1 bottom-1 cursor-grab overflow-hidden rounded-md px-1.5 text-[11px] font-medium text-white/90 ${sel ? "ring-2 ring-white" : ""} ${t.mute ? "opacity-40" : ""}`}
-                              style={{ left: x(start), width: Math.max(6, x(c.lengthTicks) - 2), background: `${t.color}55`, borderLeft: `3px solid ${t.color}` }}
-                              title={`${c.name ?? "Clip"}: bar ${Math.floor(start / TICKS_PER_BAR) + 1}${start % TICKS_PER_BAR ? `, beat ${Math.floor((start % TICKS_PER_BAR) / PPQ) + 1}` : ""}`}
+                              style={{ left: x(start), width: Math.max(6, x(length) - 2), background: `${t.color}55`, borderLeft: `3px solid ${t.color}` }}
+                              title={`${c.name ?? "Clip"}: bar ${Math.floor(start / TICKS_PER_BAR) + 1}${start % TICKS_PER_BAR ? `, beat ${Math.floor((start % TICKS_PER_BAR) / PPQ) + 1}` : ""}, ${beatsText(length)} long. Drag to move, drag the right edge to change its length.`}
                               data-testid="kclip"
                               data-clip-id={c.id}
                               data-start={start}
+                              data-length={length}
                             >
+                              {!readOnly && <span className="absolute top-0 right-0 bottom-0 cursor-ew-resize rounded-r-md" style={{ width: RESIZE_PX, background: `${t.color}aa` }} aria-hidden="true" data-testid="kresize" />}
+                              {drag?.clipId === c.id && drag.kind === "resize" && <span className="absolute top-0.5 right-2 rounded bg-black/60 px-1 text-[10px]">{beatsText(length)}</span>}
                               <span className="truncate">{c.name ?? "Clip"}</span>
                               <span className="pointer-events-none absolute inset-x-1 bottom-1 flex h-3 items-end gap-px opacity-70">
                                 {Object.values(c.notes)
