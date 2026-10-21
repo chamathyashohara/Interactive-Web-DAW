@@ -450,3 +450,35 @@ new stage unmutes by itself.
 PianoRoll additions (optional `guide` fields, no change when unused): `columns`, `countBeats`, `activeKeys`, `focus`.
 Verified in the built app: 27/27 requirement checks (speech spied for overlap, Web Audio spied for piano notes, key
 visibility measured, notes compared after studio round-trip, other sub-lesson and app restart).
+
+## Main Lessons page (2026-10-21)
+
+The Learn view now opens on a main **Lessons** page ("What would you like to learn?") with four cards in a two-column
+grid (one column below 768 px): **Piano**, **Kick Drums**, **Mixing**, **DAW Features** (`mainLessons.ts` holds the card
+data, `LessonsHome.tsx` the page). The Learn view gained a sidebar (Studio, Learn; Home, Collaborate, Projects, Settings
+and Log out are shown disabled with "Soon" because those features do not exist in this app) and a header with the
+Waveform Studio logo (back to the Lessons page), a disabled notifications bell and the profile (study participant code
+or "Guest").
+
+- **Piano** opens the existing L1-L6 learning path unchanged, with an "All lessons" breadcrumb back. Its card lists the
+  six module titles and shows the learner's progress (done of built sub-lessons).
+- **Kick Drums, Mixing, DAW Features** have no lesson pages yet. Each opens a "Coming soon" page (`CollectionPage.tsx`)
+  with its planned topics and links to existing related lessons (Kick → Rhythm; DAW Features → L1 "What you see" and
+  MIDI editing). To connect a real collection later: set `available: true` and route its id in `LearnView`'s `openMain`.
+- Navigation is state-based like the rest of the Learn view (`LearnViewState` gained `lessons`, `collection`); the last
+  view is restored after visiting the studio. Every card and button is a real `<button>`, keyboard reachable, with
+  visible focus rings and labels.
+
+Verified in the built app: 27/27 page checks (layout at 1500/1024/700 px, card order, Piano → L1-L6 → back, keyboard
+Enter, a sub-lesson's Try check, the three not-available pages and their related lessons, studio round-trip, no console
+errors) and the full 39 sub-lesson regression (196/196).
+
+## Fix: finished sub-lessons can be done again (2026-10-21)
+
+Reopening a finished sub-lesson used to land on the Done screen with the quick check answered (Check answer disabled),
+every hint used (Hint disabled) and the old answer still in Practice; sub-lessons finished before progress was saved had
+every stage after Hook locked. Now opening a finished sub-lesson (from the path, search, "Next" or a related link) starts
+a new run-through from Hook (`lessonState.replaySub`: quick check unanswered, hints hidden, Try/Practice back to their
+starting notes), and a finished sub-lesson keeps every stage open with Next always available. It stays Done on the path.
+Verified: 15/15 replay checks (including after an app restart and with no saved progress), 27/27 page checks, 196/196
+regression.

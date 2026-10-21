@@ -9,7 +9,8 @@ import type { StarterNote } from "./types";
  * notes to bring back when the clip has been used by something else since, and the learner's position.
  */
 
-export type LearnViewState = { kind: "path" } | { kind: "sub"; id: string } | { kind: "earlier"; id: string };
+/** "lessons" is the main Lessons page; "path" is the Piano learning path (L1-L6); "collection" a main lesson not built yet. */
+export type LearnViewState = { kind: "lessons" } | { kind: "path" } | { kind: "collection"; id: string } | { kind: "sub"; id: string } | { kind: "earlier"; id: string };
 export type WorkStage = "try" | "practice";
 
 export interface SubProgress {
@@ -42,7 +43,7 @@ interface Saved {
 }
 
 const KEY = "lessons.state.v1";
-const EMPTY: Saved = { view: { kind: "path" }, subs: {}, owner: null, work: {}, earlier: {}, pane: null };
+const EMPTY: Saved = { view: { kind: "lessons" }, subs: {}, owner: null, work: {}, earlier: {}, pane: null };
 
 /** Does entering this stage need the shared clip to be replaced (it holds another stage's or sub-lesson's notes)? */
 export const needsFreshClip = (owner: Saved["owner"], subId: string, stage: WorkStage) => !owner || owner.subId !== subId || owner.stage !== stage;
@@ -71,6 +72,18 @@ export function createLessonState(store: KeyValueStore) {
     work: (subId: string, stage: WorkStage): StarterNote[] | undefined => state.work[workKey(subId, stage)],
     saveWork(subId: string, stage: WorkStage, notes: StarterNote[]) {
       state = { ...state, work: { ...state.work, [workKey(subId, stage)]: notes } };
+      save();
+    },
+    /**
+     * Opening a sub-lesson the learner already finished starts a new run-through from Hook: the quick check is unanswered,
+     * hints are hidden and Try/Practice start from their starting notes again. Stages stay open (`reached` is kept).
+     */
+    replaySub(id: string) {
+      const s = state.subs[id];
+      if (s?.stage !== "done") return;
+      const work = Object.fromEntries(Object.entries(state.work).filter(([k]) => !k.startsWith(`${id}:`)));
+      const owner = state.owner?.subId === id ? null : state.owner;
+      state = { ...state, subs: { ...state.subs, [id]: { ...s, stage: "hook", hints: 0, quickPicked: null, quickRight: false } }, work, owner };
       save();
     },
     earlier: (id: string) => state.earlier[id],

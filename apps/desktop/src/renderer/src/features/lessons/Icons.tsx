@@ -160,3 +160,86 @@ export function ConceptIcon({ concept, size = 30 }: { concept: Concept; size?: n
       );
   }
 }
+
+// ---- Main Lessons page and the Learn sidebar ----
+
+export const PianoKeysIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M8 4v16M12 4v16M16 4v16" />
+    <path d="M6.5 4v8h3V4M14.5 4v8h3V4" fill="currentColor" />
+  </Svg>
+);
+export const DrumIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <circle cx="12" cy="12" r="4.5" />
+    <path d="M6 6l2.5 2.5M18 18l-2.5-2.5M18 6l-2.5 2.5M6 18l2.5-2.5" />
+  </Svg>
+);
+export const FadersIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 3v18M12 3v18M18 3v18" />
+    <rect x="4" y="13" width="4" height="3" rx="1" fill="currentColor" />
+    <rect x="10" y="6" width="4" height="3" rx="1" fill="currentColor" />
+    <rect x="16" y="10" width="4" height="3" rx="1" fill="currentColor" />
+  </Svg>
+);
+export const GridIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="7" height="7" rx="1.5" />
+    <rect x="13" y="4" width="7" height="7" rx="1.5" />
+    <rect x="4" y="13" width="7" height="7" rx="1.5" />
+    <rect x="13" y="13" width="7" height="7" rx="1.5" />
+  </Svg>
+);
+export const WaveLogoIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M2 12h4l2-5 3 10 3-14 3 13 2-4h3" />
+  </Svg>
+);
+export const HomeIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 11 12 4l8 7" />
+    <path d="M6 10v10h12V10" />
+    <path d="M10 20v-5h4v5" />
+  </Svg>
+);
+export const MusicIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 18V6l10-2v12" />
+    <circle cx="6.5" cy="18" r="2.5" />
+    <circle cx="16.5" cy="16" r="2.5" />
+  </Svg>
+);
+export const UsersIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="9" cy="8" r="3.5" />
+    <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+    <circle cx="17" cy="9" r="2.5" />
+    <path d="M16 14.2c2.8.3 5 2.6 5 5.8" />
+  </Svg>
+);
+export const FolderIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </Svg>
+);
+export const GearIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 4.6V4a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" />
+  </Svg>
+);
+export const LogoutIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
+    <path d="M10 16l-4-4 4-4M6 12h10" />
+  </Svg>
+);
+export const BellIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z" />
+    <path d="M10 20a2 2 0 0 0 4 0" />
+  </Svg>
+);

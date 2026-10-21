@@ -18,6 +18,23 @@ describe("lesson state (progress kept across the studio, other lessons and resta
     expect(b.sub("unknown")).toBeUndefined();
   });
 
+  it("starts a finished sub-lesson again from Hook, with fresh exercises and every stage still open", () => {
+    const s = createLessonState(memoryStore());
+    s.saveSub("m1-octaves", { stage: "done", reached: 5, hints: 3, tryPassed: true, practicePassed: true, quickPicked: 2, quickRight: true });
+    s.saveWork("m1-octaves", "practice", [{ pitch: 67, startTick: 0, durationTicks: 960 }]);
+    s.saveWork("m1-semitones", "try", [{ pitch: 61, startTick: 0, durationTicks: 960 }]);
+    s.setOwner({ subId: "m1-octaves", stage: "practice" });
+    s.replaySub("m1-octaves");
+    expect(s.sub("m1-octaves")).toEqual({ stage: "hook", reached: 5, hints: 0, tryPassed: true, practicePassed: true, quickPicked: null, quickRight: false });
+    expect(s.work("m1-octaves", "practice")).toBeUndefined();
+    expect(s.work("m1-semitones", "try")).toBeDefined();
+    expect(s.owner()).toBeNull();
+    // A sub-lesson still in progress keeps its place.
+    s.saveSub("m1-semitones", { stage: "practice", reached: 3, hints: 1, tryPassed: true, practicePassed: false, quickPicked: null, quickRight: false });
+    s.replaySub("m1-semitones");
+    expect(s.sub("m1-semitones")?.stage).toBe("practice");
+  });
+
   it("keeps each stage's notes separately and remembers who owns the shared clip", () => {
     const s = createLessonState(memoryStore());
     s.saveWork("m1-octaves", "practice", [{ pitch: 67, startTick: 0, durationTicks: 960 }]);

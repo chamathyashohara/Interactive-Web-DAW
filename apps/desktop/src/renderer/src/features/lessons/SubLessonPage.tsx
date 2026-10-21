@@ -3,6 +3,7 @@ import { PPQ, TICKS_PER_BAR, createTrack, type Project } from "@daw/shared";
 import type { PianoRollGuide } from "../../pianoRoll/PianoRoll";
 import { notesToEvents, playEvents, type Preview, type PreviewEvent } from "./audio";
 import { BeatCounter } from "./BeatCounter";
+import { lessonEvents } from "./events";
 import { lessonState, needsFreshClip, type WorkStage } from "./lessonState";
 import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerIcon } from "./Icons";
 import { NotesTab } from "./LessonPage";
@@ -185,7 +186,9 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
   useEffect(() => {
     lessonState.saveSub(sub.id, { stage, reached, hints: practiceXs.hintsShown, tryPassed, practicePassed, quickPicked: picked, quickRight: quickResult === "right" });
   }, [sub.id, stage, reached, practiceXs.hintsShown, tryPassed, practicePassed, picked, quickResult]);
-  const canAdvance: Record<StageId, boolean> = { hook: true, watch: true, try: tryPassed, practice: practicePassed, quick: quickResult === "right", done: false };
+  // A sub-lesson finished before is open for review: every stage can be visited and Next is never held back by a check.
+  const finished = lessonEvents.isCompleted(sub.id);
+  const canAdvance: Record<StageId, boolean> = { hook: true, watch: true, try: finished || tryPassed, practice: finished || practicePassed, quick: finished || quickResult === "right", done: false };
 
   const go = async (next: StageId) => {
     stopWatch();
@@ -475,7 +478,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
           ← Back
         </button>
         <span className="text-xs text-slate-500">
-          {stage === "try" && !tryPassed ? "Pass the check to continue" : stage === "practice" && !practicePassed ? "Pass the check to continue" : stage === "quick" && quickResult !== "right" ? "Answer correctly to continue" : ""}
+          {canAdvance[stage] ? "" : stage === "try" && !tryPassed ? "Pass the check to continue" : stage === "practice" && !practicePassed ? "Pass the check to continue" : stage === "quick" && quickResult !== "right" ? "Answer correctly to continue" : ""}
         </span>
         <button className={solidBtn} disabled={!canAdvance[stage]} onClick={advance} data-testid="stage-next">
           {STAGES[stageIndex + 1] ? `Next: ${STAGES[stageIndex + 1]!.label} →` : "Next →"}
@@ -521,7 +524,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
             {STAGES.map((s, i) => {
               const active = s.id === stage;
               const done = i < reached || (i <= reached && !active && i < stageIndex);
-              const locked = i > reached;
+              const locked = !finished && i > reached;
               return (
                 <li key={s.id} className="flex min-w-0 flex-1 items-center">
                   <button disabled={locked} onClick={() => void go(s.id)} className="flex min-w-0 items-center gap-2.5 text-left disabled:cursor-not-allowed" title={locked ? "Finish the earlier stages first" : s.label} data-testid={`stage-${s.id}`}>

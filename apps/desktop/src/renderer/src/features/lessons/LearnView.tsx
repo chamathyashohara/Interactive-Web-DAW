@@ -3,14 +3,18 @@ import type { Project } from "@daw/shared";
 import { LESSONS } from "./content";
 import { BUILT, MODULES, nextBuilt, searchPath, type PathHit } from "./curriculum";
 import { lessonEvents } from "./events";
-import { ArrowLeft, ArrowRight, BookIcon, ConceptIcon, SearchIcon, SpeakerIcon } from "./Icons";
+import { CollectionPage } from "./CollectionPage";
+import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
 import { overallProgress } from "./learnModel";
 import { LearningPath } from "./LearningPath";
 import { LessonPage } from "./LessonPage";
+import { LessonsHome } from "./LessonsHome";
+import { mainLesson, type MainLessonId, type RelatedLesson } from "./mainLessons";
 import { onVoicesReady, speechAvailable, stopSpeaking } from "./speech";
 import { browserStore, readJson, writeJson } from "./storage";
 import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
+import { studyLog } from "./studyLog";
 import { SubLessonPage } from "./SubLessonPage";
 
 if (import.meta.env.DEV) lessonEvents.onLessonCompleted((e) => console.info("[lessons] lesson-completed", e));
@@ -33,7 +37,41 @@ function restoredView(): View {
   const v = lessonState.view();
   if (v.kind === "sub" && BUILT[v.id]) return v;
   if (v.kind === "earlier" && LESSONS.some((l) => l.id === v.id)) return v;
-  return { kind: "path" };
+  if (v.kind === "collection" && mainLesson(v.id)) return v;
+  if (v.kind === "path") return v;
+  return { kind: "lessons" };
+}
+
+interface NavItem {
+  label: string;
+  Icon: (p: { size?: number }) => React.JSX.Element;
+  /** Missing when the feature does not exist in this app yet: shown, but clearly not available. */
+  onClick?: () => void;
+  active?: boolean;
+  testId?: string;
+}
+
+function NavButton({ item }: { item: NavItem }) {
+  const available = Boolean(item.onClick);
+  return (
+    <button
+      type="button"
+      onClick={item.onClick}
+      disabled={!available}
+      aria-current={item.active ? "page" : undefined}
+      title={available ? item.label : `${item.label}: not available yet`}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
+        item.active ? "bg-emerald-400/10 font-semibold text-white ring-1 ring-emerald-300/20" : available ? "text-slate-300 hover:bg-white/5 hover:text-white" : "cursor-not-allowed text-slate-600"
+      }`}
+      data-testid={item.testId}
+    >
+      <span className={item.active ? "text-emerald-300" : ""}>
+        <item.Icon size={20} />
+      </span>
+      <span className="hidden lg:inline">{item.label}</span>
+      {!available && <span className="ml-auto hidden text-[10px] text-slate-600 lg:inline">Soon</span>}
+    </button>
+  );
 }
 
 function PathSearch({ onOpen }: { onOpen: (hit: PathHit) => void }) {
@@ -108,7 +146,16 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
     stopSpeaking();
     onExit();
   };
-  const openHit = (h: PathHit) => show(h.kind === "sub" ? { kind: "sub", id: h.id } : { kind: "earlier", id: h.id });
+  /** Opens a sub-lesson; one the learner finished starts again from Hook (see `lessonState.replaySub`). */
+  const openSub = (id: string) => {
+    lessonState.replaySub(id);
+    show({ kind: "sub", id });
+  };
+  const openHit = (h: PathHit) => (h.kind === "sub" ? openSub(h.id) : show({ kind: "earlier", id: h.id }));
+  /** Piano opens the existing L1-L6 learning path; the others open their (not yet available) collection page. */
+  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : { kind: "collection", id });
+  const openRelated = (r: RelatedLesson) => (r.kind === "sub" ? openSub(r.id) : show({ kind: "earlier", id: r.id }));
+  const participant = studyLog.session()?.participant ?? null;
 
   const sub = view.kind === "sub" ? BUILT[view.id] : undefined;
   const earlierIndex = view.kind === "earlier" ? LESSONS.findIndex((l) => l.id === view.id) : -1;
@@ -118,14 +165,16 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
 
   return (
     <div className="flex h-full flex-col bg-[#0b0d13] text-slate-300" data-testid="learn-view">
-      <header className="flex items-center gap-4 border-b border-white/10 bg-[#0e1118] px-6 py-3">
-        <button onClick={() => show({ kind: "path" })} className="flex items-center gap-2.5" title="Learning path" data-testid="learn-home">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-300/15 text-emerald-300">
-            <BookIcon size={19} />
+      <header className="flex items-center gap-4 border-b border-white/10 bg-[#0e1118] px-4 py-3 lg:px-6">
+        <button onClick={() => show({ kind: "lessons" })} className="flex shrink-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60" title="Lessons" aria-label="Waveform Studio: all lessons" data-testid="learn-home">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl text-emerald-300 ring-1 ring-emerald-300/50">
+            <WaveLogoIcon size={20} />
           </span>
-          <span className="text-sm font-semibold tracking-wide text-slate-100">Learn</span>
+          <span className="hidden text-[15px] font-semibold tracking-wide text-white sm:inline">
+            WAVEFORM <span className="font-normal text-slate-400">/ STUDIO</span>
+          </span>
         </button>
-        <PathSearch onOpen={openHit} />
+        {(view.kind === "path" || view.kind === "sub" || view.kind === "earlier") && <PathSearch onOpen={openHit} />}
         <div className="ml-auto flex items-center gap-3">
           {canSpeak && (
             <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-400" title="Read each step aloud as it opens">
@@ -143,16 +192,56 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               />
             </label>
           )}
-          <button onClick={exit} className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500" data-testid="learn-exit">
-            Open Studio <ArrowRight size={16} />
+          <span className="h-8 w-px bg-white/10" />
+          <button type="button" disabled title="No notifications" aria-label="Notifications (none)" className="text-slate-500">
+            <BellIcon size={20} />
           </button>
+          <div className="flex items-center gap-2.5" data-testid="learn-profile">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-500 text-sm font-semibold text-white">{(participant ?? "G").charAt(0).toUpperCase()}</span>
+            <span className="hidden leading-tight md:block">
+              <span className="block text-sm font-semibold text-white">{participant ?? "Guest"}</span>
+              <span className="block text-[11px] text-slate-400">{participant ? "Study participant" : "Learner"}</span>
+            </span>
+          </div>
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pt-4 pb-5">
-        {view.kind === "path" && <LearningPath onOpenSub={(id) => show({ kind: "sub", id })} onOpenEarlier={(id) => show({ kind: "earlier", id })} />}
+      <div className="flex min-h-0 flex-1">
+        <nav aria-label="Main" className="flex w-16 shrink-0 flex-col gap-1 border-r border-white/10 bg-[#0d1016] p-2 lg:w-56 lg:p-3">
+          {[
+            { label: "Home", Icon: HomeIcon },
+            { label: "Studio", Icon: MusicIcon, onClick: exit, testId: "learn-exit" },
+            { label: "Collaborate", Icon: UsersIcon },
+            { label: "Learn", Icon: BookIcon, onClick: () => show({ kind: "lessons" }), active: true, testId: "nav-learn" },
+            { label: "Projects", Icon: FolderIcon },
+          ].map((item) => (
+            <NavButton key={item.label} item={item} />
+          ))}
+          <div className="mt-auto flex flex-col gap-1 border-t border-white/10 pt-3">
+            <NavButton item={{ label: "Settings", Icon: GearIcon }} />
+            <NavButton item={{ label: "Log out", Icon: LogoutIcon }} />
+          </div>
+        </nav>
 
-        {view.kind !== "path" && (
+      <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-5 lg:px-6">
+        {view.kind === "lessons" && <LessonsHome onOpen={openMain} />}
+
+        {view.kind === "collection" && mainLesson(view.id) && <CollectionPage lesson={mainLesson(view.id)!} onBack={() => show({ kind: "lessons" })} onOpenRelated={openRelated} />}
+
+        {view.kind === "path" && (
+          <>
+            <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-400">
+              <button onClick={() => show({ kind: "lessons" })} className="flex items-center gap-2 hover:text-slate-200" data-testid="back-to-lessons">
+                <ArrowLeft size={16} /> All lessons
+              </button>
+              <span className="text-slate-600">/</span>
+              <span className="text-slate-200">Piano</span>
+            </nav>
+            <LearningPath onOpenSub={openSub} onOpenEarlier={(id) => show({ kind: "earlier", id })} />
+          </>
+        )}
+
+        {(view.kind === "sub" || view.kind === "earlier") && (
           <button onClick={() => show({ kind: "path" })} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-path">
             <ArrowLeft size={16} /> Back to Learning Path
           </button>
@@ -184,7 +273,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               moduleCode={module?.code ?? ""}
               next={(() => {
                 const n = nextBuilt(sub.id);
-                return n ? { title: n.title, open: () => show({ kind: "sub", id: n.id }) } : null;
+                return n ? { title: n.title, open: () => openSub(n.id) } : null;
               })()}
               voice={voice}
               canSpeak={canSpeak}
@@ -241,6 +330,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
 
         <StudySection />
       </main>
+      </div>
     </div>
   );
 }

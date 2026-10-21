@@ -259,3 +259,15 @@ and remain under Earlier lessons.
   notes drawn as long as they should last.
 - In every Hook, **Hear it** now reads the Hook aloud; the musical example moved to **Play example** (the Hook texts
   were updated from "Press Hear it" to "Press Play example").
+
+## Main Lessons page (cards)
+
+Heading: "What would you like to learn?" Subtitle: "Choose a main lesson to start your journey. Build real skills.
+Create your sound."
+
+| Card | Description | Topics | Status |
+| --- | --- | --- | --- |
+| Piano | Learn the piano roll, notes, scales, chords, progressions and melody. Build your musical foundation step by step. | The six L1-L6 module titles | Opens the learning path |
+| Kick Drums | Learn how to create, program and shape powerful kick drums for your tracks. | Kick drum basics, Sound design, Punch and attack, Layering, EQ and compression, Build your own kick | Coming soon (related: Rhythm) |
+| Mixing | Get your tracks sounding professional. Learn balance, EQ, compression and more. | Gain staging, EQ, Compression, Reverb and delay, Automation, Final mix | Coming soon |
+| DAW Features | Master the tools and workflow of your DAW. Work faster, stay organised and be more creative. | Navigation and workspace, Recording, Editing, Plug-ins and instruments, Automation, Project management | Coming soon (related: L1 What you see, MIDI editing) |
