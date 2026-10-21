@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
-import type { Project } from "@daw/shared";
-import type { EngineState, ExportStatus, StatusPayload } from "../../preload/index";
+import { defaultProgress, type Progress, type Project } from "@daw/shared";
+import type { IndexEntry } from "@daw/sounds";
+import type { EngineState, ExportStatus, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
   let state = initial;
@@ -35,6 +36,22 @@ export const engineStateStore = createStore<EngineState>({ connected: false, inf
 export const statusStore = createStore<StatusPayload | null>(null);
 
 export const exportStore = createStore<ExportStatus | null>(null);
+/** Learner progress: which lessons are done and whether features are gated. */
+export const progressStore = createStore<Progress>(defaultProgress());
+/** True in development builds: shows the developer tools (mark a lesson complete) in the Features panel. */
+export const devStore = createStore<boolean>(false);
+
+export interface LibraryView {
+  status: LibraryStatus;
+  entries: IndexEntry[];
+  packs: PackInfo[];
+}
+/** The sample library (Starter packs + imported packs). Audio stays in the main process; the UI only sees names, tags and waveforms. */
+export const libraryStore = createStore<LibraryView>({ status: { state: "preparing", fraction: 0 }, entries: [], packs: [] });
+/** Import progress while one is running, and the result of the last one until it is dismissed. */
+export const importStore = createStore<{ progress: ImportProgress | null; result: ImportResult | null }>({ progress: null, result: null });
+/** The sample being auditioned in the browser (null = none). Updated by the browser itself. */
+export const previewIdStore = createStore<string | null>(null);
 
 export async function initStores() {
   const initial = await window.daw.getInitial();
@@ -45,4 +62,22 @@ export async function initStores() {
   window.daw.onEngineState((s) => engineStateStore.set(s));
   window.daw.onEngineStatus((s) => statusStore.set(s));
   window.daw.onExportStatus((s) => exportStore.set(s));
+  // The library can finish preparing while the window is still starting, so events only say "it changed" and the
+  // state is always re-read from the main process; a late answer to an older request is dropped.
+  let libToken = 0;
+  const refreshLibrary = async () => {
+    const token = ++libToken;
+    const lib = await window.daw.getLibrary();
+    if (token === libToken) libraryStore.set({ status: lib.status, entries: lib.entries, packs: lib.packs });
+  };
+  window.daw.onLibraryStatus((status) => {
+    if (status.state === "preparing") libraryStore.set({ ...libraryStore.get(), status });
+    else void refreshLibrary();
+  });
+  window.daw.onLibrary(() => void refreshLibrary());
+  await refreshLibrary();
+  window.daw.onImportProgress((p) => importStore.set({ ...importStore.get(), progress: p.phase === "done" ? null : p }));
+  progressStore.set(await window.daw.getProgress());
+  devStore.set(await window.daw.isDev());
+  window.daw.onProgress((p) => progressStore.set(p));
 }

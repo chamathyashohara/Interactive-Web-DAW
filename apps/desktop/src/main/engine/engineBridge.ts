@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { EngineCommand, EngineEvent, EngineReady, EngineStatus, ExportEvent } from "@daw/engine-protocol";
+import type { EngineCommand, EngineEvent, EngineReady, EngineStatus, ExportEvent, SampleInfo } from "@daw/engine-protocol";
 
 export interface EngineBridgeEvents {
   ready: (info: EngineReady) => void;
   status: (status: EngineStatus) => void;
   exportEvent: (event: ExportEvent) => void;
+  sampleInfo: (info: SampleInfo) => void;
   down: () => void;
   error: (message: string) => void;
 }
@@ -108,6 +109,7 @@ export class EngineBridge extends EventEmitter {
       if (msg.t === "ready") this.emit("ready", msg);
       else if (msg.t === "status") this.emit("status", msg);
       else if (msg.t === "exportProgress" || msg.t === "exportDone" || msg.t === "exportError") this.emit("exportEvent", msg);
+      else if (msg.t === "sampleInfo") this.emit("sampleInfo", msg);
       else if (msg.t === "error") this.emit("error", msg.message);
     }
   }

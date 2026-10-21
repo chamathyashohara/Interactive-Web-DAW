@@ -1,5 +1,5 @@
 import {
-  INSTRUMENTS,
+  ALL_INSTRUMENTS,
   MAX_BPM,
   MAX_PITCH,
   MAX_SONG_BARS,
@@ -16,6 +16,7 @@ import {
   type Track,
 } from "./model";
 import type { ClipFields, Op, OpBody, TrackFields } from "./ops";
+import { isValidKey } from "./theory";
 
 export type ApplyResult =
   | { ok: true; project: Project; applied: boolean }
@@ -73,7 +74,11 @@ function validateTrackFields(t: Partial<TrackFields>): string | null {
 
 function validateTrack(t: Track, songLen: number): string | null {
   if (!t.id || typeof t.id !== "string") return "track id required";
-  if (!INSTRUMENTS.includes(t.instrument)) return "unknown instrument";
+  if (!ALL_INSTRUMENTS.includes(t.instrument)) return "unknown instrument";
+  if (t.instrument === "sample") {
+    if (!t.sample || typeof t.sample.id !== "string" || t.sample.id.length < 1 || t.sample.id.length > 200) return "a sample track needs a sample";
+    if (typeof t.sample.name !== "string" || typeof t.sample.gate !== "boolean") return "invalid sample reference";
+  } else if (t.sample !== undefined) return "only sample tracks have a sample";
   const fieldErr = validateTrackFields(t);
   if (fieldErr) return fieldErr;
   if (t.name === undefined || t.color === undefined || t.volume === undefined || t.pan === undefined || t.mute === undefined || t.solo === undefined) {
@@ -127,6 +132,10 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       }
       return done({ ...project, tempo: op.bpm }, op.opId);
     }
+    case "setKey": {
+      if (op.key !== null && !isValidKey(op.key)) return { ok: false, reason: "key must be a tonic 0-11 and major or minor" };
+      return done({ ...project, key: op.key === null ? null : { tonic: op.key.tonic, mode: op.key.mode } }, op.opId);
+    }
     case "setMasterVolume": {
       if (!isInt(op.volume) || op.volume < 0 || op.volume > 100) return { ok: false, reason: "volume must be an integer 0-100" };
       return done({ ...project, masterVolume: op.volume }, op.opId);
@@ -158,6 +167,18 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       const err = validateTrackFields(op.changes);
       if (err) return { ok: false, reason: err };
       return done(withTrack(project, op.trackId, { ...track, ...op.changes }), op.opId);
+    }
+    case "updateSample": {
+      const track = project.tracks[op.trackId];
+      if (!track || track.instrument !== "sample" || !track.sample) return { ok: false, reason: "not a sample track" };
+      const { bpm, fit } = op.changes;
+      if (bpm !== undefined && bpm !== null && (typeof bpm !== "number" || !Number.isFinite(bpm) || bpm < MIN_BPM || bpm > MAX_BPM)) return { ok: false, reason: "original tempo out of range" };
+      if (fit !== undefined && typeof fit !== "boolean") return { ok: false, reason: "fit must be boolean" };
+      const sample = { ...track.sample };
+      if (bpm === null) delete sample.bpm;
+      else if (bpm !== undefined) sample.bpm = bpm;
+      if (fit !== undefined) sample.fit = fit;
+      return done(withTrack(project, op.trackId, { ...track, sample }), op.opId);
     }
     case "addClip": {
       const track = project.tracks[op.trackId];
@@ -234,6 +255,8 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       return { ...base, type: "setMasterVolume", volume: before.masterVolume };
     case "setSongLength":
       return { ...base, type: "setSongLength", bars: before.songBars };
+    case "setKey":
+      return { ...base, type: "setKey", key: before.key };
     case "addTrack":
       return { ...base, type: "deleteTrack", trackId: op.track.id };
     case "deleteTrack": {
@@ -246,6 +269,14 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       const changes: Record<string, unknown> = {};
       for (const key of Object.keys(op.changes) as (keyof TrackFields)[]) changes[key] = track[key];
       return { ...base, type: "updateTrack", trackId: op.trackId, changes: changes as Partial<TrackFields> };
+    }
+    case "updateSample": {
+      const sample = before.tracks[op.trackId]?.sample;
+      if (!sample) return null;
+      const changes: { bpm?: number | null; fit?: boolean } = {};
+      if (op.changes.bpm !== undefined) changes.bpm = sample.bpm ?? null;
+      if (op.changes.fit !== undefined) changes.fit = sample.fit ?? false;
+      return { ...base, type: "updateSample", trackId: op.trackId, changes };
     }
     case "addClip":
       return { ...base, type: "deleteClip", trackId: op.trackId, clipId: op.clip.id };

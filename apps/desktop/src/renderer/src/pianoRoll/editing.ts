@@ -1,4 +1,4 @@
-import type { Note, OpBody } from "@daw/shared";
+import { isInKey, nearestInKey, type Note, type OpBody, type ProjectKey } from "@daw/shared";
 
 /** Pure builders for multi-note edits. Each returns ops that the main process applies as ONE undo step. */
 
@@ -91,4 +91,14 @@ export function clampGroupMove(
     dTick: Math.round(Math.min(clipLen - maxEnd, Math.max(-minStart, dTick))),
     dPitch: Math.min(pitchMax - maxPitch, Math.max(pitchMin - minPitch, dPitch)),
   };
+}
+
+/** Move every note that is outside the key to the nearest note that is in it (lower on a tie). One undo step. */
+export function fixOutOfKeyOps(clip: NoteClip, notes: Note[], key: ProjectKey): OpBody[] {
+  const ops: OpBody[] = [];
+  for (const n of notes) {
+    if (isInKey(n.pitch, key)) continue;
+    ops.push({ type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: n.id, changes: { pitch: nearestInKey(n.pitch, key) } });
+  }
+  return ops;
 }

@@ -1,8 +1,9 @@
 import type { Project, TrackFields } from "@daw/shared";
+import { useUnlock } from "../unlock/useUnlock";
 import { Meter, volumeToDb } from "./Meter";
 
 const update = (trackId: string, changes: Partial<TrackFields>, group?: string) => void window.daw.dispatch({ type: "updateTrack", trackId, changes }, group);
-const mini = "h-6 w-6 rounded text-[11px] font-bold transition-colors";
+const mini = "h-6 w-6 rounded text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40";
 const fader = { writingMode: "vertical-lr", direction: "rtl", width: 22, height: 112 } as const;
 
 function panLabel(pan: number) {
@@ -11,6 +12,8 @@ function panLabel(pan: number) {
 }
 
 export function Mixer({ project, selectedId, onSelect }: { project: Project; selectedId: string; onSelect: (id: string) => void }) {
+  const unlock = useUnlock();
+  const muteSoloLocked = !unlock.can("mixer.muteSolo");
   return (
     <section className="flex h-[212px] shrink-0 border-t border-white/10 bg-[#10131a]" data-testid="mixer">
       <div className="flex min-w-0 flex-1 gap-px overflow-x-auto">
@@ -36,8 +39,8 @@ export function Mixer({ project, selectedId, onSelect }: { project: Project; sel
               </div>
               <div className="text-[9px] text-slate-500">{volumeToDb(t.volume)} dB</div>
               <div className="flex gap-1">
-                <button className={`${mini} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mixer mute ${t.name}`} aria-pressed={t.mute}>M</button>
-                <button className={`${mini} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Mixer solo ${t.name}`} aria-pressed={t.solo}>S</button>
+                <button className={`${mini} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mixer mute ${t.name}`} aria-pressed={t.mute} disabled={muteSoloLocked} title={unlock.reason("mixer.muteSolo") ?? "Mute"}>M</button>
+                <button className={`${mini} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Mixer solo ${t.name}`} aria-pressed={t.solo} disabled={muteSoloLocked} title={unlock.reason("mixer.muteSolo") ?? "Solo"}>S</button>
               </div>
             </div>
           );

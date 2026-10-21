@@ -94,3 +94,44 @@ describe("clips in the engine snapshot", () => {
     expect(toEngineSnapshot(p, new SlotAllocator()).tracks[0]!.notes).toHaveLength(0);
   });
 });
+
+describe("sample tracks in the snapshot", () => {
+  const sampleTrack = () => {
+    const t = createTrack("ts", "Punch Kick", "sample", "#f97316", "cs");
+    t.sample = { id: "starter/kick/punch-kick", name: "Punch Kick", gate: false };
+    return t;
+  };
+  it("carries the file path and gate flag; a sound missing from the library is silent but present", () => {
+    const p = run(createProject("p"), { type: "addTrack", track: sampleTrack() });
+    const found = toEngineSnapshot(p, new SlotAllocator(), (id) => (id === "starter/kick/punch-kick" ? "C:/lib/Punch Kick.wav" : null));
+    const t = found.tracks.find((x) => x.instrument === "sample")!;
+    expect(t.samplePath).toBe("C:/lib/Punch Kick.wav");
+    expect(t.gate).toBe(false);
+    const missing = toEngineSnapshot(p, new SlotAllocator());
+    expect(missing.tracks.find((x) => x.instrument === "sample")!.samplePath).toBeUndefined();
+  });
+  it("mute silences a sample track like any other", () => {
+    let p = run(createProject("p"), { type: "addTrack", track: sampleTrack() });
+    p = run(p, { type: "updateTrack", trackId: "ts", changes: { mute: true } });
+    expect(toEngineSnapshot(p, new SlotAllocator()).tracks.find((x) => x.instrument === "sample")!.gain).toBe(0);
+  });
+});
+
+describe("stretchRatioFor", () => {
+  it("is the project tempo over the loop's own tempo, only when Fit is on and the tempo is known", async () => {
+    const { stretchRatioFor } = await import("./snapshot");
+    expect(stretchRatioFor(120, { bpm: 90, fit: true })).toBeCloseTo(4 / 3, 6);
+    expect(stretchRatioFor(75, { bpm: 90, fit: true })).toBeCloseTo(75 / 90, 6);
+    expect(stretchRatioFor(120, { bpm: 90, fit: false })).toBeNull();
+    expect(stretchRatioFor(120, { fit: true })).toBeNull();
+    expect(stretchRatioFor(90, { bpm: 90, fit: true })).toBeNull(); // same tempo: play as recorded
+    expect(stretchRatioFor(300, { bpm: 40, fit: true })).toBe(4); // limited to what can be stretched
+  });
+  it("reaches the engine in the snapshot", () => {
+    const t = createTrack("tl", "Loop", "sample", "#34d399", "cl");
+    t.sample = { id: "x", name: "x", gate: true, bpm: 90, fit: true };
+    const p = run(createProject("p"), { type: "addTrack", track: t });
+    const snap = toEngineSnapshot(p, new SlotAllocator(), () => "C:/x.wav");
+    expect(snap.tracks.find((x) => x.instrument === "sample")!.stretchRatio).toBeCloseTo(120 / 90, 6);
+  });
+});

@@ -8,6 +8,7 @@ export const MAX_ROW_H = 32;
 export const KEYS_W = 76;
 
 export const GRID_OPTIONS = [
+  { label: "1 bar", ticks: PPQ * 4 },
   { label: "1/4", ticks: PPQ },
   { label: "1/8", ticks: PPQ / 2 },
   { label: "1/16", ticks: PPQ / 4 },

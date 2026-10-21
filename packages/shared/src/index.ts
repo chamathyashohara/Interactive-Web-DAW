@@ -3,3 +3,6 @@ export * from "./ops";
 export * from "./apply";
 export * from "./history";
 export * from "./arrangement";
+export * from "./theory";
+export * from "./features";
+export * from "./samples";

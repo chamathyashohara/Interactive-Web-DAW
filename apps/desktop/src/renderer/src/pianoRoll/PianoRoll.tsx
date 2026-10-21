@@ -1,9 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PPQ, TICKS_PER_BAR, type Clip, type Note, type NoteFields, type OpBody, type Track } from "@daw/shared";
+import { PPQ, TICKS_PER_BAR, isInKey, isTonic, keyLabel, outOfKeyMessage, type Clip, type Note, type NoteFields, type OpBody, type ProjectKey, type Track } from "@daw/shared";
+import { LockIcon } from "../unlock/LockIcon";
+import { useUnlock } from "../unlock/useUnlock";
 import { statusStore, useStore } from "../store";
-import { clampGroupMove, copyNotes, deleteOps, duplicateOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, type NoteClip } from "./editing";
+import { PianoKeys } from "./PianoKeys";
+import { WindowButtons } from "./WindowButtons";
+import { clampGroupMove, copyNotes, deleteOps, duplicateOps, fixOutOfKeyOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, type NoteClip } from "./editing";
 import {
-  DRUM_NAMES,
   KEYS_W,
   PITCH_MAX,
   PITCH_MIN,
@@ -72,6 +75,14 @@ interface Props {
   onTool: (t: Tool) => void;
   /** Teaching overlay (lessons only). */
   guide?: PianoRollGuide;
+  /** The window buttons (maximize, close) show only when these are given; the lessons' embedded roll has none. */
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
+  onClose?: () => void;
+  /** The project's key (null = none). Drives scale highlighting and the red out-of-key notes. */
+  musicKey: ProjectKey | null;
+  keyHelp: boolean;
+  onToggleKeyHelp: () => void;
 }
 
 type Drag =
@@ -102,7 +113,7 @@ const Playhead = memo(function Playhead({ pxPerBeat, clipStart, clipLength }: { 
 
 const btn = "rounded px-2 py-0.5 text-[11px] font-medium bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5";
 
-export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, rowH, onTool: requestTool, guide }: Props) {
+export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, rowH, onTool: requestTool, guide, maximized = false, onToggleMaximize, onClose, musicKey, keyHelp, onToggleKeyHelp }: Props) {
   const allowed = guide?.tools;
   const tool: Tool = allowed && !allowed.includes(requestedTool) ? (allowed[0] ?? "select") : requestedTool;
   const onTool = (t: Tool) => {
@@ -116,6 +127,13 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   const gridW = tickToPx(clip.lengthTicks, pxPerBeat);
   const gridH = PITCHES.length * rowH;
   const isDrums = track.instrument === "drums";
+  const gated = useUnlock();
+  // A lesson's own roll is where these features are learned, so it is never locked; the lesson limits its tools itself.
+  const unlock = guide ? { can: () => true, reason: () => null } : gated;
+  // Key help applies to melodic tracks only (drum rows are instruments, not pitches) and only once its lesson is done.
+  const keyHelpAvailable = !isDrums && musicKey !== null && unlock.can("key.help");
+  const hint = keyHelpAvailable && keyHelp ? musicKey : null;
+  const badNotes = hint ? notes.filter((n) => !isInKey(n.pitch, hint)) : [];
 
   const gridRef = useRef<HTMLDivElement>(null);
   const velRef = useRef<HTMLDivElement>(null);
@@ -207,9 +225,11 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   // ---- editing commands (buttons + shortcuts) ----
   const targets = () => (selectedNotes.length ? selectedNotes : notes);
   const cmdCopy = () => {
+    if (!unlock.can("edit.clipboard")) return;
     if (selectedNotes.length) clipboard = copyNotes(selectedNotes);
   };
   const cmdPaste = () => {
+    if (!unlock.can("edit.clipboard")) return;
     if (!clipboard.length) return;
     const rel = (statusStore.get()?.tick ?? 0) - clip.startTick;
     const at = rel >= 0 && rel < clip.lengthTicks ? snapTick(rel, gridTicks, snap, "floor") : 0; // playhead outside this clip: paste at its start
@@ -218,16 +238,24 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
     setSelected(new Set(ids));
   };
   const cmdDuplicate = () => {
+    if (!unlock.can("edit.clipboard")) return;
     const ids: string[] = [];
     batch(duplicateOps(noteClip, selectedNotes, gridTicks, () => (ids.push(crypto.randomUUID()), ids[ids.length - 1]!)));
     if (ids.length) setSelected(new Set(ids));
   };
-  const cmdQuantize = () => batch(quantizeOps(noteClip, targets(), gridTicks));
+  const cmdQuantize = () => {
+    if (unlock.can("edit.quantize")) batch(quantizeOps(noteClip, targets(), gridTicks));
+  };
+  const cmdFixKey = () => {
+    if (hint) batch(fixOutOfKeyOps(noteClip, notes, hint));
+  };
   const cmdDelete = () => {
     batch(deleteOps(noteClip, [...liveSelected]));
     setSelected(new Set());
   };
-  const cmdSelectAll = () => setSelected(new Set(notes.map((n) => n.id)));
+  const cmdSelectAll = () => {
+    if (unlock.can("tool.select")) setSelected(new Set(notes.map((n) => n.id)));
+  };
 
   useEffect(() => {
     if (!keysEnabled || readOnly) return;
@@ -302,6 +330,12 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
       return;
     }
 
+    if (note && !unlock.can("tool.select")) {
+      // Until the select lesson is done, clicking a note only plays it.
+      window.daw.preview(track.id, note.pitch, note.velocity, true);
+      setTimeout(() => window.daw.preview(track.id, note.pitch, note.velocity, false), 250);
+      return;
+    }
     if (note) {
       // select / draw / paint on an existing note: select it and start moving or resizing the group
       let ids = liveSelected;
@@ -508,15 +542,27 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
         </span>
         {commands && (
           <>
-            <button className={btn} onClick={cmdSelectAll} title="Select all (Ctrl+A)">Select all</button>
-            <button className={btn} disabled={!liveSelected.size} onClick={cmdCopy} title="Copy (Ctrl+C)">Copy</button>
-            <button className={btn} onClick={cmdPaste} title="Paste at the playhead (Ctrl+V)">Paste</button>
-            <button className={btn} disabled={!liveSelected.size} onClick={cmdDuplicate} title="Duplicate after the selection (Ctrl+D)">Duplicate</button>
-            <button className={btn} disabled={!notes.length} onClick={cmdQuantize} title="Quantize selected notes (or all) to the grid (Q)">Quantize</button>
+            <button className={btn} disabled={!unlock.can("tool.select")} onClick={cmdSelectAll} title={unlock.reason("tool.select") ?? "Select all (Ctrl+A)"}>Select all{!unlock.can("tool.select") && <LockIcon className="ml-1" />}</button>
+            <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdCopy} title={unlock.reason("edit.clipboard") ?? "Copy (Ctrl+C)"}>Copy{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+            <button className={btn} disabled={!unlock.can("edit.clipboard")} onClick={cmdPaste} title={unlock.reason("edit.clipboard") ?? "Paste at the playhead (Ctrl+V)"}>Paste{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+            <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdDuplicate} title={unlock.reason("edit.clipboard") ?? "Duplicate after the selection (Ctrl+D)"}>Duplicate{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+            <button className={btn} disabled={!notes.length || !unlock.can("edit.quantize")} onClick={cmdQuantize} title={unlock.reason("edit.quantize") ?? "Quantize selected notes (or all) to the grid (Q)"}>Quantize{!unlock.can("edit.quantize") && <LockIcon className="ml-1" />}</button>
             <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
           </>
         )}
+        {keyHelpAvailable && (
+          <button className={`${btn} ${keyHelp ? "!bg-cyan-400/15 !text-cyan-200" : ""}`} onClick={onToggleKeyHelp} aria-pressed={keyHelp} title="Show or hide the key help (highlighted scale notes and red out-of-key notes)" data-testid="key-help-toggle">
+            Key: {keyLabel(musicKey!)}
+          </button>
+        )}
+        {badNotes.length > 0 && hint && (
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-red-300" data-testid="key-warning" title={outOfKeyMessage(badNotes[0]!.pitch, hint)}>
+            <span className="truncate">⚠ {badNotes.length} note{badNotes.length === 1 ? "" : "s"} outside {keyLabel(hint)}. {outOfKeyMessage(badNotes[0]!.pitch, hint)}</span>
+            <button className={`${btn} !bg-red-500/20 !text-red-200 hover:!bg-red-500/30`} onClick={cmdFixKey} data-testid="key-fix" title="Move each red note to the nearest note in the key">Fix</button>
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-slate-500" data-testid="selection-count">{liveSelected.size ? `${liveSelected.size} selected` : `${notes.length} notes`}</span>
+        {onClose && onToggleMaximize && <WindowButtons maximized={maximized} onToggleMaximize={onToggleMaximize} onClose={onClose} />}
       </div>
 
       <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-auto bg-[#0b0e14]" data-testid="piano-roll-scroll">
@@ -561,33 +607,8 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
 
           {/* Keys + grid */}
           <div className="flex">
-            <div className="sticky left-0 z-20 shrink-0 border-r border-white/10" style={{ width: KEYS_W, height: gridH }}>
-              {PITCHES.map((p) => {
-                const label = isDrums ? DRUM_NAMES[p] ?? "" : p % 12 === 0 ? pitchLabel(p) : "";
-                return (
-                  <div
-                    key={p}
-                    data-key={p}
-                    onPointerDown={(e) => {
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      window.daw.preview(track.id, p, 100, true);
-                    }}
-                    onPointerUp={() => window.daw.preview(track.id, p, 100, false)}
-                    onPointerCancel={() => window.daw.preview(track.id, p, 100, false)}
-                    className={`flex items-center justify-end overflow-hidden border-b pr-1 text-[9px] whitespace-nowrap transition-colors ${
-                      guide?.activeKeys?.includes(p)
-                        ? "border-amber-500 bg-amber-300 font-bold text-slate-900"
-                        : isBlackKey(p)
-                          ? "border-black/50 bg-[#1d212b] text-slate-500 hover:bg-[#2a3040]"
-                          : "border-slate-300/40 bg-[#e8ecf2] text-slate-700 hover:bg-white"
-                    }`}
-                    data-active={guide?.activeKeys?.includes(p) ? "true" : undefined}
-                    style={{ height: rowH }}
-                  >
-                    {label}
-                  </div>
-                );
-              })}
+            <div className="sticky left-0 z-20 shrink-0 border-r border-black/60" style={{ width: KEYS_W, height: gridH }}>
+              <PianoKeys trackId={track.id} isDrums={isDrums} rowH={rowH} musicKey={hint} activeKeys={guide?.activeKeys} />
             </div>
 
             <div
@@ -605,7 +626,13 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                 <div
                   key={p}
                   className={`absolute right-0 left-0 border-b ${isBlackKey(p) ? "border-white/[0.03] bg-[#0d1017]" : "border-white/[0.05] bg-[#131824]"} ${p % 12 === 0 ? "!border-white/15" : ""}`}
-                  style={{ top: pitchToY(p, rowH), height: rowH }}
+                  data-in-key={hint ? (isTonic(p, hint) ? "root" : isInKey(p, hint) ? "true" : "false") : undefined}
+                  style={{
+                    top: pitchToY(p, rowH),
+                    height: rowH,
+                    // key help: the root row glows, other scale rows are lit, rows outside the key are dimmed
+                    ...(hint ? { backgroundColor: isTonic(p, hint) ? "rgba(34,211,238,0.16)" : isInKey(p, hint) ? "#16202c" : "#07090d" } : {}),
+                  }}
                 />
               ))}
               {guide?.columns?.map((c, i) => (
@@ -665,11 +692,14 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                 const n = view(raw);
                 const isSel = liveSelected.has(n.id);
                 const erasing = drag?.kind === "erase" && drag.ids.has(n.id);
+                const outOfKey = !!hint && !n.muted && !isInKey(n.pitch, hint);
                 return (
                   <div
                     key={n.id}
                     data-note-id={n.id}
                     data-muted={n.muted ? "true" : undefined}
+                    data-out-of-key={outOfKey ? "true" : undefined}
+                    title={outOfKey && hint ? outOfKeyMessage(n.pitch, hint) : undefined}
                     data-selected={isSel ? "true" : undefined}
                     className={`absolute overflow-hidden rounded-[3px] ${isSel ? "ring-1 ring-white" : ""}`}
                     style={{
@@ -677,7 +707,8 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                       top: pitchToY(n.pitch, rowH) + 1,
                       width: Math.max(4, tickToPx(n.durationTicks, pxPerBeat) - 1),
                       height: rowH - 2,
-                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : (guide?.noteColor?.[n.id] ?? track.color),
+                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : guide?.noteColor?.[n.id] ? guide.noteColor[n.id] : outOfKey ? "repeating-linear-gradient(135deg,#ef4444 0 5px,#b91c1c 5px 10px)" : track.color,
+                      boxShadow: outOfKey ? "0 0 0 1px #fecaca" : undefined,
                       filter: isSel ? "brightness(1.3)" : undefined,
                       opacity: erasing ? 0.25 : n.muted ? 0.7 : 0.55 + (n.velocity / 127) * 0.45,
                       cursor: tool === "delete" ? "not-allowed" : tool === "mute" ? "pointer" : tool === "slice" ? "col-resize" : "grab",

@@ -168,7 +168,7 @@ export function PianoPane({ project, shown, guide, emptyText = "Your exercise op
       {shown ? (
         <div className={`flex min-h-0 flex-1 flex-col ${shown.track.instrument === "drums" ? "" : "learn-roll"}`}>
           <style>{KEY_LETTERS_CSS}</style>
-          <PianoRoll key={`${shown.track.id}/${shown.clip.id}`} track={shown.track} clip={shown.clip} keysEnabled tool={activeTool} snap={snap} gridTicks={gridTicks} pxPerBeat={pxPerBeat} rowH={rowH} onTool={setTool} guide={guide} />
+          <PianoRoll key={`${shown.track.id}/${shown.clip.id}`} track={shown.track} clip={shown.clip} keysEnabled tool={activeTool} snap={snap} gridTicks={gridTicks} pxPerBeat={pxPerBeat} rowH={rowH} onTool={setTool} guide={guide} musicKey={null} keyHelp={false} onToggleKeyHelp={() => {}} />
         </div>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">

@@ -1,9 +1,12 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <vector>
 
+struct SampleData;
+
 constexpr int kMaxSlots = 16;
-enum Instrument : int { kSynth = 0, kDrums = 1 };
+enum Instrument : int { kSynth = 0, kDrums = 1, kSample = 2 };
 
 /** One note on the absolute timeline, already clipped to the loop. */
 struct NoteEvent
@@ -21,6 +24,9 @@ struct TrackModel
     float gain = 0.64f; // final linear gain (mute/solo already resolved by the host)
     float pan = 0.0f;   // -1..1
     std::vector<NoteEvent> notes; // sorted by startTick
+    /** kSample tracks: the decoded sound (null = missing file, plays nothing) and whether a note-off cuts it. */
+    std::shared_ptr<const SampleData> sample;
+    bool gate = false;
 };
 
 /**

@@ -4,7 +4,7 @@ Standalone Windows DAW for beginner music production with (later) real-time coll
 Hybrid architecture: **Electron + React + TypeScript UI**, a **JUCE C++ audio engine process**, and (planned) a Node/TS collaboration server.
 See `docs/adr/` for decisions.
 
-## Status: Milestone 3 (arrangement + WAV export) complete
+## Status: Milestone 4 (beginner layer foundation) complete
 
 * **M1:** piano roll, transport + tempo, local autosave + crash recovery, undo/redo, JUCE engine with offline timing tests.
 * **M2:** up to 16 tracks (synth + synthesised drum kit), per-track volume / pan / mute / solo, master volume, level meters,
@@ -15,14 +15,18 @@ See `docs/adr/` for decisions.
   drag the right edge to resize, split at the playhead, duplicate, delete), an explicit song length, clip-aware piano roll
   (it edits the selected clip), and **offline WAV export** (48 kHz / 24-bit stereo, song length + 2 s tail) that runs beside
   live playback. Projects from M2 migrate automatically.
-* **Not yet:** lessons and guidance (Components 1-2), collaboration server (Component 3), plugin hosting (VST3),
+* **UI:** piano roll with a real-piano keyboard, close and maximize buttons (full-height editing), reopen with the Piano roll button or by double-clicking a clip.
+* **M4:** project **key** with scale highlighting and **red out-of-key notes** (with a Fix button), the **feature unlock registry** (features locked until
+  their lesson is completed; Beginner mode), per-user learner progress, and the lesson API `window.daw.completeLesson("M2.6")`.
+  See `docs/lessons/INTEGRATION.md` and `docs/m4-results.md`.
+* **Not yet:** the lessons themselves (Component 1), interaction tracking and the guided "make a song" workflow (Component 2), collaboration server (Component 3), plugin hosting (VST3),
   audio clips / remote recording (Component 4), effects, automation.
 
 ## Layout
 
 | Path | Responsibility |
 |---|---|
-| `packages/shared` | Project model (ticks, track→clip→note, mixer fields, song length), typed ops, pure `applyOp` (idempotent, validated), `invertOp`, undo `History`, `migrateProject`, pure arrangement edits (`arrangement.ts`: move/resize/split/duplicate). Shared by client and future server. |
+| `packages/shared` | Project model (ticks, track→clip→note, mixer fields, song length, key), music theory (`theory.ts`), feature registry and unlock rules (`features.ts`), typed ops, pure `applyOp` (idempotent, validated), `invertOp`, undo `History`, `migrateProject`, pure arrangement edits (`arrangement.ts`: move/resize/split/duplicate). Shared by client and future server. |
 | `packages/engine-protocol` | NDJSON message types between Electron main and the engine. |
 | `engine/` | JUCE C++ engine: multi-track tick sequencer (`Sequencer`), synth + synthesised drum kit, per-track mixer with smoothed gain/pan, master soft-clip, meters (`AudioEngine`), offline render + WAV export (`Export`), stdin/stdout bridge, `--selftest`, `--benchmark`. |
 | `apps/desktop/src/main` | Owns project state: `ProjectService` (ops, batches = one undo step, undo/redo), `LocalStore` (snapshot + journal), `EngineBridge` (spawn/supervise/restart engine), `snapshot.ts` (mute/solo resolution, stable engine slots). |
@@ -51,6 +55,8 @@ npm run engine:benchmark   # offline CPU cost per block size (64-1024), 8 tracks
 node apps/desktop/e2e/run.mjs # M1 end-to-end checks against the built app (needs an audio device)
 node apps/desktop/e2e/m2.mjs  # M2 end-to-end checks (tracks, mute/solo/pan/volume via engine meters, tools, recovery)
 node apps/desktop/e2e/m3.mjs  # M3 end-to-end checks (clips, song length, playback follows clips, WAV export parsed byte by byte, M2 migration)
+node apps/desktop/e2e/m4.mjs  # M4 end-to-end checks (key help, red notes, Fix, feature locks, lesson API, persistence)
+node apps/desktop/e2e/pianoroll-ui.mjs  # piano roll window behaviour (close / reopen / maximize / restore) and piano-style keys
 node apps/desktop/e2e/soak.mjs 10 0 60   # 10-minute 8-track engine soak with an export every 60 s; prints overruns and hardware
 ```
 

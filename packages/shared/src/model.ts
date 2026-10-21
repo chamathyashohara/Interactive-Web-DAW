@@ -1,3 +1,5 @@
+import type { ProjectKey } from "./theory";
+
 /** Pulses per quarter note. All musical time is stored as integer ticks. */
 export const PPQ = 960;
 export const BEATS_PER_BAR = 4;
@@ -15,8 +17,24 @@ export const DEFAULT_SONG_BARS = 8;
 export const MIN_CLIP_TICKS = PPQ;
 export const DEFAULT_CLIP_BARS = 4;
 
-export type InstrumentKind = "synth" | "drums";
+export type InstrumentKind = "synth" | "drums" | "sample";
+/** The instruments offered by "+ Add track". Sample tracks are created by dropping a sound from the browser. */
 export const INSTRUMENTS: InstrumentKind[] = ["synth", "drums"];
+export const ALL_INSTRUMENTS: InstrumentKind[] = ["synth", "drums", "sample"];
+
+/** The sound a sample track plays. The audio itself is never stored in the project, only its library id. */
+export interface SampleRef {
+  /** Library id, e.g. "starter/kick/punch-kick" or "imported/<hash>". */
+  id: string;
+  /** Name when it was added, shown if the sound is missing from this computer's library. */
+  name: string;
+  /** true: a note-off cuts the sound (loops, long sounds). false: it always plays to its end (kicks, snares, one-shots). */
+  gate: boolean;
+  /** The tempo the sound was recorded at (loops). Needed to fit it to the project tempo. */
+  bpm?: number;
+  /** true: the sound is time-stretched (pitch unchanged) to follow the project tempo. Only has an effect when `bpm` is known. */
+  fit?: boolean;
+}
 
 export const TRACK_COLORS = ["#22d3ee", "#f472b6", "#a3e635", "#fb923c", "#a78bfa", "#facc15", "#34d399", "#f87171"];
 
@@ -54,6 +72,8 @@ export interface Track {
   pan: number;
   mute: boolean;
   solo: boolean;
+  /** Only for instrument "sample". */
+  sample?: SampleRef;
   /** Clips on one track never overlap. */
   clips: Record<string, Clip>;
 }
@@ -66,6 +86,8 @@ export interface Project {
   ppq: number;
   /** Song length in bars; playback loops here and export renders exactly this long (plus a tail). */
   songBars: number;
+  /** The song's key, used for scale highlighting and out-of-key help. null = no key chosen. */
+  key: ProjectKey | null;
   /** 0..100 */
   masterVolume: number;
   tracks: Record<string, Track>;
@@ -99,6 +121,7 @@ export function createProject(id: string, name = "Untitled"): Project {
     tempo: 120,
     ppq: PPQ,
     songBars: DEFAULT_SONG_BARS,
+    key: null,
     masterVolume: DEFAULT_VOLUME,
     trackOrder: [trackId],
     tracks: { [trackId]: createTrack(trackId, "Synth", "synth", TRACK_COLORS[0]!, "clip-1") },
@@ -106,7 +129,7 @@ export function createProject(id: string, name = "Untitled"): Project {
   };
 }
 
-/** Fills defaults for projects saved by older versions (M1: no mixer fields; M2: no song length). */
+/** Fills defaults for projects saved by older versions (M1: no mixer fields; M2: no song length; M3: no key). */
 export function migrateProject(raw: Project): Project {
   const tracks: Record<string, Track> = {};
   let i = 0;
@@ -125,5 +148,5 @@ export function migrateProject(raw: Project): Project {
   }
   // Older projects looped over their longest clip; keep that length so they play exactly as before.
   const songBars = raw.songBars ?? Math.min(MAX_SONG_BARS, Math.max(1, Math.ceil(maxEnd / TICKS_PER_BAR)));
-  return { ...raw, tracks, masterVolume: raw.masterVolume ?? DEFAULT_VOLUME, songBars };
+  return { ...raw, tracks, masterVolume: raw.masterVolume ?? DEFAULT_VOLUME, songBars, key: raw.key ?? null };
 }
