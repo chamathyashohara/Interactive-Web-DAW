@@ -18,3 +18,4 @@ sample-library/
 starter-lib/
 *.zip
 *.rar
+engine/build-vst3/

@@ -7,6 +7,9 @@
 #include "Export.h"
 #include "Samples.h"
 #include "SelfTest.h"
+#ifdef DAW_ENABLE_VST3
+#include "PluginHost.h"
+#endif
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <algorithm>
@@ -208,6 +211,9 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--selftest") return runSelfTest();
         if (a == "--benchmark") return runBenchmark();
+#ifdef DAW_ENABLE_VST3
+        if (a == "--plugintest" && i + 1 < argc) return runPluginTest(argv[++i]);
+#endif
         if (a == "--buffer" && i + 1 < argc) requestedBuffer = std::atoi(argv[++i]);
     }
 
