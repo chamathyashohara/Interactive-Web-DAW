@@ -49,6 +49,9 @@ export interface EngineProjectSnapshot {
   ppq: number;
   tempo: number;
   loopTicks: number;
+  /** Playback repeats between these ticks (live playback only; export ignores it). Omitted or end <= start = the whole song. */
+  loopStartTick?: number;
+  loopEndTick?: number;
   masterGain: number;
   tracks: EngineTrack[];
 }
@@ -60,6 +63,8 @@ export type EngineCommand =
   | { t: "stop" }
   | { t: "seek"; tick: number }
   | { t: "setTempo"; bpm: number }
+  /** Click on every quarter note while playing (louder on the first beat of a bar). Not part of the project; never in the export. */
+  | { t: "setMetronome"; on: boolean }
   | { t: "preview"; slot: number; pitch: number; velocity: number; on: boolean }
   /** Offline-render the current project to a 24-bit stereo 48 kHz WAV (song length + tail). Runs beside live playback. */
   | { t: "exportWav"; id: string; path: string; tailSeconds: number }

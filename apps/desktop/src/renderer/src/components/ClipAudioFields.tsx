@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { MAX_GAIN_DB, MIN_GAIN_DB, PPQ, type Clip, type ClipAudio } from "@daw/shared";
 
-const field = "w-12 rounded bg-white/5 px-1 py-0.5 text-right font-mono text-[11px] text-amber-200 outline-none disabled:opacity-40";
+const field = "hw-field w-12 px-1 py-0.5 text-right text-[11px] disabled:opacity-40";
 
 /** A number box that applies its value when you leave it or press Enter, and puts the old value back if it is not valid. */
 function NumberBox({ value, onCommit, label, testId, disabled, title, step }: { value: number; onCommit: (v: number) => void; label: string; testId: string; disabled?: boolean; title?: string; step: number }) {

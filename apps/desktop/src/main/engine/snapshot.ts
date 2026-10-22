@@ -93,5 +93,6 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
     if (auto.volume || auto.filter) et.automation = auto;
     tracks.push(et);
   }
-  return { ppq: project.ppq, tempo: project.tempo, loopTicks, masterGain: volumeToGain(project.masterVolume), tracks };
+  const region = project.loop && project.loop.endTick > project.loop.startTick && project.loop.endTick <= loopTicks ? project.loop : null;
+  return { ppq: project.ppq, tempo: project.tempo, loopTicks, ...(region ? { loopStartTick: region.startTick, loopEndTick: region.endTick } : {}), masterGain: volumeToGain(project.masterVolume), tracks };
 }

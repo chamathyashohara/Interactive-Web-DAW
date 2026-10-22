@@ -85,11 +85,13 @@ app.whenReady().then(() => {
   const slots = new SlotAllocator();
   const pushProjectToEngine = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots, (id) => library.pathOf(id)) });
 
+  let metronomeOn = false; // a UI setting, not part of the project: kept here so a restarted engine gets it back
   engine.on("ready", (info) => {
     engineState.connected = true;
     engineState.info = info;
     engineState.lastError = null;
     pushProjectToEngine(service.current); // engine (re)starts from the main process' state
+    engine.send({ t: "setMetronome", on: metronomeOn });
     sendToRenderer("engine:state", engineState);
   });
   engine.on("down", () => {
@@ -136,6 +138,10 @@ app.whenReady().then(() => {
   ipcMain.handle("history:redo", () => service.redo());
   ipcMain.on("transport:play", () => engine.send({ t: "play" }));
   ipcMain.on("transport:stop", () => engine.send({ t: "stop" }));
+  ipcMain.on("transport:metronome", (_e, on: boolean) => {
+    metronomeOn = !!on;
+    engine.send({ t: "setMetronome", on: metronomeOn });
+  });
   ipcMain.on("transport:seek", (_e, tick: number) => engine.send({ t: "seek", tick }));
   ipcMain.on("engine:preview", (_e, p: { trackId: string; pitch: number; velocity: number; on: boolean }) => {
     const slot = slots.slotFor(p.trackId);

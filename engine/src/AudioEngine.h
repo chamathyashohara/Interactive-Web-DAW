@@ -160,6 +160,12 @@ public:
         blockTick = sequencer.getTick();
         segTps = playingNow ? sequencer.getBpm() * (m != nullptr ? m->ppq : 960) / (60.0 * sampleRate) : 0.0;
         loopTicksNow = m != nullptr ? static_cast<double>(m->loopTicks) : 0.0;
+        regionStartNow = regionEndNow = 0.0;
+        if (m != nullptr && useRegionNow && m->loopEndTick > m->loopStartTick && m->loopEndTick <= m->loopTicks)
+        {
+            regionStartNow = static_cast<double>(m->loopStartTick);
+            regionEndNow = static_cast<double>(m->loopEndTick);
+        }
         if (m != nullptr)
             for (const auto& tr : m->tracks)
             {
@@ -223,7 +229,8 @@ public:
                 renderSegment(cursor, e.offset - cursor, targetGain, targetPan, localPeak);
                 cursor = e.offset;
             }
-            if (e.type == 1)
+            if (e.type == 2) click.trigger(e.pitch == 1, sampleRate);
+            else if (e.type == 1)
             {
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
                 else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot], &e.note);
@@ -280,7 +287,42 @@ public:
     double sampleRate = 48000.0;
     int bufferSize = 0;
 
+    /** Metronome click on the quarter notes while playing (off by default; the offline export never has it). */
+    void setMetronome(bool on) { sequencer.setClick(on); }
+    /** Live playback wraps inside the project's loop region. */
+    void setLoopRegionEnabled(bool on)
+    {
+        useRegionNow = on;
+        sequencer.setUseLoopRegion(on);
+    }
+
 private:
+    /** The metronome: a short decaying sine, higher on the first beat of a bar. */
+    struct ClickVoice
+    {
+        float phase = 0.0f, inc = 0.0f, env = 0.0f, decay = 0.99f, amp = 0.0f;
+        void trigger(bool accent, double sr)
+        {
+            inc = static_cast<float>(2.0 * 3.14159265358979 * (accent ? 1600.0 : 1000.0) / sr);
+            decay = static_cast<float>(std::exp(-1.0 / (0.018 * sr)));
+            amp = accent ? 0.5f : 0.32f;
+            phase = 0.0f;
+            env = 1.0f;
+        }
+        void renderAdd(float* l, float* r, int n)
+        {
+            if (env < 1e-4f) return;
+            for (int i = 0; i < n; ++i)
+            {
+                const float v = std::sin(phase) * env * amp;
+                l[i] += v;
+                r[i] += v;
+                phase += inc;
+                env *= decay;
+            }
+        }
+    };
+    bool useRegionNow = false;
     struct Event
     {
         int offset;
@@ -312,6 +354,8 @@ private:
     double segTick = 0.0;    // arrangement tick at the start of the segment being rendered
     double segTps = 0.0;     // ticks per sample (0 while stopped: the curves are read at the playhead)
     double loopTicksNow = 0.0;
+    double regionStartNow = 0.0, regionEndNow = 0.0; // the loop region for this block (end == 0: none)
+    ClickVoice click;
     bool slotGate[kMaxSlots] = {};
     std::atomic<int> cutSerial{ 0 };
     double blockTick = 0.0;
@@ -339,6 +383,11 @@ private:
     double tickAt(int sample) const
     {
         double t = blockTick + sample * segTps;
+        if (regionEndNow > regionStartNow && blockTick < regionEndNow)
+        {
+            while (t >= regionEndNow) t -= regionEndNow - regionStartNow; // wrapped inside the loop region
+            return t;
+        }
         if (loopTicksNow > 0.0)
             while (t >= loopTicksNow) t -= loopTicksNow;
         return t;
@@ -366,6 +415,7 @@ private:
     void noteOn(int slot, int instrument, int o, int p, int v) override { push(o, 1, std::clamp(slot, 0, kMaxSlots - 1), instrument, p, v); }
     void noteOnEx(int slot, int instrument, int o, const NoteEvent& n) override { push(o, 1, std::clamp(slot, 0, kMaxSlots - 1), instrument, n.pitch, n.velocity, &n); }
     void noteOff(int slot, int o, int p) override { push(o, 0, std::clamp(slot, 0, kMaxSlots - 1), 0, p, 0); }
+    void beat(int o, bool downbeat) override { push(o, 2, 0, 0, downbeat ? 1 : 0, 0); }
 
     void applyPreview(const PreviewMsg& pm, const PlaybackModel* m)
     {
@@ -466,5 +516,6 @@ private:
             st.gain = g;
             localPeak[s] = pk;
         }
+        click.renderAdd(bufL.data() + start, bufR.data() + start, len);
     }
 };

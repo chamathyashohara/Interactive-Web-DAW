@@ -4,6 +4,8 @@ import {
   MAX_AUTO_POINTS,
   MAX_BPM,
   MAX_GAIN_DB,
+  MAX_MARKERS,
+  MAX_MARKER_NAME,
   MIN_GAIN_DB,
   MAX_PITCH,
   MAX_SONG_BARS,
@@ -11,11 +13,13 @@ import {
   MIN_BPM,
   MIN_CLIP_TICKS,
   MIN_PITCH,
+  PPQ,
   RECENT_OPS_LIMIT,
   TICKS_PER_BAR,
   songTicks,
   type AutoPoint,
   type Clip,
+  type Marker,
   type ClipAudio,
   type Note,
   type Project,
@@ -30,6 +34,20 @@ export type ApplyResult =
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
+
+function validateMarkers(markers: unknown, songLen: number): string | null {
+  if (!Array.isArray(markers)) return "markers must be a list";
+  if (markers.length > MAX_MARKERS) return `at most ${MAX_MARKERS} markers`;
+  const ids = new Set<string>();
+  for (const m of markers as Marker[]) {
+    if (!m || typeof m.id !== "string" || !m.id || ids.has(m.id)) return "every marker needs its own id";
+    ids.add(m.id);
+    if (!isInt(m.tick) || m.tick < 0 || m.tick > songLen) return "marker must be inside the song";
+    if (typeof m.name !== "string" || !m.name.trim() || m.name.trim().length > MAX_MARKER_NAME) return `marker name must be 1-${MAX_MARKER_NAME} characters`;
+    if (m.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(m.color)) return "marker colour must look like #rrggbb";
+  }
+  return null;
+}
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 function validateNote(clip: Clip, n: Note): string | null {
@@ -188,6 +206,27 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (op.key !== null && !isValidKey(op.key)) return { ok: false, reason: "key must be a tonic 0-11 and major or minor" };
       return done({ ...project, key: op.key === null ? null : { tonic: op.key.tonic, mode: op.key.mode } }, op.opId);
     }
+    case "setLoop": {
+      if (op.loop === null) {
+        const { loop: _gone, ...rest } = project;
+        return done(rest as Project, op.opId);
+      }
+      const l = op.loop;
+      if (!l || !isInt(l.startTick) || !isInt(l.endTick)) return { ok: false, reason: "loop start and end must be whole ticks" };
+      if (l.startTick < 0 || l.endTick > songTicks(project)) return { ok: false, reason: "loop must be inside the song" };
+      if (l.endTick - l.startTick < PPQ) return { ok: false, reason: "loop must be at least one beat long" };
+      return done({ ...project, loop: { startTick: l.startTick, endTick: l.endTick } }, op.opId);
+    }
+    case "setMarkers": {
+      const err = validateMarkers(op.markers, songTicks(project));
+      if (err) return { ok: false, reason: err };
+      const sorted = op.markers.map((m) => ({ id: m.id, tick: m.tick, name: m.name.trim(), ...(m.color ? { color: m.color } : {}) })).sort((a, b) => a.tick - b.tick);
+      if (!sorted.length) {
+        const { markers: _gone, ...rest } = project;
+        return done(rest as Project, op.opId);
+      }
+      return done({ ...project, markers: sorted }, op.opId);
+    }
     case "setMasterVolume": {
       if (!isInt(op.volume) || op.volume < 0 || op.volume > 100) return { ok: false, reason: "volume must be an integer 0-100" };
       return done({ ...project, masterVolume: op.volume }, op.opId);
@@ -330,6 +369,10 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       return { ...base, type: "setSongLength", bars: before.songBars };
     case "setKey":
       return { ...base, type: "setKey", key: before.key };
+    case "setLoop":
+      return { ...base, type: "setLoop", loop: before.loop ? { ...before.loop } : null };
+    case "setMarkers":
+      return { ...base, type: "setMarkers", markers: (before.markers ?? []).map((m) => ({ ...m })) };
     case "addTrack":
       return { ...base, type: "deleteTrack", trackId: op.track.id };
     case "deleteTrack": {

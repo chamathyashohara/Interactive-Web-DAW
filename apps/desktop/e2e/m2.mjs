@@ -277,6 +277,8 @@ try {
   // drum track labels
   await c.clickEl(`[data-track-id="${ids[2]}"] [data-testid=track-name]`);
   await sleep(300);
+  await c.clickEl("[data-testid=view-roll]"); // drum clips open in the step sequencer
+  await sleep(300);
   const keyLabels = await c.evalJs(`[...document.querySelectorAll('[data-key]')].map(e => e.textContent).filter(Boolean).join()`);
   check("M2-23. drum tracks label piano-roll rows with drum names", keyLabels.includes("Kick") && keyLabels.includes("Snare"), keyLabels.slice(0, 60));
 

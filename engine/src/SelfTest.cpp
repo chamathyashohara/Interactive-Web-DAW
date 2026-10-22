@@ -26,6 +26,8 @@ struct Recorder : SequencerSink
     std::vector<Recorded> events;
     void noteOn(int slot, int, int o, int p, int) override { events.push_back({ true, slot, blockBase + o, p }); }
     void noteOff(int slot, int o, int p) override { events.push_back({ false, slot, blockBase + o, p }); }
+    std::vector<std::pair<int64_t, bool>> beats; // absolute sample, downbeat
+    void beat(int o, bool downbeat) override { beats.push_back({ blockBase + o, downbeat }); }
 };
 
 struct Case
@@ -950,6 +952,125 @@ int runSelfTest()
                 expect(early < 0.1f * late && late > 0.4f, "automation: the exported WAV follows the volume curve");
             }
             file.deleteFile();
+        }
+    }
+
+
+    // ---- 9. Loop region and metronome ----
+    {
+        PlaybackModel m;
+        m.ppq = 960;
+        m.loopTicks = 4 * 3840;
+        m.loopStartTick = 3840; // bar 2
+        m.loopEndTick = 7680;   // end of bar 2
+        m.masterGain = 1.0f;
+        m.tracks.push_back(makeTrack(0, kSynth, 0.6f, 0, { 0, 3840, 5760, 7680 }, 60, m.loopTicks));
+        const auto run = [&](bool region, bool click, int64_t totalSamples, Recorder& rec, double* endTick) {
+            Sequencer seq;
+            seq.prepare(48000.0);
+            seq.setModel(&m);
+            seq.setBpm(120.0);
+            seq.setUseLoopRegion(region);
+            seq.setClick(click);
+            seq.setPlaying(true);
+            for (int64_t done = 0; done < totalSamples; done += 256)
+            {
+                rec.blockBase = done;
+                seq.process(256, rec);
+            }
+            if (endTick != nullptr) *endTick = seq.getTick();
+        };
+        const auto countOn = [](const Recorder& rec, int pitch) {
+            int n = 0;
+            for (const auto& e : rec.events) if (e.on && e.pitch == pitch) ++n;
+            return n;
+        };
+        const auto firstOn = [](const Recorder& rec, int pitch, int nth) {
+            int n = 0;
+            for (const auto& e : rec.events)
+                if (e.on && e.pitch == pitch && n++ == nth) return e.sample;
+            return static_cast<int64_t>(-1);
+        };
+
+        Recorder rec;
+        double endTick = 0.0;
+        run(true, false, 384000, rec, &endTick); // 8 s = 4 s to the region end, then the 2 s region twice
+        expect(countOn(rec, 60) == 1, "loop region: a note before the region plays once");
+        expect(countOn(rec, 61) == 3 && countOn(rec, 62) == 3, "loop region: notes inside it play on every pass");
+        expect(countOn(rec, 63) == 0, "loop region: a note at the end of the region never plays");
+        expect(std::llabs(firstOn(rec, 61, 1) - 192000) <= 1 && std::llabs(firstOn(rec, 61, 2) - 288000) <= 1 && std::llabs(firstOn(rec, 62, 2) - 336000) <= 1, "loop region: every pass starts exactly on the region start (no drift)");
+        expect(endTick >= 3840.0 && endTick < 7680.0, "loop region: the playhead stays inside the region");
+
+        Recorder whole;
+        run(false, false, 410000, whole, &endTick);
+        expect(countOn(whole, 63) >= 1 && countOn(whole, 60) >= 2, "loop region: switched off, the whole song plays and loops as before");
+
+        // a playhead already past the region plays on to the end of the song, then loops from the start
+        {
+            Sequencer seq;
+            seq.prepare(48000.0);
+            seq.setModel(&m);
+            seq.setBpm(120.0);
+            seq.setUseLoopRegion(true);
+            seq.requestSeek(9600.0);
+            seq.setPlaying(true);
+            Recorder past;
+            for (int64_t done = 0; done < 192000; done += 256)
+            {
+                past.blockBase = done;
+                seq.process(256, past);
+            }
+            expect(countOn(past, 63) == 0 && countOn(past, 60) == 1, "loop region: starting after it, the song plays out to its end, then loops into the region");
+        }
+
+        // metronome: a beat event on every quarter note, a downbeat on the first of each bar
+        Recorder clickRec;
+        m.loopStartTick = m.loopEndTick = 0;
+        run(false, true, 192000, clickRec, &endTick); // 4 s = 2 bars at 120 BPM
+        bool beatsOk = clickRec.beats.size() == 8;
+        for (size_t i = 0; beatsOk && i < clickRec.beats.size(); ++i)
+            beatsOk = std::llabs(clickRec.beats[i].first - static_cast<int64_t>(i) * 24000) <= 1 && clickRec.beats[i].second == (i % 4 == 0);
+        expect(beatsOk, "metronome: a beat every 24000 samples at 120 BPM, accent on every fourth");
+        Recorder quiet;
+        run(false, false, 192000, quiet, &endTick);
+        expect(quiet.beats.empty(), "metronome: off by default");
+
+        // the click keeps time through the loop region wrap: 8 beats, then 4 per pass
+        m.loopStartTick = 3840;
+        m.loopEndTick = 7680;
+        Recorder wrapped;
+        run(true, true, 384000, wrapped, &endTick);
+        expect(wrapped.beats.size() == 16, "metronome: counts through a loop region wrap (8 beats, then 4 per pass)");
+        bool onGrid = true;
+        for (size_t i = 8; i < wrapped.beats.size(); ++i) onGrid = onGrid && ((wrapped.beats[i].first - 192000) % 24000 <= 1 || (wrapped.beats[i].first - 192000) % 24000 >= 23999);
+        expect(onGrid && wrapped.beats[8].second, "metronome: the first beat of every pass is the bar's downbeat, on the grid");
+
+        // audible through the real render path, only while playing and switched on
+        {
+            PlaybackModel mm;
+            mm.ppq = 960;
+            mm.loopTicks = 4 * 3840;
+            mm.masterGain = 1.0f;
+            const auto level = [&](bool click, bool playing) {
+                AudioEngine eng;
+                eng.prepare(48000.0, 256);
+                eng.sequencer.setModel(&mm);
+                eng.sequencer.setBpm(120.0);
+                eng.setMetronome(click);
+                eng.sequencer.setPlaying(playing);
+                std::vector<float> l(256), r(256);
+                float* out[2] = { l.data(), r.data() };
+                float p = 0.0f;
+                for (int b = 0; b < 20; ++b)
+                {
+                    eng.process(out, 2, 256);
+                    for (float v : l) p = std::max(p, std::fabs(v));
+                }
+                eng.sequencer.setModel(nullptr);
+                return p;
+            };
+            expect(level(true, true) > 0.2f, "metronome: the click is audible while playing");
+            expect(level(false, true) == 0.0f && level(true, false) == 0.0f, "metronome: silent when off or when stopped");
         }
     }
 

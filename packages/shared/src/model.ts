@@ -129,6 +129,23 @@ export interface Track {
   clips: Record<string, Clip>;
 }
 
+/** Playback repeats between these two ticks instead of over the whole song. */
+export interface LoopRegion {
+  startTick: number;
+  endTick: number;
+}
+
+/** A named point in the song ("Verse", "Drop"), shown on the ruler. */
+export interface Marker {
+  id: string;
+  tick: number;
+  name: string;
+  /** "#rrggbb" */
+  color?: string;
+}
+export const MAX_MARKERS = 64;
+export const MAX_MARKER_NAME = 24;
+
 /** Synced and saved project state. UI state (selection, zoom, playhead) never lives here. */
 export interface Project {
   id: string;
@@ -139,6 +156,10 @@ export interface Project {
   songBars: number;
   /** The song's key, used for scale highlighting and out-of-key help. null = no key chosen. */
   key: ProjectKey | null;
+  /** The part of the song that plays over and over. Absent = the whole song. */
+  loop?: LoopRegion;
+  /** Section markers in time order. */
+  markers?: Marker[];
   /** 0..100 */
   masterVolume: number;
   tracks: Record<string, Track>;

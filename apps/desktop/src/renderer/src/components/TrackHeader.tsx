@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createTrack, MAX_BPM, MAX_TRACKS, MIN_BPM, TRACK_COLORS, type InstrumentKind, type Project, type SampleRef, type TrackFields } from "@daw/shared";
 import { useUnlock } from "../unlock/useUnlock";
+import { Fader } from "../controls/Fader";
 import { Meter } from "./Meter";
 
 export const TRACK_ROW_H = 60;
 export const HEADER_W = 272;
 
 const update = (trackId: string, changes: Partial<TrackFields>, group?: string) => void window.daw.dispatch({ type: "updateTrack", trackId, changes }, group);
-const small = "flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40";
+const small = "hw-btn h-6 w-6 text-[11px] font-bold";
 
 function NameField({ trackId, name }: { trackId: string; name: string }) {
   const [editing, setEditing] = useState(false);
@@ -78,13 +79,13 @@ function SampleFit({ trackId, sample, projectTempo }: { trackId: string; sample:
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         placeholder="BPM"
         inputMode="decimal"
-        className="w-10 rounded bg-white/5 px-1 py-0.5 text-right font-mono text-[10px] text-amber-200 outline-none placeholder:text-slate-600"
+        className="hw-field w-10 px-1 py-0.5 text-right text-[10px] placeholder:text-amber-900"
         title="The tempo this loop was made at. Type it if it is not known."
         aria-label={`Original tempo of ${trackId}`}
         data-testid="sample-bpm"
       />
       <button
-        className={`rounded px-1.5 py-0.5 text-[10px] ${fitting ? "bg-cyan-400/25 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"} disabled:opacity-40`}
+        className="hw-btn hw-teal px-1.5 py-0.5 text-[10px]"
         disabled={!sample.bpm}
         aria-pressed={fitting}
         onClick={() => void window.daw.dispatch({ type: "updateSample", trackId, changes: { fit: !sample.fit } })}
@@ -107,7 +108,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
       data-track-id={id}
       data-selected={selected ? "true" : undefined}
       onPointerDown={onSelect}
-      className={`flex shrink-0 flex-col justify-center border-r border-b border-white/10 bg-[#12151c] px-2 ${selected ? "bg-[#1a1e29]" : ""}`}
+      className="hw-strip flex shrink-0 flex-col justify-center border-r border-b border-black px-2"
       style={{ height: TRACK_ROW_H, width: HEADER_W, boxShadow: selected ? `inset 3px 0 0 ${t.color}` : undefined }}
     >
       <div className="flex items-center gap-1.5">
@@ -119,7 +120,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
         <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : t.instrument === "sample" ? "SMP" : "SYN"}</span>
         {onToggleAuto && (
           <button
-            className={`${small} ${autoOpen ? "bg-cyan-400/25 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"} disabled:opacity-40`}
+            className={`${small} hw-teal`}
             onClick={onToggleAuto}
             disabled={!unlock.can("automation.lanes")}
             aria-pressed={!!autoOpen}
@@ -129,10 +130,10 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
             ∿
           </button>
         )}
-        <button className={`${small} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mute ${t.name}`} aria-pressed={t.mute} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Mute"}>M</button>
-        <button className={`${small} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Solo ${t.name}`} aria-pressed={t.solo} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Solo"}>S</button>
+        <button className={`${small}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mute ${t.name}`} aria-pressed={t.mute} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Mute"}>M</button>
+        <button className={`${small} hw-teal`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Solo ${t.name}`} aria-pressed={t.solo} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Solo"}>S</button>
         <button
-          className={`${small} bg-white/5 text-slate-500 hover:bg-rose-500/30 hover:text-rose-200 disabled:opacity-30 disabled:hover:bg-white/5 disabled:hover:text-slate-500`}
+          className={`${small} hw-danger`}
           disabled={project.trackOrder.length <= 1 || !unlock.can("tracks.multiple")}
           onClick={() => void window.daw.dispatch({ type: "deleteTrack", trackId: id })}
           aria-label={`Delete ${t.name}`}
@@ -143,7 +144,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
       </div>
       <div className="mt-1 flex items-center gap-2 pl-[1.6rem]">
         {t.instrument === "sample" && t.sample?.gate && <SampleFit trackId={id} sample={t.sample} projectTempo={project.tempo} />}
-        <input type="range" min={0} max={100} value={t.volume} disabled={!unlock.can("mixer.panel")} title={unlock.reason("mixer.panel") ?? undefined} onChange={(e) => update(id, { volume: Number(e.target.value) }, `vol-${id}`)} className="h-1 min-w-0 flex-1 cursor-pointer" style={{ accentColor: t.color }} aria-label={`Volume of ${t.name}`} />
+        <Fader orientation="horizontal" value={t.volume} min={0} max={100} color={t.color} className="!min-w-0 !flex-1" disabled={!unlock.can("mixer.panel")} title={unlock.reason("mixer.panel") ?? undefined} onChange={(v) => update(id, { volume: v }, `vol-${id}`)} label={`Volume of ${t.name}`} />
         <Meter orientation="horizontal" className="w-14" color={t.color} testId={`meter-list-${id}`} read={(s) => s?.levels[id] ?? 0} />
       </div>
     </div>
@@ -168,9 +169,9 @@ export function AddTrackRow({ project, onAdded }: { project: Project; onAdded: (
   };
 
   return (
-    <div className="relative shrink-0 border-r border-b border-white/10 bg-[#12151c] p-2" style={{ width: HEADER_W }}>
+    <div className="hw-strip relative shrink-0 border-r border-b border-black p-2" style={{ width: HEADER_W }}>
       <button
-        className="w-full rounded-md border border-dashed border-white/20 py-1.5 text-xs text-slate-300 hover:border-cyan-400/50 hover:bg-cyan-400/5 disabled:opacity-40"
+        className="hw-btn w-full py-1.5 text-xs"
         disabled={full || multipleLocked}
         title={unlock.reason("tracks.multiple") ?? undefined}
         onClick={() => setMenu(!menu)}

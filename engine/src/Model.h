@@ -67,6 +67,9 @@ struct PlaybackModel
     int ppq = 960;
     double tempo = 120.0; // used by offline export; live playback takes tempo from Sequencer::setBpm
     int64_t loopTicks = 15360;
+    /** Loop region (playback only; export ignores it). Active when end > start. */
+    int64_t loopStartTick = 0;
+    int64_t loopEndTick = 0;
     float masterGain = 0.64f;
     std::vector<TrackModel> tracks;
 };

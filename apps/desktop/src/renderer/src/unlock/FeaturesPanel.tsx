@@ -27,7 +27,7 @@ export function FeaturesPanel({ onClose }: { onClose: () => void }) {
   const locked = ALL.filter((f) => !isUnlocked(progress, f.id)).length;
 
   return (
-    <div ref={ref} className="absolute top-12 right-3 z-[60] w-[400px] rounded-lg border border-white/15 bg-[#161a23] p-3 shadow-2xl" data-testid="features-panel">
+    <div ref={ref} className="absolute top-12 right-3 z-[60] w-[400px] rounded-lg border border-black hw-panel p-3 shadow-2xl" data-testid="features-panel">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-100">Features</div>
@@ -70,15 +70,15 @@ export function FeaturesPanel({ onClose }: { onClose: () => void }) {
         <div className="mt-3 rounded-md border border-dashed border-amber-400/30 p-2" data-testid="dev-tools">
           <div className="mb-1 text-[10px] tracking-wide text-amber-300/80 uppercase">Developer tools (hidden in the installed app)</div>
           <div className="flex items-center gap-1.5">
-            <select value={lesson} onChange={(e) => setLesson(e.target.value)} className="min-w-0 flex-1 rounded bg-white/5 px-1.5 py-1 text-[11px] text-slate-200 outline-none" aria-label="Lesson to complete" data-testid="dev-lesson-select">
+            <select value={lesson} onChange={(e) => setLesson(e.target.value)} className="hw-lcd min-w-0 flex-1 px-1.5 py-1 text-[11px] outline-none" aria-label="Lesson to complete" data-testid="dev-lesson-select">
               {LESSONS_WITH_UNLOCKS.map((l) => (
                 <option key={l} value={l} className="bg-[#12151c]">
                   {l} · {LESSON_TITLES[l] ?? ""} ({unlockedByLesson(l).length} feature{unlockedByLesson(l).length === 1 ? "" : "s"})
                 </option>
               ))}
             </select>
-            <button className="rounded bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10" onClick={() => void window.daw.completeLesson(lesson)} data-testid="dev-complete">Complete</button>
-            <button className="rounded bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10" onClick={() => void window.daw.resetProgress()} data-testid="dev-reset">Reset</button>
+            <button className="hw-btn px-2 py-1 text-[11px]" onClick={() => void window.daw.completeLesson(lesson)} data-testid="dev-complete">Complete</button>
+            <button className="hw-btn px-2 py-1 text-[11px]" onClick={() => void window.daw.resetProgress()} data-testid="dev-reset">Reset</button>
           </div>
         </div>
       )}

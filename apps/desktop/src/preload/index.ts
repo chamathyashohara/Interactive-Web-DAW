@@ -61,6 +61,7 @@ const api = {
   play: () => ipcRenderer.send("transport:play"),
   stop: () => ipcRenderer.send("transport:stop"),
   seek: (tick: number) => ipcRenderer.send("transport:seek", tick),
+  setMetronome: (on: boolean) => ipcRenderer.send("transport:metronome", on),
   preview: (trackId: string, pitch: number, velocity: number, on: boolean) => ipcRenderer.send("engine:preview", { trackId, pitch, velocity, on }),
   exportWav: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath),
   showInFolder: (filePath: string) => ipcRenderer.send("shell:show", filePath),

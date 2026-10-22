@@ -105,6 +105,8 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
     auto* model = new PlaybackModel();
     model->ppq = std::max(1, static_cast<int>(project["ppq"]));
     model->loopTicks = static_cast<juce::int64>(project["loopTicks"]);
+    model->loopStartTick = static_cast<juce::int64>(project["loopStartTick"]);
+    model->loopEndTick = static_cast<juce::int64>(project["loopEndTick"]);
     model->masterGain = static_cast<float>(static_cast<double>(project["masterGain"]));
     model->tempo = static_cast<double>(project["tempo"]);
 
@@ -212,6 +214,7 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     AudioEngine engine;
+    engine.setLoopRegionEnabled(true);
     SampleStore samples;
     ModelStore models(engine.sequencer, samples);
     juce::AudioDeviceManager deviceManager;
@@ -360,6 +363,7 @@ int main(int argc, char** argv)
         }
         else if (type == "seek") engine.sequencer.requestSeek(static_cast<double>(msg["tick"]));
         else if (type == "setTempo") engine.sequencer.setBpm(static_cast<double>(msg["bpm"]));
+        else if (type == "setMetronome") engine.setMetronome(static_cast<bool>(msg["on"]));
         else if (type == "preview")
             engine.pushPreview({ std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1), std::clamp(static_cast<int>(msg["pitch"]), 0, 127),
                                  std::clamp(static_cast<int>(msg["velocity"]), 1, 127), static_cast<bool>(msg["on"]) });

@@ -31,6 +31,8 @@ import { SAMPLE_DRAG_TYPE, dragState } from "../samples/SamplesPanel";
 import { LockIcon } from "../unlock/LockIcon";
 import { useUnlock } from "../unlock/useUnlock";
 import { AUTO_ROW_H, AutomationLane, formatAutoValue } from "./AutomationLane";
+import { Knob } from "../controls/Knob";
+import { SECTION_H, SectionOverlay, SectionRuler } from "./SectionRuler";
 import { ClipAudioFields } from "./ClipAudioFields";
 import { AddTrackRow, HEADER_W, TRACK_ROW_H, TrackHeader } from "./TrackHeader";
 
@@ -60,7 +62,7 @@ type Drag = { kind: "move" | "resize" | "trim"; trackId: string; clipId: string;
 const RULER_H = 24;
 const STRIP_H = 32;
 const RESIZE_PX = 8;
-const btn = "rounded px-2 py-0.5 text-[11px] font-medium bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5";
+const btn = "hw-btn px-2 py-0.5 text-[11px]";
 const uuid = () => crypto.randomUUID();
 
 const ArrPlayhead = memo(function ArrPlayhead({ pxPerTick }: { pxPerTick: number }) {
@@ -347,7 +349,7 @@ export function Arrangement({ project, selectedTrackId, selectedClipId, snap, gr
 
   return (
     <section className={`flex flex-col border-b border-white/10 bg-[#0e1118] ${height === "fill" ? "min-h-0 flex-1" : "shrink-0"}`} style={height === "fill" ? undefined : { height }} data-testid="arrangement">
-      <div className="flex shrink-0 items-center gap-1.5 border-b border-white/10 bg-[#12151c] px-3" style={{ height: STRIP_H }}>
+      <div className="hw-panel flex shrink-0 items-center gap-1.5 border-b border-black px-3" style={{ height: STRIP_H }}>
         <span className="mr-1 text-[11px] tracking-wide text-slate-400 uppercase">Arrangement</span>
         <button className={btn} onClick={cmdAddClip} disabled={!track || clipsLocked} data-testid="arr-add-clip" title={lockTitle ?? "Add a clip on the selected track (or double-click an empty spot on its lane)"}>+ Clip{clipsLocked && <LockIcon className="ml-1" />}</button>
         <button className={btn} onClick={cmdSplit} disabled={!clip || clipsLocked} data-testid="arr-split" title={lockTitle ?? "Split the selected clip at the playhead (S)"}>Split</button>
@@ -361,7 +363,7 @@ export function Arrangement({ project, selectedTrackId, selectedClipId, snap, gr
         <button className={btn} disabled={project.songBars >= MAX_SONG_BARS || clipsLocked} title={lockTitle ?? undefined} onClick={() => setBars(project.songBars + 1)} aria-label="Longer song" data-testid="song-plus">+</button>
         <label className="ml-2 flex items-center gap-1.5 text-[11px] text-slate-400">
           Zoom
-          <input type="range" min={24} max={260} value={pxPerBar} onChange={(e) => setPxPerBar(Number(e.target.value))} className="w-20 accent-cyan-400" aria-label="Arrangement zoom" />
+          <Knob value={pxPerBar} min={24} max={260} size={26} color="#2dd4bf" onChange={setPxPerBar} label="Arrangement zoom" title="Zoom: drag up or down" />
         </label>
         <span className="ml-2 truncate text-[11px] text-amber-300/80" data-testid="arr-hint">{hint}</span>
       </div>
@@ -378,9 +380,25 @@ export function Arrangement({ project, selectedTrackId, selectedClipId, snap, gr
       >
         <div className="relative" style={{ width: HEADER_W + songW, minHeight: "100%" }}>
           <ArrPlayhead pxPerTick={pxPerTick} />
+          <SectionOverlay project={project} pxPerTick={pxPerTick} songLen={songLen} top={SECTION_H + RULER_H} />
+
+          {/* Song sections and loop region */}
+          <div className="sticky top-0 z-30">
+            <SectionRuler
+              project={project}
+              pxPerTick={pxPerTick}
+              songLen={songLen}
+              songW={songW}
+              unit={unit}
+              loopLocked={!unlock.can("arrangement.loop")}
+              loopLockTitle={unlock.reason("arrangement.loop")}
+              markersLocked={!unlock.can("arrangement.markers")}
+              markersLockTitle={unlock.reason("arrangement.markers")}
+            />
+          </div>
 
           {/* Ruler */}
-          <div className="sticky top-0 z-30 flex" style={{ height: RULER_H }}>
+          <div className="sticky z-30 flex" style={{ height: RULER_H, top: SECTION_H }}>
             <div className="sticky left-0 z-40 shrink-0 border-r border-b border-white/10 bg-[#161a23]" style={{ width: HEADER_W }} />
             <div
               className="relative border-b border-white/10 bg-[#161a23]"
@@ -529,13 +547,13 @@ export function Arrangement({ project, selectedTrackId, selectedClipId, snap, gr
               </div>
               {autoOpen[id] && (
                 <div className="flex" style={{ height: AUTO_ROW_H }} data-testid="auto-row" data-track-id={id}>
-                  <div className="sticky left-0 z-20 shrink-0 border-r border-b border-white/10 bg-[#12151c] px-2 py-1.5" style={{ width: HEADER_W, height: AUTO_ROW_H }}>
+                  <div className="sticky left-0 z-20 shrink-0 border-r border-b border-black hw-strip px-2 py-1.5" style={{ width: HEADER_W, height: AUTO_ROW_H }}>
                     <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
                       <span style={{ color: t.color }}>∿</span>
                       <select
                         value={autoOpen[id]}
                         onChange={(e) => setAutoOpen((prev) => ({ ...prev, [id]: e.target.value as AutoParam }))}
-                        className="rounded bg-white/5 px-1.5 py-0.5 text-[11px] text-slate-200 outline-none"
+                        className="hw-lcd px-1.5 py-0.5 text-[11px] outline-none"
                         aria-label="Automation parameter"
                         data-testid="auto-param"
                       >
@@ -543,7 +561,7 @@ export function Arrangement({ project, selectedTrackId, selectedClipId, snap, gr
                         <option value="filter" className="bg-[#12151c]">Filter (low-pass)</option>
                       </select>
                       <button
-                        className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300 hover:bg-white/10 disabled:opacity-40"
+                        className="hw-btn px-1.5 py-0.5 text-[10px]"
                         disabled={!t.automation?.[autoOpen[id]!]?.length}
                         onClick={() => void window.daw.dispatch({ type: "setAutomation", trackId: id, param: autoOpen[id]!, points: null })}
                         data-testid="auto-clear"

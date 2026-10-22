@@ -1,4 +1,4 @@
-import type { AutoParam, AutoPoint, Clip, ClipAudio, Note, Track } from "./model";
+import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, Track } from "./model";
 import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
@@ -98,6 +98,18 @@ export interface SetKeyOp extends OpBase {
   key: ProjectKey | null;
 }
 
+export interface SetLoopOp extends OpBase {
+  type: "setLoop";
+  /** null = loop the whole song. */
+  loop: LoopRegion | null;
+}
+
+export interface SetMarkersOp extends OpBase {
+  type: "setMarkers";
+  /** The whole list (one undo step per change). */
+  markers: Marker[];
+}
+
 export type Op =
   | AddNoteOp
   | DeleteNoteOp
@@ -113,7 +125,9 @@ export type Op =
   | DeleteClipOp
   | UpdateClipOp
   | SetSongLengthOp
-  | SetKeyOp;
+  | SetKeyOp
+  | SetLoopOp
+  | SetMarkersOp;
 
 type Body<T> = T extends Op ? Omit<T, "opId" | "clientId"> : never;
 /** An op before it is stamped with opId/clientId (what the UI sends to the main process). */
