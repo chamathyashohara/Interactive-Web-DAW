@@ -75,8 +75,8 @@ covering it.
 |---|---|---|---|
 | fd21eb835f635fa2 | `C:\Users\ASUS\Downloads\duplexrec-pp1.zip` (9 Oct 2026, 1 761 853 B) | **Working** (on loopback, see the audit) | **Yes. It exists only in Downloads, so back it up.** |
 
-Contents: `src/main.cpp` (1 109 lines, single file), `src/miniaudio.h` v0.11.22,
-`src/miniaudio_impl.c`, `CMakeLists.txt`, `README.md`, `tools/plot_take.py`,
+Contents: `src/Main.cpp` (1 109 lines, single file), `src/miniaudio.h` v0.11.22,
+`src/MiniaudioImpl.c`, `CMakeLists.txt`, `README.md`, `tools/plot_take.py`,
 `example/` (json, csv, png), and `bin/windows/duplexrec.exe` (cross-compiled).
 
 ### 4.2 Rust / cpal reference prototype (`duplexrec-rs`)

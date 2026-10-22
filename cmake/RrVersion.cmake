@@ -1,10 +1,14 @@
-# Generates rr/version_info.hpp from the project version and the git commit.
+# Generates rr/VersionInfo.h from the project version and the git commit.
 # The commit is read at *configure* time; reconfigure after committing to refresh it.
+# No check for a .git directory here: when this project is nested inside the group
+# repository (apps/remote-recording/) the repository root is above it, so the check
+# would fail and the build would report an unknown commit. `git rev-parse` finds the
+# enclosing repository by itself, and its exit code is what decides.
 
 set(RR_GIT_COMMIT "unknown")
 set(RR_GIT_DIRTY_SUFFIX "")
 find_package(Git QUIET)
-if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+if(GIT_FOUND)
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
@@ -24,6 +28,6 @@ endif()
 
 set(RR_GENERATED_INCLUDE_DIR "${PROJECT_BINARY_DIR}/generated/include")
 configure_file(
-    "${PROJECT_SOURCE_DIR}/cmake/version_info.hpp.in"
-    "${RR_GENERATED_INCLUDE_DIR}/rr/version_info.hpp"
+    "${PROJECT_SOURCE_DIR}/cmake/VersionInfo.h.in"
+    "${RR_GENERATED_INCLUDE_DIR}/rr/VersionInfo.h"
     @ONLY)

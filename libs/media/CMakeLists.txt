@@ -3,30 +3,30 @@
 # live sender and the performer's live receiver (Stage 7), and since Stage 8 the symmetric
 # LiveEndpoint with one outgoing and one incoming stream (both directions, ADR-018).
 add_library(rr_media STATIC
-    include/rr/media/arrival_stats.hpp
-    include/rr/media/incoming_stream.hpp
-    include/rr/media/jitter_buffer.hpp
-    include/rr/media/live_endpoint.hpp
-    include/rr/media/live_receiver.hpp
-    include/rr/media/live_report.hpp
-    include/rr/media/live_sender.hpp
-    include/rr/media/live_settings.hpp
-    include/rr/media/media_packet.hpp
-    include/rr/media/net_impairment.hpp
-    include/rr/media/opus_codec.hpp
-    include/rr/media/outgoing_stream.hpp
-    src/arrival_stats.cpp
-    src/incoming_stream.cpp
-    src/jitter_buffer.cpp
-    src/live_endpoint.cpp
-    src/live_receiver.cpp
-    src/live_report.cpp
-    src/live_sender.cpp
-    src/media_packet.cpp
-    src/opus_codec.cpp
-    src/outgoing_stream.cpp)
+    include/rr/media/ArrivalStats.h
+    include/rr/media/IncomingStream.h
+    include/rr/media/JitterBuffer.h
+    include/rr/media/LiveEndpoint.h
+    include/rr/media/LiveReceiver.h
+    include/rr/media/LiveReport.h
+    include/rr/media/LiveSender.h
+    include/rr/media/LiveSettings.h
+    include/rr/media/MediaPacket.h
+    include/rr/media/NetImpairment.h
+    include/rr/media/OpusCodec.h
+    include/rr/media/OutgoingStream.h
+    src/ArrivalStats.cpp
+    src/IncomingStream.cpp
+    src/JitterBuffer.cpp
+    src/LiveEndpoint.cpp
+    src/LiveReceiver.cpp
+    src/LiveReport.cpp
+    src/LiveSender.cpp
+    src/MediaPacket.cpp
+    src/OpusCodec.cpp
+    src/OutgoingStream.cpp)
 target_include_directories(rr_media PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-# libopus is a private detail: only opus_codec.cpp includes opus.h.
+# libopus is a private detail: only OpusCodec.cpp includes opus.h.
 target_link_libraries(rr_media PUBLIC rr_shared rr_audio rr_network PRIVATE Opus::opus)
 if(WIN32)
     target_link_libraries(rr_media PRIVATE winmm)  # timeBeginPeriod for the media-send thread

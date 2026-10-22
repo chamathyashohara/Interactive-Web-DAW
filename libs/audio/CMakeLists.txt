@@ -2,7 +2,7 @@
 # Device I/O uses miniaudio 0.11.25, vendored unmodified in third_party/miniaudio.
 
 # miniaudio implementation, compiled once, without the project's warning flags (third-party code).
-add_library(rr_miniaudio STATIC src/miniaudio_impl.c)
+add_library(rr_miniaudio STATIC src/MiniaudioImpl.c)
 target_include_directories(rr_miniaudio SYSTEM PUBLIC "${PROJECT_SOURCE_DIR}/third_party/miniaudio")
 # Only what we use: device I/O. No decoders/encoders/engine/node graph.
 target_compile_definitions(rr_miniaudio PUBLIC
@@ -17,32 +17,32 @@ if(UNIX AND NOT APPLE)
 endif()
 
 add_library(rr_audio STATIC
-    include/rr/audio/audio_engine.hpp
-    include/rr/audio/capture_ingest.hpp
-    include/rr/audio/file_io.hpp
-    include/rr/audio/live_tap.hpp
-    include/rr/audio/monitor_bus.hpp
-    include/rr/audio/spsc_ring.hpp
-    include/rr/audio/take_metadata.hpp
-    include/rr/audio/take_naming.hpp
-    include/rr/audio/take_recorder.hpp
-    include/rr/audio/wav_format.hpp
-    include/rr/audio/wav_inspect.hpp
-    include/rr/audio/wav_writer.hpp
-    src/audio_engine.cpp
-    src/capture_ingest.cpp
-    src/engine_report.cpp
-    src/file_io.cpp
-    src/live_tap.cpp
-    src/monitor_bus.cpp
-    src/take_metadata.cpp
-    src/take_naming.cpp
-    src/take_recorder.cpp
-    src/wav_format.cpp
-    src/wav_inspect.cpp
-    src/wav_writer.cpp)
+    include/rr/audio/AudioEngine.h
+    include/rr/audio/CaptureIngest.h
+    include/rr/audio/FileIo.h
+    include/rr/audio/LiveTap.h
+    include/rr/audio/MonitorBus.h
+    include/rr/audio/SpscRing.h
+    include/rr/audio/TakeMetadata.h
+    include/rr/audio/TakeNaming.h
+    include/rr/audio/TakeRecorder.h
+    include/rr/audio/WavFormat.h
+    include/rr/audio/WavInspect.h
+    include/rr/audio/WavWriter.h
+    src/AudioEngine.cpp
+    src/CaptureIngest.cpp
+    src/EngineReport.cpp
+    src/FileIo.cpp
+    src/LiveTap.cpp
+    src/MonitorBus.cpp
+    src/TakeMetadata.cpp
+    src/TakeNaming.cpp
+    src/TakeRecorder.cpp
+    src/WavFormat.cpp
+    src/WavInspect.cpp
+    src/WavWriter.cpp)
 
 target_include_directories(rr_audio PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-# miniaudio is a private detail: only audio_engine.cpp includes it.
+# miniaudio is a private detail: only AudioEngine.cpp includes it.
 target_link_libraries(rr_audio PUBLIC rr_shared PRIVATE rr_miniaudio)
 rr_set_compiler_options(rr_audio)

@@ -24,7 +24,7 @@ There is no single existing repository. The work is spread over four places:
 
 | Aspect | Finding |
 |---|---|
-| Entry point | `src/main.cpp` → `main()` (single 1 109-line file, CLI) |
+| Entry point | `src/Main.cpp` → `main()` (single 1 109-line file, CLI) |
 | Dependencies | miniaudio **v0.11.22** (vendored header), `ws2_32` (Winsock), C++17 `<filesystem>`, `<thread>` |
 | Audio code | `data_cb` (duplex callback): tone/mic → `localRb`, `netRb` (miniaudio `ma_pcm_rb`). Jitter-buffer playout → output → `monRb`. Meters via atomics. |
 | Network code | One UDP socket. `sender_thread` (PCM16 segments, 26-byte header, CRC-32, 1 Hz ping). `receiver_thread` (validate, jitter-buffer insert, control, ping/pong). `SIO_UDP_CONNRESET` workaround. |
@@ -85,7 +85,7 @@ median).
 | R3 | Rust loopback, main/remote, A `--sim-loss 10` | `loopback.sh <rust exe> runs/rust "--role main --sim-loss 10" "--role remote"` | Both exit 0. Take 1 started on A, followed on B "(by peer)". A dropped 142 packets, B concealed 142 (10.09 %). **Local WAVs: 0/603 and 0/602 damaged blocks**, 440/660 Hz. B's take was delivered to A over TCP. **`cmp` shows the transferred copy is byte-identical.** |
 | C1 | C++ MinGW build (dynamic) | `cmake -G Ninja … -DCMAKE_CXX_COMPILER=g++` + `cmake --build` (g++ 16.2.0) | Builds. **The exe will not start (exit 127).** It depends on `libstdc++-6.dll`/`libgcc_s_seh-1.dll`, and Git's older MinGW DLLs come first on PATH. |
 | C2 | C++ MinGW build (static) | same with `-DCMAKE_EXE_LINKER_FLAGS=-static` | Builds and runs |
-| C3 | C++ warnings | `g++ -std=c++17 -Wall -Wextra -fsyntax-only main.cpp` | **0 warnings** |
+| C3 | C++ warnings | `g++ -std=c++17 -Wall -Wextra -fsyntax-only Main.cpp` | **0 warnings** |
 | C4 | C++ device list (own build and bundled exe) | `duplexrec.exe --list-devices` | WASAPI devices listed. This is the **first recorded run of the bundled exe on real Windows**; the chat record says it had never been run. |
 | C5 | C++ loopback, own static build, A `--sim-loss 10` | `loopback.sh <static exe> runs/cpp "--sim-loss 10" ""` | Both exit 0. B started "(peer)". A dropped 139, B concealed 139 (9.84 %), 49 of them during the take (49 lines in the concealment CSV). **Local WAVs: 0/604 damaged blocks each**, 440/660 Hz. B monitor: 94/604 damaged blocks (each concealed 10 ms segment straddles about 2 analysis blocks). |
 | C6 | C++ loopback, **bundled** exe | `loopback.sh bin/windows/duplexrec.exe runs/cpp_bundled "--sim-loss 10" ""` | Both exit 0. Dropped 127, concealed 126 (the last drop before A quit is correctly not counted). **Local WAVs: 0 damaged blocks**. B monitor: 104/604. |

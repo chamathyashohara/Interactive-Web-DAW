@@ -50,9 +50,9 @@ value used is recorded in the test evidence.
 
 | Parameter | Default | Used by | Basis |
 |---|---|---|---|
-| Scheduled-start lead time | 1 s | SES-05 | Must be much larger than LAN control RTT (about 1 ms in the 9 Oct prototype takes, unverified). Can be changed. |
+| Scheduled-start lead time | 1 s floor, raised to fit the link | SES-05 | Must be much larger than the control RTT. Since Stage 12 (ADR-022) the producer raises it to `minimum + 250 ms` for the measured link; the figure below is the floor, not the value used. Not yet validated on a wireless link. |
 | ARM_ACK timeout | 2 s | SES-05 | More than the lead time, so a late ACK cancels cleanly |
-| Control heartbeat loss detection | 3 s | SES-10, ERR-03 | Same value as ARCHITECTURE §5.2 |
+| Control heartbeat loss detection | 6 s | SES-10, ERR-03 | Was 3 s (ARCHITECTURE §5.2); raised in Stage 12 (ADR-022) because a wireless adapter roaming or leaving power saving stalls for longer than three missed heartbeats |
 | Silence detection for "No input signal" | 3 s of digital silence | DEV-04 | Long enough not to trigger during normal pauses at digital zero. Real rooms are rarely digital zero. |
 | Maximum planned take for the disk check | 30 min ≈ 346 MB (48 000 × 4 B × 1 800 s) | REC-09 | Arithmetic for float32 mono at 48 kHz. Matches the proposal's 30-min session length. |
 | Record buffer | 10 s of audio | REC-05, TST-01c | ARCHITECTURE §3. The C++ prototype's 1 s was judged too small (A0-G5). |

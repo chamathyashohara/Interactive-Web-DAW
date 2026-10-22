@@ -15,35 +15,35 @@ FetchContent_Declare(Catch2
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(rr_unit_tests
-    audio/test_capture_levels.cpp
-    audio/test_monitor_bus.cpp
-    audio/test_recorder_pipeline.cpp
-    audio/test_recorder_schedule.cpp
-    audio/test_spsc_ring.cpp
-    audio/test_take_naming.cpp
-    audio/test_wav_format.cpp
-    audio/test_wav_inspect.cpp
-    audio/test_wav_writer.cpp
-    control/test_session_controller.cpp
-    media/test_jitter_buffer.cpp
-    media/test_live_duplex.cpp
-    media/test_live_loopback.cpp
-    media/test_live_tap.cpp
-    media/test_media_packet.cpp
-    media/test_opus_codec.cpp
-    network/test_clock_offset.cpp
-    network/test_control_link.cpp
-    network/test_control_protocol.cpp
-    session/test_session_machine.cpp
-    shared/test_build_info.cpp
-    shared/test_clock.cpp
-    shared/test_config.cpp
-    shared/test_error_codes.cpp
-    shared/test_json_escape.cpp
-    shared/test_logger.cpp
-    shared/test_role.cpp
-    session/test_states.cpp
-    transfer/test_transfer.cpp)
+    audio/TestCaptureLevels.cpp
+    audio/TestMonitorBus.cpp
+    audio/TestRecorderPipeline.cpp
+    audio/TestRecorderSchedule.cpp
+    audio/TestSpscRing.cpp
+    audio/TestTakeNaming.cpp
+    audio/TestWavFormat.cpp
+    audio/TestWavInspect.cpp
+    audio/TestWavWriter.cpp
+    control/TestSessionController.cpp
+    media/TestJitterBuffer.cpp
+    media/TestLiveDuplex.cpp
+    media/TestLiveLoopback.cpp
+    media/TestLiveTap.cpp
+    media/TestMediaPacket.cpp
+    media/TestOpusCodec.cpp
+    network/TestClockOffset.cpp
+    network/TestControlLink.cpp
+    network/TestControlProtocol.cpp
+    session/TestSessionMachine.cpp
+    shared/TestBuildInfo.cpp
+    shared/TestClock.cpp
+    shared/TestConfig.cpp
+    shared/TestErrorCodes.cpp
+    shared/TestJsonEscape.cpp
+    shared/TestLogger.cpp
+    shared/TestRole.cpp
+    session/TestStates.cpp
+    transfer/TestTransfer.cpp)
 
 target_link_libraries(rr_unit_tests PRIVATE rr_shared rr_session rr_audio rr_network rr_control rr_media rr_transfer Catch2::Catch2WithMain)
 target_include_directories(rr_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/audio")

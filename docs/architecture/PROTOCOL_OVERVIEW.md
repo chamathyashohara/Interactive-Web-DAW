@@ -102,7 +102,11 @@ All counters are cumulative per session and per take.
   - θ̂ = θ of the probe with the smallest δ among the last 16;
   - **uncertainty u = δmin / 2**. The true offset lies within θ̂ ± u if the timestamps are exact; an asymmetric path cannot push it outside that bound.
   - **probe RTT** = δ of the latest probe.
-- Probes with δ > 100 ms (prov.) or a missing response within 1 s are discarded and counted.
+- Probes with δ > **1 s** or a missing response within 1 s are discarded and counted. The ceiling
+  was 100 ms until Stage 12 (ADR-022): it is a sanity limit, not a quality filter, and at 100 ms it
+  discarded every probe on an ordinary Wi-Fi link, so the offset was never measured at all. A slow
+  probe cannot pull θ̂, which is always the probe with the smallest δ; it only widens u until a
+  better probe arrives.
 
 ## 4. Control framing (TCP, ADR-009)
 

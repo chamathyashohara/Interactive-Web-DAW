@@ -13,8 +13,35 @@ v2 §4.1).
 
 ## Status
 
-**Stage 10 (guided interfaces) is implemented.** Version 0.1.0, control protocol 1.2.
-Stages 4–9 and Stage 11 remain as before.
+**Stage 12 (one build for a cabled LAN and for Wi-Fi) is implemented.** Version 0.1.0,
+control protocol 1.2. Stages 4–11 remain as before.
+
+Every stage so far was verified with both applications on **one** PC. No test in
+[docs/requirements/PP1_ACCEPTANCE_MATRIX.md](docs/requirements/PP1_ACCEPTANCE_MATRIX.md)
+has been run on two physical PCs, so PP1 would currently be reported **PARTIAL**.
+
+### Stage 12: link-adaptive timing (cabled LAN and Wi-Fi)
+- **Implemented:** three constants that were tuned against loopback and were too tight for a
+  wireless link are now sized for the link that is actually measured:
+  - the clock-offset sanity ceiling is **100 ms → 1 s**, so an ordinary Wi-Fi round trip is
+    measured instead of discarded (which previously left the performer **not ready** for ever);
+  - the minimum start lead now uses the **smallest** round trip in the offset window, not the
+    latest, so one slow heartbeat no longer refuses a take at random;
+  - link-loss detection is **3 s → 6 s**, so an adapter roaming or leaving power saving is not
+    mistaken for a lost link;
+  - the producer **sizes the start lead for the measured link** (never below a hand-set value) and
+    states in words what it measured: best round trip, offset samples, uncertainty, minimum lead
+    and the lead the next take would use.
+- **Verified (19 Oct 2026):** MSVC x64 Release `ctest` **175/175** over seven consecutive runs;
+  GCC Qt-free core **173/173**; GUI end-to-end automation **PASS** (sound → session → join → both
+  ready → take recorded, 334 077 frames on both sides → copy **VERIFIED**); `check_sources`
+  150 files, 0 problems.
+- **Not verified:** **a real wireless link** — every number comes from loopback and from unit
+  tests with synthetic timestamps, so the constants are *plausible* for Wi-Fi, not *validated* on
+  it; two physical PCs (T-07, T-08) are still NOT RUN. Clock-rate drift between two PCs is still
+  not corrected and cannot be measured on one PC.
+
+See [ADR-022](docs/adr/ADR-022-link-adaptive-timing.md), [SESSION_TEST_PROTOCOL §7](docs/testing/SESSION_TEST_PROTOCOL.md).
 
 ### Stage 10: guided interfaces
 - **Implemented:**
@@ -32,7 +59,7 @@ Stages 4–9 and Stage 11 remain as before.
 - **Not verified:** two physical PCs; any observation of a real first-time user; keyboard-only and screen-reader use by a person; dark mode.
 - **Deliberately not built:** the waveform display, markers, MIDI, samples and plugins from the reference design. The engine has none of them, and a control that did nothing would be a false claim.
 
-See [ADR-021](docs/architecture/adr/ADR-021-guided-interface.md), [SESSION_TEST_PROTOCOL §6](docs/testing/SESSION_TEST_PROTOCOL.md).
+See [ADR-021](docs/adr/ADR-021-guided-interface.md), [SESSION_TEST_PROTOCOL §6](docs/testing/SESSION_TEST_PROTOCOL.md).
 
 ### Stage 11: verified take transfer
 - **Implemented:**
@@ -48,7 +75,7 @@ See [ADR-021](docs/architecture/adr/ADR-021-guided-interface.md), [SESSION_TEST_
 - **Not verified:** two PCs (real network, Wi-Fi, firewall), the Qt transfer table and MSVC, audible playback (the input is muted).
 - **Security:** still a LAN-only, unencrypted prototype (ADR-012). The transfer token prevents accidents, not attacks.
 
-See [SESSION_TEST_PROTOCOL §5](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §15](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-020](docs/architecture/adr/ADR-020-verified-take-transfer.md).
+See [SESSION_TEST_PROTOCOL §5](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §15](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-020](docs/adr/ADR-020-verified-take-transfer.md).
 
 ### Stage 9: coordinated recording
 - **Implemented:**
@@ -72,7 +99,7 @@ See [SESSION_TEST_PROTOCOL §5](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCO
   - any acoustic alignment measurement (needs a shared reference sound on two PCs).
 - One-PC timing numbers are a check of the mechanism, **not** a two-PC accuracy claim, and not sample-accurate alignment.
 
-See [SESSION_TEST_PROTOCOL §4](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §14](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-019](docs/architecture/adr/ADR-019-coordinated-recording.md).
+See [SESSION_TEST_PROTOCOL §4](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §14](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-019](docs/adr/ADR-019-coordinated-recording.md).
 
 
 ### Stage 8: two-way live audio (talkback)
@@ -99,7 +126,7 @@ See [SESSION_TEST_PROTOCOL §4](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCO
   - acoustic latency.
 - **Not implemented:** echo cancellation (LATER-03: headphones required), push-to-talk (not required), UDP clock probes, take transfer, encryption.
 
-See [LIVE_AUDIO_TEST_PROTOCOL §4–§6](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §13](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-018](docs/architecture/adr/ADR-018-two-way-live-audio.md).
+See [LIVE_AUDIO_TEST_PROTOCOL §4–§6](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §13](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-018](docs/adr/ADR-018-two-way-live-audio.md).
 
 ### Stage 7: one-way live audio
 - **Implemented:**
@@ -123,7 +150,7 @@ See [LIVE_AUDIO_TEST_PROTOCOL §4–§6](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.m
   - acoustic (mouth-to-ear) latency, which is not measured.
 - **Not implemented:** two-way talkback (performer → producer), UDP clock probes, take transfer, encryption.
 
-See [docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §12](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-017](docs/architecture/adr/ADR-017-one-way-live-audio-opus-udp.md).
+See [docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md](docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §12](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-017](docs/adr/ADR-017-one-way-live-audio-opus-udp.md).
 
 ### Stage 6: producer/performer session control over a controlled LAN
 - **Implemented:**
@@ -152,17 +179,21 @@ See [docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md](docs/testing/LIVE_AUDIO_TEST_PROT
   - audible content.
 - **Not implemented in Stage 6:** live audio (added in Stage 7, one way), take transfer, encryption.
 
-See [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §11](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-016](docs/architecture/adr/ADR-016-control-transport-qt-free-sockets.md).
+See [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md), [PROTOCOL_OVERVIEW §11](docs/architecture/PROTOCOL_OVERVIEW.md), [ADR-016](docs/adr/ADR-016-control-transport-qt-free-sockets.md).
 
 ## Build (Windows, MSVC 2022, Qt 6.11.3)
 
 ```powershell
-$env:RR_QT_DIR = "C:\Qt\6.11.3\msvc2022_64"
+$env:RR_QT_DIR = "D:\Qt\6.11.3\msvc2022_64"   # path on the development PC
 cmake --preset msvc-x64
 cmake --build --preset msvc-x64-debug
 ctest --preset msvc-x64-debug
 ```
 Prerequisites, offline use and troubleshooting: [docs/build/WINDOWS_BUILD.md](docs/build/WINDOWS_BUILD.md).
+What is installed on the development PC: [docs/environment/TOOLCHAIN_AUDIT.md](docs/environment/TOOLCHAIN_AUDIT.md).
+
+A configured build tree records absolute paths. If this repository is copied or moved to
+another folder or drive, delete `build/` and configure again.
 
 ## Layout
 
@@ -204,7 +235,7 @@ Architecture-to-code map: [docs/architecture/CODE_MAP.md](docs/architecture/CODE
 | [docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md](docs/architecture/THREADING_AND_AUDIO_CALLBACKS.md) | Threads, bounded queues, callback rules, shutdown order |
 | [docs/architecture/SESSION_STATE_MACHINE.md](docs/architecture/SESSION_STATE_MACHINE.md) | Link and session/take state machines with transition tables |
 | [docs/architecture/PROTOCOL_OVERVIEW.md](docs/architecture/PROTOCOL_OVERVIEW.md) | Media header, jitter policy, probes, control messages, codes, timeouts |
-| [docs/architecture/adr/](docs/architecture/adr/README.md) | ADR-001…016 |
+| [docs/adr/](docs/adr/README.md) | ADR-001…022 |
 | [docs/testing/SESSION_TEST_PROTOCOL.md](docs/testing/SESSION_TEST_PROTOCOL.md) | Two-instance and two-PC session tests, Windows Firewall guidance |
 | [docs/architecture/ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | Stage 0 draft (superseded, kept) |
 | [docs/architecture/DEPENDENCIES.md](docs/architecture/DEPENDENCIES.md) | Proposed dependencies with pinned versions and licences |

@@ -5,7 +5,7 @@ speakers live, so real-output runs use -60 dB). Build: core-check-gcc (MinGW g++
 build. All runs: TWO PROBE PROCESSES ON ONE PC (loopback 127.0.0.1), one run at a time. They test logic,
 codec, counters and robustness; they do NOT show two people hearing each other on two PCs, real network
 behaviour, or acoustic latency. TEST TONE / BURSTS / ECHO sources and the TEST PLAYBACK CLOCK are labelled
-stand-ins for microphones and output devices (see tools/rr_session_probe/main.cpp). Pairing codes: <redacted>.
+stand-ins for microphones and output devices (see tools/rr_session_probe/Main.cpp). Pairing codes: <redacted>.
 
 PART A. Runs that found defects (earlier builds of this stage, kept as found)
 ----------------------------------------------------------------------

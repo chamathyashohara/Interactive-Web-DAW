@@ -15,7 +15,7 @@ for history. Detail lives in:
 | Threads, queues, callbacks | [THREADING_AND_AUDIO_CALLBACKS.md](THREADING_AND_AUDIO_CALLBACKS.md) |
 | States and transitions | [SESSION_STATE_MACHINE.md](SESSION_STATE_MACHINE.md) |
 | Wire formats, codes, timeouts | [PROTOCOL_OVERVIEW.md](PROTOCOL_OVERVIEW.md) |
-| Decisions | [adr/](adr/README.md) (ADR-001 … ADR-015) |
+| Decisions | [adr/](../adr/README.md) (ADR-001 … ADR-015) |
 
 ---
 

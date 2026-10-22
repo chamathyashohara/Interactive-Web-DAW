@@ -20,7 +20,7 @@ Record results in `docs/testing/evidence/` (date, PCs, network, build, commands,
 | `tools/audit/analyse_live_sink.py <file.wav>` | Frequency, level, dropout and dip blocks of a `--live-sink wav:` file |
 | `ProducerStudio.exe` / `PerformerClient.exe` | The real apps: Live audio panel under the Session panel |
 
-The live options are listed in the probe's usage text and at the top of `tools/rr_session_probe/main.cpp`.
+The live options are listed in the probe's usage text and at the top of `tools/rr_session_probe/Main.cpp`.
 - `--live-source tone` is a labelled **test tone**, not a microphone.
 - `--live-sink null|wav:` is a labelled **test playback clock** (10 ms), not an output device.
 - `--sim-*` (test only) drops, duplicates or reorders packets in the producer before `sendto`.

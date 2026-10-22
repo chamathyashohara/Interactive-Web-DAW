@@ -1,6 +1,17 @@
 # PP1 Acceptance Matrix
 
-**Stage 1 · 11 October 2026 · every test is NOT RUN.** The product does not exist yet.
+**Written at Stage 1 · 11 October 2026. Status reviewed 20 October 2026: every test is still NOT RUN.**
+
+The product now exists: Stages 0–12 are implemented and the two applications build and run
+(see [../STAGE_PLAN.md](../STAGE_PLAN.md) and [../build/WINDOWS_BUILD.md](../build/WINDOWS_BUILD.md)).
+What has **not** happened is this matrix. Every stage was verified with both applications on
+**one** PC; no test below has been run on the two physical PCs that §1 requires, so by the rule in
+§1 PP1 would today be reported **PARTIAL**. The `Status` column is accurate and must only be
+changed from a real two-PC run with filed evidence.
+
+Test environment: `tools/fault/send_bad_packets.py` (§2) now exists and covers T-05(e)
+and T-12. T-07b uses the port-blocking route named in its own row, not the tool.
+
 Requirements: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md) · Use cases: [USE_CASES.md](USE_CASES.md)
 
 ---
@@ -48,7 +59,7 @@ presented as prototypes, and this matrix stays unpassed.
 | Firewall | Both apps allowed on Private networks |
 | Audio | Headphones on both. A microphone on both. Both devices set to 48 kHz in Windows Sound settings. |
 | Build | The same commit on both PCs, deployed as a folder (APP-01) |
-| Tools | Verification tool (VER-01). Bad-packet tool `tools/fault/send_bad_packets.py` *(to be written; it sends malformed UDP and fake HELLO messages)*. Audacity or Windows Media Player. Admin rights for the VHD steps in T-11. |
+| Tools | Verification tool (VER-01). Bad-packet tool `tools/fault/send_bad_packets.py` (sends malformed UDP datagrams and fake HELLO frames; `--list` shows the cases, `tools/fault/README.md` how to run them). Audacity or Windows Media Player. Admin rights for the VHD steps in T-11. |
 | Participants | Researcher plus one partner, both agreeing to take part in the test (OQ-09) |
 
 ## 3. Test procedures

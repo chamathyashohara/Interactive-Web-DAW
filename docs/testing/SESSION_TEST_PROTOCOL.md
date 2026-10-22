@@ -102,7 +102,7 @@ Two probes, both `--audio` (the same physical input opened twice; the endpoint i
 Afterwards:
 - `tools/audit/analyse_take_timing.py p.jsonl r.jsonl --same-pc`: start offsets, measured on the shared clock;
 - `tools/audit/verify_take_wav.py`: structure, every sample, frames against the metadata;
-- `tools/audit/mci_open_check.c`: Windows opens each WAV and reports its length.
+- `tools/audit/MciOpenCheck.c`: Windows opens each WAV and reports its length.
 
 ### 4.2 On two PCs (NOT YET RUN): the Stage 9 acceptance test
 Preconditions: as §2. Both PCs have the input open; the input and output are at 48 kHz; headphones are on.
@@ -174,3 +174,44 @@ seen the app in front of each role, give them only `READ_ME_FIRST_TWO_PC_GUIDE.t
 4. whether they can do step 1 to step 4 with the keyboard only;
 5. anything they expected to find and did not.
 Write the answers into the test record. Do not report "easy to use" without this.
+
+## 7. Stage 12: the same build on a cabled LAN and on Wi-Fi (NOT YET RUN on two PCs)
+
+Stage 12 (ADR-022) retuned three constants that loopback could never exercise. **Nothing in this
+section has been run on a real wireless link.** It is written so the two-PC run can record it.
+
+### 7.1 What to read before pressing anything
+On the producer, **All controls → Start lead**. The line under the spin box states the
+measurement, for example:
+
+```
+This link: round trip 42.3 ms (best of the last 16), clock offset +/- 21.1 ms.
+Minimum lead 428 ms; next take would use 678 ms (chosen automatically).
+```
+
+Record all five numbers for each link below. "Round trip" is the **smallest** of the window, not
+the latest; Diagnostics still shows the latest separately.
+
+### 7.2 Runs to make
+Do §4.2 (coordinated recording) and §5.2 (take transfer) once per link:
+
+| # | Link | Expected |
+|---|---|---|
+| W1 | Both PCs on **Ethernet** to the same router | Round trip a few ms; chosen lead near the 300 ms floor; take starts together |
+| W2 | Both PCs on the **same Wi-Fi** access point | Round trip tens of ms; chosen lead visibly larger than W1; performer still reaches Ready |
+| W3 | Producer on Ethernet, performer on **Wi-Fi** | Between the two; both PCs still record |
+| W4 | W2, with the performer **walking out of range for ~4 s** and returning | The link survives a stall under 6 s; if it exceeds 6 s the producer reports the loss and **both local recordings continue** (REC-02) |
+
+### 7.3 What would falsify the stage
+- The performer never leaves "measuring clock offset to the producer" → the 1 s ceiling is still
+  too tight for this link. Record the Diagnostics rejected count.
+- Record is refused with "below the minimum" on a link a musician would call usable → the lead
+  clamp (10 s) or the formula is wrong for real conditions.
+- The chosen lead is the same on W1 and W2 → the automatic choice is not reacting to the link.
+- A take is refused once and accepted on an immediate retry → the minimum is still moving with
+  single samples, i.e. the stable round trip is not being used.
+
+### 7.4 Status
+**NOT RUN.** Stage 12 was verified only by unit tests with synthetic timestamps (a 60–90 ms round
+trip is measured; a 1.5 s one is rejected) and by the one-PC suites. The constants are plausible
+for Wi-Fi; they are not validated on Wi-Fi.

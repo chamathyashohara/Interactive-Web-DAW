@@ -2,25 +2,25 @@
 # Part of the "core" family in ADR-001 (must never include Qt headers).
 
 add_library(rr_shared STATIC
-    src/build_info.cpp
-    src/clock.cpp
-    src/config.cpp
-    src/error_codes.cpp
-    src/json_escape.cpp
-    src/logger.cpp
-    src/log_record.cpp
-    src/log_sinks.cpp
-    src/realtime_guard.cpp
-    src/role.cpp
-    include/rr/shared/build_info.hpp
-    include/rr/shared/clock.hpp
-    include/rr/shared/config.hpp
-    include/rr/shared/error_codes.hpp
-    include/rr/shared/json_escape.hpp
-    include/rr/shared/log.hpp
-    include/rr/shared/log_sinks.hpp
-    include/rr/shared/realtime_guard.hpp
-    include/rr/shared/role.hpp)
+    src/BuildInfo.cpp
+    src/Clock.cpp
+    src/Config.cpp
+    src/ErrorCodes.cpp
+    src/JsonEscape.cpp
+    src/Logger.cpp
+    src/LogRecord.cpp
+    src/LogSinks.cpp
+    src/RealtimeGuard.cpp
+    src/Role.cpp
+    include/rr/shared/BuildInfo.h
+    include/rr/shared/Clock.h
+    include/rr/shared/Config.h
+    include/rr/shared/ErrorCodes.h
+    include/rr/shared/JsonEscape.h
+    include/rr/shared/Log.h
+    include/rr/shared/LogSinks.h
+    include/rr/shared/RealtimeGuard.h
+    include/rr/shared/Role.h)
 
 target_include_directories(rr_shared
     PUBLIC

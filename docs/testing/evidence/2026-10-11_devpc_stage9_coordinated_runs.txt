@@ -225,7 +225,7 @@ verify_take_wav.py (independent structural reader, every sample) exit 0:
   take03_performer_3271b55a.wav: PASS; 256029 frames = 5.334 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256029
   take04_performer_3271b55a.wav: PASS; 256076 frames = 5.335 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256076
   take05_performer_3271b55a.wav: PASS; 256184 frames = 5.337 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256184
-Windows MCI open check (tools/audit/mci_open_check.c), files copied to short names m1..m10:
+Windows MCI open check (tools/audit/MciOpenCheck.c), files copied to short names m1..m10:
   m1.wav: Windows MCI opened it: length 5324 ms, format tag 3, 2 ch, 48000 Hz
   m2.wav: Windows MCI opened it: length 5336 ms, format tag 3, 2 ch, 48000 Hz
   m3.wav: Windows MCI opened it: length 5334 ms, format tag 3, 2 ch, 48000 Hz

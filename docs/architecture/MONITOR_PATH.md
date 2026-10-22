@@ -1,6 +1,6 @@
 # Local Playback, Monitoring and Audio Diagnostics (Stage 5)
 
-**Status:** implemented in `libs/audio` (`monitor_bus.*`, `audio_engine.*`, `engine_report.cpp`)
+**Status:** implemented in `libs/audio` (`monitor_bus.*`, `audio_engine.*`, `EngineReport.cpp`)
 and `libs/ui_common/src/audio_panel.*`. The Qt-free parts are unit-tested and were run on real
 WASAPI devices through `rr_audio_probe`. The Qt panel has not been compiled
 (no Qt on the development PC).

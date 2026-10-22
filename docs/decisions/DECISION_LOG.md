@@ -23,7 +23,7 @@ Status: **Proposed** = waiting for the researcher's or supervisor's review. **Ac
 
 ## Stage 2 (11 Oct 2026): architecture decisions
 
-The detailed records are in `docs/architecture/adr/`. All are **Proposed**
+The detailed records are in `docs/adr/`. All are **Proposed**
 until the architecture review.
 
 | # | Date | Decision | Record | Status |
@@ -159,3 +159,8 @@ until the architecture review.
 | D-92 | 2026-10-19 | Consent and delivery tick boxes are read back from the session panel's own boxes, not from the controller snapshot | The controller does not exist until the session starts, so consent ticked beforehand was being discarded | Fixed; found by the GUI test |
 | D-93 | 2026-10-19 | The interface picker ranks a real private address above a `169.254.x` link-local one, and labels the latter "the other PC cannot reach this" | A link-local address means the adapter never got one; choosing it would make the two-PC test fail for a reason the user cannot see | Fixed |
 | D-94 | 2026-10-19 | The reference design's features (waveforms, MIDI, samples, plugins) were deliberately not copied; only its layout style was | The engine has none of them, and a control that does nothing would be a false claim in the interface | Decided; open for review |
+| D-95 | 2026-10-19 | The clock-offset ceiling is a sanity limit, not a quality filter: 100 ms -> 1 s | At 100 ms every heartbeat on an ordinary Wi-Fi link was rejected, the sample count never reached the readiness threshold, and the performer could never become ready. The estimate is already the best sample of the window, so a slow sample cannot pull it. | Implemented, unit-tested. NOT validated on a real wireless link. |
+| D-96 | 2026-10-19 | `LinkStats.control_rtt_best_ns` (smallest round trip of the offset window) is added, and `min_start_lead_ms()` uses it instead of the latest round trip | One slow heartbeat arriving just before Record could push the minimum above the configured lead and have the take refused, while a retry a second later worked. The best round trip is also the sample the clock offset came from. | Implemented, tested |
+| D-97 | 2026-10-19 | The producer sizes the start lead for the measured link (`auto_start_lead`, default on): max(min + 250 ms, the value set by hand), clamped 300..10 000 ms, fixed once per take | One build has to work on a cabled LAN and on Wi-Fi without the user understanding what a scheduling lead is; a hand-set value is never lowered, so manual control and timing experiments still work | Implemented, tested |
+| D-98 | 2026-10-19 | `link_lost_after_ms` 3000 -> 6000 | Three missed heartbeats is shorter than a wireless adapter roaming or leaving power saving, so a slow link was being torn down as a lost one. A genuine loss is now noticed up to 6 s later; local recording on both PCs is unaffected (REC-02). | Implemented; the slower detection is a deliberate trade-off, open for review |
+| D-99 | 2026-10-19 | The producer's panel states the measurement in words: best round trip, offset samples, uncertainty, minimum lead and the lead the next take would use | Network honesty: an automatic lead must not be a hidden number, and a user told "not ready" deserves to see what the link measured | Implemented |

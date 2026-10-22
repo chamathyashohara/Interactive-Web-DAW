@@ -3,10 +3,10 @@
 # (Stage 3) and the explicit transition tables for both roles (Stage 6).
 
 add_library(rr_session STATIC
-    src/session_machine.cpp
-    src/states.cpp
-    include/rr/session/session_machine.hpp
-    include/rr/session/states.hpp)
+    src/SessionMachine.cpp
+    src/States.cpp
+    include/rr/session/SessionMachine.h
+    include/rr/session/States.h)
 
 target_include_directories(rr_session PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(rr_session PUBLIC rr_shared)

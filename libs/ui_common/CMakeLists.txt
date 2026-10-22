@@ -5,24 +5,24 @@
 # live panel: one-way live audio producer -> performer (Stage 7).
 
 qt_add_library(rr_ui STATIC
-    include/rr/ui/app_runner.hpp
-    src/app_runner.cpp
-    src/audio_panel.cpp
-    src/audio_panel.hpp
-    src/diagnostics.cpp
-    src/diagnostics.hpp
-    src/live_panel.cpp
-    src/live_panel.hpp
-    src/main_window.cpp
-    src/main_window.hpp
-    src/qt_log_bridge.cpp
-    src/qt_log_bridge.hpp
-    src/session_panel.cpp
-    src/session_panel.hpp
-    src/simple_panel.cpp
-    src/simple_panel.hpp
-    src/theme.cpp
-    src/theme.hpp)
+    include/rr/ui/AppRunner.h
+    src/AppRunner.cpp
+    src/AudioPanel.cpp
+    src/AudioPanel.h
+    src/Diagnostics.cpp
+    src/Diagnostics.h
+    src/LivePanel.cpp
+    src/LivePanel.h
+    src/MainWindow.cpp
+    src/MainWindow.h
+    src/QtLogBridge.cpp
+    src/QtLogBridge.h
+    src/SessionPanel.cpp
+    src/SessionPanel.h
+    src/SimplePanel.cpp
+    src/SimplePanel.h
+    src/Theme.cpp
+    src/Theme.h)
 
 # Check-box indicators are shipped as images: a style-sheet indicator with no image would be a
 # blank square, and "ticked" must stay unmistakable (ADR-021).

@@ -1,6 +1,6 @@
 # Architecture: Producer Studio and Performer Client (C++17)
 
-> **SUPERSEDED (Stage 2, 11 Oct 2026)** by [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) and the ADRs in [adr/](adr/README.md).
+> **SUPERSEDED (Stage 2, 11 Oct 2026)** by [SYSTEM_ARCHITECTURE.md](SYSTEM_ARCHITECTURE.md) and the ADRs in [adr/](../adr/README.md).
 > It is kept unchanged below as the Stage 0 record. Where the two differ, the Stage 2 documents apply. Main changes:
 > - separate capture and playback devices (ADR-003);
 > - TCP control on Qt Network (ADR-005);
