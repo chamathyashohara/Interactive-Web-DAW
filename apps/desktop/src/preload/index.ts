@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
 import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
+import type { TelemetryState } from "../main/telemetry/telemetryStore";
+export type { TelemetryState };
 
 export interface EngineState {
   connected: boolean;
@@ -65,6 +67,20 @@ const api = {
   preview: (trackId: string, pitch: number, velocity: number, on: boolean) => ipcRenderer.send("engine:preview", { trackId, pitch, velocity, on }),
   exportWav: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath),
   showInFolder: (filePath: string) => ipcRenderer.send("shell:show", filePath),
+  // ---- evaluation data: nothing is recorded until the participant agrees ----
+  telemetry: {
+    getState: (): Promise<TelemetryState> => ipcRenderer.invoke("telemetry:state"),
+    onState: (cb: (s: TelemetryState) => void) => {
+      const l = (_e: unknown, s: TelemetryState) => cb(s);
+      ipcRenderer.on("telemetry:update", l);
+      return () => ipcRenderer.removeListener("telemetry:update", l);
+    },
+    consent: (code: string): Promise<{ ok: boolean; state?: TelemetryState; reason?: string }> => ipcRenderer.invoke("telemetry:consent", code),
+    withdraw: (deleteData: boolean): Promise<TelemetryState> => ipcRenderer.invoke("telemetry:withdraw", deleteData),
+    /** Interface events only (names start with "ui."). */
+    event: (name: string, data: Record<string, string | number | boolean | null> = {}) => ipcRenderer.send("telemetry:event", name, data),
+    export: (kind: "json" | "csv", explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; files?: string[] }> => ipcRenderer.invoke("telemetry:export", kind, explicitPath),
+  },
   // ---- learner progress (used by the lessons and the feature unlock system) ----
   getProgress: (): Promise<Progress> => ipcRenderer.invoke("progress:get"),
   /** Lessons call this when a lesson is passed: `completeLesson("M2.6")`. Idempotent. Unlocks that lesson's DAW features. */

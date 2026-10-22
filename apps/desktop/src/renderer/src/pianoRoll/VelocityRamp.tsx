@@ -40,7 +40,10 @@ export function VelocityRamp({ clip, notes, scope, disabled, lockTitle, classNam
   const changes = velocityRampOps(clip, notes, f, t, curve).length;
   const apply = () => {
     const ops = velocityRampOps(clip, notes, f, t, curve);
-    if (ops.length) void window.daw.dispatchBatch(ops, `ramp-${clip.clipId}`);
+    if (ops.length) {
+      window.daw.telemetry.event("ui.ramp", { notes: ops.length });
+      void window.daw.dispatchBatch(ops, `ramp-${clip.clipId}`);
+    }
     setOpen(false);
   };
   const field = "hw-field w-12 px-1 py-0.5 text-right text-[11px]";

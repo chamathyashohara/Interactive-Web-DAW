@@ -1,11 +1,76 @@
 import { useEffect, useRef, useState } from "react";
 import { FEATURE_LIST, LESSON_TITLES, isUnlocked, unlockedByLesson, type FeatureGroup } from "@daw/shared";
-import { devStore, progressStore, useStore } from "../store";
+import { devStore, progressStore, telemetryStore, useStore } from "../store";
 import { LockIcon } from "./LockIcon";
 
 const GROUPS: FeatureGroup[] = ["Piano roll", "Tracks", "Arrangement", "Mixing", "Output"];
 const ALL = FEATURE_LIST;
 const LESSONS_WITH_UNLOCKS: string[] = [...new Set(ALL.map((f) => f.unlockedBy).filter((l): l is string => l !== null))];
+
+/** Study recording: consent, the participant code, and export. Nothing is recorded before the participant agrees. */
+function ResearchSection() {
+  const state = useStore(telemetryStore);
+  const [code, setCode] = useState("");
+  const [agree, setAgree] = useState(false);
+  const [message, setMessage] = useState("");
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+
+  const start = async () => {
+    const r = await window.daw.telemetry.consent(code.trim());
+    setMessage(r.ok ? "" : (r.reason ?? "Could not start."));
+    if (r.ok) setAgree(false);
+  };
+  const doExport = async (kind: "json" | "csv") => {
+    const r = await window.daw.telemetry.export(kind);
+    setMessage(r.ok ? `Saved ${r.files!.length} file${r.files!.length === 1 ? "" : "s"}.` : r.canceled ? "" : (r.reason ?? "Export failed."));
+  };
+
+  return (
+    <div className="mt-3 rounded-md border border-white/10 p-2" data-testid="research">
+      <div className="hw-legend mb-1 !text-[10px]">STUDY DATA</div>
+      {!state.consented ? (
+        <>
+          <p className="mb-2 text-[11px] leading-4 text-slate-400">
+            Draft wording, to be replaced by the ethics-approved consent text. If you agree, this app records how you use it (which tools you use, whether notes
+            are in the key, how long you take to fix them, which lessons you finish). It never records your name, your music or any file. It stays on this
+            computer until you export it, and you can stop and delete it at any time.
+          </p>
+          <label className="mb-2 flex items-start gap-2 text-[11px] text-slate-300">
+            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-0.5" data-testid="research-agree" />
+            I have read this and agree to take part.
+          </label>
+          <div className="flex items-center gap-1.5">
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Participant code (e.g. P07)" maxLength={24} className="hw-field min-w-0 flex-1 px-2 py-1 text-[11px] placeholder:text-amber-900" aria-label="Participant code" data-testid="research-code" />
+            <button className="hw-btn hw-go px-3 py-1 text-[11px]" disabled={!agree || code.trim().length < 2} onClick={() => void start()} data-testid="research-start">
+              Start recording
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mb-2 flex items-center gap-2 text-[11px] text-slate-300" data-testid="research-state">
+            <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_6px_#fb7185]" />
+            Recording as <b className="text-amber-300">{state.participantCode}</b>
+            <span className="ml-auto text-slate-500">{state.events} events</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button className="hw-btn px-2 py-1 text-[11px]" onClick={() => void doExport("json")} data-testid="research-export-json" title="One file with every event and the computed numbers">Export JSON</button>
+            <button className="hw-btn px-2 py-1 text-[11px]" onClick={() => void doExport("csv")} data-testid="research-export-csv" title="Two spreadsheet files: every event, and the headline numbers">Export CSV</button>
+            {confirmWithdraw ? (
+              <>
+                <button className="hw-btn hw-red px-2 py-1 text-[11px]" onClick={() => (void window.daw.telemetry.withdraw(true), setConfirmWithdraw(false), setMessage("Stopped. Everything recorded was deleted."))} data-testid="research-delete">Stop and delete everything</button>
+                <button className="hw-btn px-2 py-1 text-[11px]" onClick={() => setConfirmWithdraw(false)}>Cancel</button>
+              </>
+            ) : (
+              <button className="hw-btn hw-danger ml-auto px-2 py-1 text-[11px]" onClick={() => setConfirmWithdraw(true)} data-testid="research-withdraw">Stop recording</button>
+            )}
+          </div>
+        </>
+      )}
+      {message && <div className="mt-1.5 text-[11px] text-amber-300" data-testid="research-message">{message}</div>}
+    </div>
+  );
+}
 
 /** The "Features" popover: shows what is locked, the lesson that unlocks it, and the Beginner-mode switch. */
 export function FeaturesPanel({ onClose }: { onClose: () => void }) {
@@ -65,6 +130,8 @@ export function FeaturesPanel({ onClose }: { onClose: () => void }) {
           </div>
         ))}
       </div>
+
+      <ResearchSection />
 
       {dev && (
         <div className="mt-3 rounded-md border border-dashed border-amber-400/30 p-2" data-testid="dev-tools">

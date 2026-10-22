@@ -9,7 +9,7 @@ import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_PX_PER_BEAT, MAX_ROW_H, MIN_PX_PER_BEA
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
 import { SamplesPanel } from "./samples/SamplesPanel";
 import { WindowButtons } from "./pianoRoll/WindowButtons";
-import { engineStateStore, exportStore, projectStore, statusStore, useStore } from "./store";
+import { engineStateStore, exportStore, projectStore, statusStore, telemetryStore, useStore } from "./store";
 import { FeaturesPanel, UnlockToast } from "./unlock/FeaturesPanel";
 import { LockIcon } from "./unlock/LockIcon";
 import { useUnlock } from "./unlock/useUnlock";
@@ -89,6 +89,18 @@ function ExportChip() {
   );
 }
 
+/** Shown whenever the study recording is on, so the participant always knows. */
+function RecordingChip() {
+  const t = useStore(telemetryStore);
+  if (!t.consented) return null;
+  return (
+    <span className="flex items-center gap-1.5 text-rose-300" title="Study recording is on. Open Features to export or stop it." data-testid="recording-chip">
+      <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_6px_#fb7185]" />
+      Recording {t.participantCode}
+    </span>
+  );
+}
+
 function StatusBar() {
   const engine = useStore(engineStateStore);
   const status = useStore(statusStore);
@@ -109,6 +121,7 @@ function StatusBar() {
           callbacks {status.callbacks} · overruns <b className={status.overruns ? "text-rose-300" : "text-emerald-300"}>{status.overruns}</b> · peak load {(status.peakLoad * 100).toFixed(1)}% · xruns {status.xruns}
         </span>
       )}
+      <RecordingChip />
       <ExportChip />
       <span className="ml-auto flex items-center gap-2">
         <span className="text-slate-500">Autosaved locally</span>
@@ -158,6 +171,7 @@ export function App() {
   });
   const toggleSamples = (open: boolean) => {
     setSamplesOpen(open);
+    window.daw.telemetry.event("ui.panel", { panel: "samples", open });
     try {
       localStorage.setItem("daw.samplesOpen", open ? "1" : "0");
     } catch {
@@ -168,8 +182,20 @@ export function App() {
   const [pianoMax, setPianoMax] = useState(false);
   // A locked tool cannot be chosen, by button or by shortcut key.
   const chooseTool = (t: Tool) => {
-    if (unlock.can(TOOL_FEATURE[t])) setTool(t);
+    if (!unlock.can(TOOL_FEATURE[t])) return;
+    if (t !== tool) window.daw.telemetry.event("ui.tool", { tool: t });
+    setTool(t);
   };
+  // Pressing a locked control: record which lesson it was waiting for (a sign the learner is ready for it). Disabled controls still get pointer events.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[title]");
+      const lesson = /Unlocked by lesson (M\d+\.\d+)/.exec(el?.title ?? "")?.[1];
+      if (lesson) window.daw.telemetry.event("ui.locked", { lesson });
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    return () => window.removeEventListener("pointerdown", onDown, true);
+  }, []);
   const toolLocked = !unlock.can(TOOL_FEATURE[tool]);
   const mixerLocked = !unlock.can("mixer.panel");
   const samplesLocked = !unlock.can("browser.samples");
@@ -227,6 +253,7 @@ export function App() {
   };
   const arrHeight = Math.max(150, Math.min(300, 32 + 24 + (project.trackOrder.length + 1) * TRACK_ROW_H));
   const exportWav = async () => {
+    window.daw.telemetry.event("ui.export", {});
     const r = await window.daw.exportWav();
     if (!r.ok && !r.canceled) exportStore.set({ state: "error", id: "-", message: r.reason ?? "unknown error" });
   };
@@ -369,7 +396,7 @@ export function App() {
           <button
             className={`${btn} hw-teal ${mixerLocked ? "cursor-not-allowed opacity-50" : ""}`}
             disabled={mixerLocked}
-            onClick={() => setMixerOpen(!mixerOpen)}
+            onClick={() => (window.daw.telemetry.event("ui.panel", { panel: "mixer", open: !mixerOpen }), setMixerOpen(!mixerOpen))}
             aria-pressed={mixerOpen}
             title={unlock.reason("mixer.panel") ?? "Show or hide the mixer"}
             data-testid="mixer-toggle"
@@ -430,7 +457,7 @@ export function App() {
                 onTool={chooseTool}
                 musicKey={track.instrument === "sample" ? null : project.key}
                 keyHelp={keyHelp}
-                onToggleKeyHelp={() => setKeyHelp(!keyHelp)}
+                onToggleKeyHelp={() => (window.daw.telemetry.event("ui.keyHelp", { on: !keyHelp }), setKeyHelp(!keyHelp))}
                 maximized={pianoMax}
                 onToggleMaximize={() => setPianoMax(!pianoMax)}
                 onClose={() => (setPianoOpen(false), setPianoMax(false), setFocus("arrangement"))}

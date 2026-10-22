@@ -179,7 +179,10 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
     if (unlock.can("edit.quantize")) batch(quantizeOps(noteClip, targets(), gridTicks));
   };
   const cmdFixKey = () => {
-    if (hint) batch(fixOutOfKeyOps(noteClip, notes, hint));
+    if (hint) {
+      window.daw.telemetry.event("ui.fix", {});
+      batch(fixOutOfKeyOps(noteClip, notes, hint));
+    }
   };
   const cmdDelete = () => {
     batch(deleteOps(noteClip, [...liveSelected]));
@@ -478,8 +481,8 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
         </span>
         {isDrums && (
           <span className="flex gap-1" role="group" aria-label="Drum view">
-            <button className={`${btn} hw-teal`} aria-pressed={showSteps} disabled={!unlock.can("seq.steps")} onClick={() => setDrumView("steps")} title={unlock.reason("seq.steps") ?? "Step sequencer: place drum hits on pads"} data-testid="view-steps">Steps{!unlock.can("seq.steps") && <LockIcon className="ml-1" />}</button>
-            <button className={`${btn} hw-teal`} aria-pressed={!showSteps} onClick={() => setDrumView("roll")} title="Piano roll: every note on a grid" data-testid="view-roll">Roll</button>
+            <button className={`${btn} hw-teal`} aria-pressed={showSteps} disabled={!unlock.can("seq.steps")} onClick={() => (window.daw.telemetry.event("ui.view", { view: "steps" }), setDrumView("steps"))} title={unlock.reason("seq.steps") ?? "Step sequencer: place drum hits on pads"} data-testid="view-steps">Steps{!unlock.can("seq.steps") && <LockIcon className="ml-1" />}</button>
+            <button className={`${btn} hw-teal`} aria-pressed={!showSteps} onClick={() => (window.daw.telemetry.event("ui.view", { view: "roll" }), setDrumView("roll"))} title="Piano roll: every note on a grid" data-testid="view-roll">Roll</button>
           </span>
         )}
         {!showSteps && (
