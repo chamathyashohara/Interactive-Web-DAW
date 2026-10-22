@@ -89,6 +89,14 @@ export function createStudioState(store: KeyValueStore) {
       set({ ...state, spaces, active: lessonId, owner: target?.owner ?? null, heard: target?.heard ?? [] });
       return target;
     },
+    /**
+     * Leaving the lessons: the open lesson's tracks (taken out of the song by the caller) are saved with its stage setup
+     * and listening, and no lesson workspace is open any more. The next lesson opened brings its own back.
+     */
+    park(currentTracks: Track[]) {
+      if (!state.active) return;
+      set({ ...state, spaces: { ...state.spaces, [state.active]: { tracks: currentTracks, owner: state.owner, heard: state.heard } }, active: null, owner: null, heard: [] });
+    },
     owner: () => state.owner,
     /** The workspace now belongs to this lesson stage; listening starts again from nothing. */
     setOwner(owner: string) {

@@ -6,6 +6,7 @@ import { KICK_MODULES } from "./kickCurriculum";
 import { STUDIO_LESSONS, nextStudioLesson } from "./courses";
 import { lessonTracksOf, spaceSwitchOps } from "./space";
 import { createStudioState } from "./studioState";
+import { applyCopiesOps } from "./park";
 import type { SoundInfo, StudioCheck, StudioCtx } from "./types";
 import { memoryStore } from "../storage";
 
@@ -425,5 +426,39 @@ describe("Drum sequencer course", () => {
     const r = stageSetupOps(p, STUDIO_LESSONS["M14.1"]!.practice.setup!, () => "x");
     const after = applyAll(p, r.ok ? r.ops : []);
     expect(after.trackOrder).toEqual(["track-1", "lesson-practice", "lesson-k-seq"]);
+  });
+});
+
+describe("lesson work stays out of the Studio unless applied", () => {
+  it("leaving the lessons saves the open lesson's tracks with it; opening it again brings them back", () => {
+    const state = createStudioState(memoryStore());
+    let p = song("full");
+    state.switchSpace("M13.2", []);
+    state.setOwner("M13.2:practice");
+    // leave: the lesson tracks go out of the song and are saved under M13.2
+    const saved = lessonTracksOf(p);
+    p = applyAll(p, spaceSwitchOps(p, undefined));
+    state.park(saved);
+    expect(p.trackOrder).toEqual(["track-1"]);
+    expect(state.active()).toBeNull();
+    expect(state.savedSpace("M13.2")!.tracks.map((t) => t.id)).toEqual([SONG.drums, SONG.bass, SONG.chords]);
+    // come back to M13.2: its song returns, with its stage setup
+    p = applyAll(p, spaceSwitchOps(p, state.savedSpace("M13.2")!.tracks));
+    state.switchSpace("M13.2", []);
+    expect(p.trackOrder).toEqual(["track-1", SONG.drums, SONG.bass, SONG.chords]);
+    expect(state.owner()).toBe("M13.2:practice");
+  });
+
+  it("Apply makes copies with new ids (ordinary tracks, not lesson tracks) and names them plainly", () => {
+    let k = 0;
+    const p = song("full");
+    const { ops, open } = applyCopiesOps(p, () => `u${++k}`);
+    const after = applyAll(applyAll(p, spaceSwitchOps(p, undefined)), ops);
+    expect(after.trackOrder.filter((id) => id.startsWith("lesson-"))).toEqual([]);
+    expect(after.trackOrder.map((id) => after.tracks[id]!.name)).toEqual(["Synth", "Drums", "Bass", "Chords"]);
+    expect(open && after.tracks[open.trackId]!.clips[open.clipId]).toBeTruthy();
+    const notesBefore = Object.values(p.tracks[SONG.chords]!.clips).reduce((n, c) => n + Object.keys(c.notes).length, 0);
+    const copy = after.tracks[after.trackOrder[3]!]!;
+    expect(Object.values(copy.clips).reduce((n, c) => n + Object.keys(c.notes).length, 0)).toBe(notesBefore);
   });
 });

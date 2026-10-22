@@ -560,3 +560,17 @@ Studio, Collaborate, Learn (highlighted, underlined), Projects on the left; Sett
 that do not exist in the app yet stay visibly disabled ("Soon"). Narrow windows show icons only. The pages below use
 the full width. Verified: 27/27 main-page checks (bar above the page, Learn highlighted, disabled items, narrow
 window), Kick Drums 44/44 and Drum sequencer 29/29.
+
+## Lesson work reaches the Studio only through "Apply it in the studio" (2026-10-23)
+
+Kick Drums and Drum sequencer lessons no longer leave their tracks in the song. Going to the Studio (and starting the
+app) takes the open lesson's tracks out of the song and saves them with the lesson (`studio/park.ts`,
+`studioState.park`); opening the lesson again brings them back. The Done screen has **Apply it in the studio**, as in
+the Piano lessons: it copies the lesson's tracks into the song as ordinary tracks (new ids, "Song: " dropped from the
+names), opens the first copied clip and shows the Studio. The copies are the learner's own from then on.
+
+Note: the DAW records every song change in Undo, so taking lesson tracks out or putting them back is one Undo step.
+
+Verified: 2 unit tests (save on leaving / restore on return, copies with new ids and all notes); 13/13 in the built
+app (sequencer and Kick lessons leave nothing in the Studio, their work comes back, Apply adds one copy, restart in a
+lesson leaves the Studio clean); regressions home 27/27, Kick 44/44, sequencer 29/29, Piano 196/196, 585 unit tests.

@@ -16,6 +16,7 @@ import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
 import { studyLog } from "./studyLog";
 import { CoursePath } from "./studio/CoursePath";
+import { applyCopiesOps, parkLessonWork } from "./studio/park";
 import { COURSES, STUDIO_LESSONS, courseOf, nextStudioLesson, studioModuleOf } from "./studio/courses";
 import { StudioLessonPage } from "./studio/StudioLessonPage";
 import { studioState } from "./studio/studioState";
@@ -133,6 +134,9 @@ function PathSearch({ onOpen }: { onOpen: (hit: PathHit) => void }) {
   );
 }
 
+// The app opens in the Studio: lesson tracks left in the song by a previous session go back to their lesson.
+if (typeof window !== "undefined" && window.daw) void parkLessonWork();
+
 /** Full-page learning space: the learning path and its lessons with the real piano roll, opened from the studio's Lessons button. */
 export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   const [, bump] = useState(0);
@@ -149,8 +153,17 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
     setView(v);
     lessonState.setView(v);
   };
+  /** To the Studio. A Kick / Drum sequencer lesson's tracks stay with the lesson (saved), never in the song by themselves. */
   const exit = () => {
     stopSpeaking();
+    void parkLessonWork().then(() => onExit());
+  };
+  /** "Apply it in the studio" (Kick / Drum sequencer): copies of the lesson's tracks become the learner's own tracks. */
+  const applyStudio = async () => {
+    stopSpeaking();
+    const { ops, open } = applyCopiesOps((await window.daw.getInitial()).project, () => crypto.randomUUID());
+    if (!(await parkLessonWork(ops))) return;
+    if (open) onOpenClip(open.trackId, open.clipId);
     onExit();
   };
   /** Opens a sub-lesson; one the learner finished starts again from Hook (see `lessonState.replaySub`). */
@@ -294,6 +307,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               project={project}
               moduleCode={studioModule?.code ?? ""}
               courseTitle={studioCourse!.title}
+              onApply={() => void applyStudio()}
               onBackToPath={() => show({ kind: studioCourse!.id })}
               next={(() => {
                 const n = nextStudioLesson(studio.id);

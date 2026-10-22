@@ -92,6 +92,8 @@ interface Props {
   moduleCode: string;
   /** The course the lesson belongs to ("Kick Drums"), for the way back. */
   courseTitle: string;
+  /** Copies the lesson's tracks into the song and opens the Studio (only when the learner asks). */
+  onApply: () => void;
   onBackToPath: () => void;
   next: { title: string; open: () => void } | null;
   voice: boolean;
@@ -99,7 +101,7 @@ interface Props {
 }
 
 /** One studio lesson (Kick Drums, Drum sequencer) in the Piano sub-lesson format: Hook, Watch, Try, Practice, Quick check, Done, with its workspace. */
-export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onBackToPath, next, voice, canSpeak }: Props) {
+export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onApply, onBackToPath, next, voice, canSpeak }: Props) {
   useStudioState();
   const p = studioState.progress(lesson.id);
   const save = (patch: Partial<StudioProgress>) => studioState.saveProgress(lesson.id, { ...studioState.progress(lesson.id), ...patch });
@@ -468,7 +470,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onB
             <div className="rounded-xl bg-emerald-400/10 p-4 ring-1 ring-emerald-400/30">
               <div className="font-semibold text-emerald-200">Lesson complete</div>
               <div className="mt-1 text-sm text-slate-300">
-                {hints} hint{hints === 1 ? "" : "s"}, {quickTries} quick-check answer{quickTries === 1 ? "" : "s"} this visit. Your work stays in the project, on the lesson tracks.
+                {hints} hint{hints === 1 ? "" : "s"}, {quickTries} quick-check answer{quickTries === 1 ? "" : "s"} this visit. Your work stays with this lesson; Apply it in the studio copies it into your song.
               </div>
             </div>
             <Card>
@@ -485,6 +487,9 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onB
               </ul>
             </Card>
             <div className="flex flex-wrap gap-2">
+              <button className={ghostBtn} onClick={onApply} title="Copy what you made in this lesson into your song, as your own tracks, and open the Studio" data-testid="lesson-apply">
+                Apply it in the studio →
+              </button>
               {next && (
                 <button className={solidBtn} onClick={next.open} data-testid="next-sub-lesson">
                   Next: {next.title} →
