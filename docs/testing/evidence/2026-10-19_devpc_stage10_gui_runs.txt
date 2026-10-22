@@ -1,0 +1,89 @@
+Stage 10 evidence: the two GUI applications driven end to end, development PC, 19 Oct 2026
+================================================================================================
+PC: Windows 11 Pro 10.0.26300, Realtek audio. Build: msvc-x64 Release (MSVC 19.44 v143, Qt 6.11.3).
+THIS IS THE FIRST RUN OF THE REAL GUI APPLICATIONS: every earlier stage was tested through the
+command-line probe or unit tests. Both apps ran on ONE PC. This is NOT the two-PC acceptance test.
+
+Method: the test clicks the apps through Windows UI Automation (the interface a screen reader uses),
+so every control it presses is a real control with an accessible name. Script: tools/gui_test/gui_e2e.ps1.
+No code path is bypassed: the buttons pressed are the ones a user presses.
+
+--- run log (times are local) -------------------------------------------------------------
+﻿10:36:01.167  === start both apps ===
+10:36:05.823  === step 1: sound on both PCs ===
+10:36:05.850  clicked 'Turn on my microphone' (producer mic)
+10:36:06.464  clicked 'Turn on my headphones' (producer out)
+10:36:07.085  clicked 'Turn on my microphone' (performer mic)
+10:36:07.708  clicked 'Turn on my headphones' (performer out)
+10:36:08.325  === use loopback so the test does not need a firewall rule ===
+10:36:09.893  listen address set to 127.0.0.1 (one-PC test)
+10:36:10.919  === step 2: session + join ===
+10:36:11.354  checkbox 'I consent to this session being recorded' -> On
+10:36:11.360  clicked 'Start the session' (create session)
+10:36:11.998  saw: 172.28.17.128   (port 52000)
+10:36:12.013  saw: <redacted>
+10:36:12.013  address='172.28.17.128' code='<redacted>'
+10:36:12.084  performer edit boxes: 2
+10:36:12.525  checkbox 'I agree to be recorded, and I am ready to start' -> On
+10:36:12.945  checkbox 'Let the producer receive a copy of my recordings' -> On
+10:36:12.951  clicked 'Join the session' (join)
+10:36:13.562  saw: Connected to Performer Client (HIRUNA) (172.28.17.128)
+10:36:15.255  saw: OK  Ready
+10:36:15.316  === step 3: record a take ===
+10:36:15.322  clicked 'Record on both PCs' (record)
+10:36:17.612  saw: REC  RECORDING
+10:36:17.624  saw: Performer PC: RECORDING (the performer's app confirmed it).
+10:36:23.717  clicked 'Stop' (stop)
+10:36:24.337  saw: This PC: take 1 saved (<redacted> frames).
+10:36:24.350  saw: Performer PC: saved (<redacted> frames).
+10:36:24.390  === step 4: verified copy ===
+10:36:24.398  clicked 'Get the performer's recording' (request copy)
+10:36:25.037  saw: Take 1: VERIFIED - an identical verified copy already exists; nothing was rewritten
+10:36:27.116  === keyboard check: tab order reaches the main buttons ===
+10:36:27.122  keyboard-focusable controls on the producer: 18
+10:36:27.124  RESULT: PASS - the whole flow ran through the GUI
+
+--- files written by that run -------------------------------------------------------------
+Folder: C:/Users/ASUS/Music/RemoteRecording/20261019-050615_28cd294e
+producer take (its own microphone)                            2688538 bytes  sha256 88fae249e65e6ab1581ec6478b51ccb5e5813c1bc9ba52924cd48a460afe487d
+performer take (its own microphone)                           2688530 bytes  sha256 2024112b5192c01154729ad6e78fd19a5b0f767e38181c6cb8c82126c3a5f5b8
+verified copy of the performer take on the producer side      2688530 bytes  sha256 2024112b5192c01154729ad6e78fd19a5b0f767e38181c6cb8c82126c3a5f5b8
+
+The copy is byte-identical to the performer original (independent Python hashlib): YES
+
+--- independent structural check (tools/audit/verify_take_wav.py, every sample) ------------
+  take01_producer_28cd294e.wav: PASS; 336060 frames = 7.001 s at 48000 Hz, 2 ch; ch1 peak -36.6 dBFS rms -53.9 dBFS, ch2 peak -37.2 dBFS rms -54.9 dBFS; metadata frames 336060
+  take01_performer_28cd294e.wav: PASS; 336059 frames = 7.001 s at 48000 Hz, 2 ch; ch1 peak -36.6 dBFS rms -53.9 dBFS, ch2 peak -37.2 dBFS rms -54.9 dBFS; metadata frames 336059
+  take01_performer_28cd294e.wav: PASS; 336059 frames = 7.001 s at 48000 Hz, 2 ch; ch1 peak -36.6 dBFS rms -53.9 dBFS, ch2 peak -37.2 dBFS rms -54.9 dBFS
+  exit code 0
+
+NOTE ON THE AUDIO: unlike every earlier stage, the microphone was NOT muted for this run.
+The files contain real captured sound (peak about -37 dBFS). Nobody has listened to them, so no
+claim is made about what they contain; only the levels and the structure were checked.
+
+--- screenshots (same folder) -------------------------------------------------------------
+  2026-10-19_stage10_screens/performer_5_verified.png
+  2026-10-19_stage10_screens/producer_2_ready.png
+  2026-10-19_stage10_screens/producer_3_recording.png
+  2026-10-19_stage10_screens/producer_5_verified.png
+The Windows Firewall prompt visible in two screenshots was NOT answered by the test: the apps never
+change firewall settings. It appeared when the live-audio UDP socket was bound on the Wi-Fi address.
+The pairing code is readable in the producer screenshots. It belonged to this finished one-PC test
+session, a code is single-use, and it stopped working when the session ended. The images are kept
+unedited on purpose: evidence pictures are not retouched.
+
+--- what this run shows -------------------------------------------------------------------
+  - the guided "Start here" view drives the real engine: devices, session, pairing, recording and transfer;
+  - every step card reached its "OK" state in order, and each one named what was still missing before that;
+  - the producer showed RECORDING only after the performer app reported its own start (not on the click);
+  - take 1 saved on both sides: 336060 frames (producer) and 336059 (performer), 7.0 s at 48 kHz, 2 ch;
+  - the copy was requested from the GUI and ended VERIFIED, with the producer re-checking an identical copy
+  -   that the automatic transfer had already fetched (the duplicate path, answered "nothing was rewritten");
+  - 18 controls on the producer window are keyboard-focusable and all carry accessible names.
+
+--- what it does NOT show -----------------------------------------------------------------
+  - two physical PCs (the acceptance test for Stage 9 and Stage 11 is still open);
+  - a real network: both apps were on one PC, so there was no loss, no Wi-Fi and no firewall rule in the path;
+  - listening to the recordings, or any judgement of what they sound like;
+  - the live talkback being heard by two people (no second listener);
+  - long sessions, several takes in a row, or recovery after a crash in the GUI.

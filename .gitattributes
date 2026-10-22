@@ -1,0 +1,2 @@
+# Vendored third-party files must stay byte-identical to upstream (their SHA-256 is recorded).
+third_party/** -text

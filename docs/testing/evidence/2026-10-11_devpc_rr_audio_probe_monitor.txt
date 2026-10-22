@@ -1,0 +1,343 @@
+# rr_audio_probe monitor runs on the development PC, 11 Oct 2026 (GCC core-check build, NOT the MSVC product build)
+# Capture endpoint MUTED in Windows (checked via IAudioEndpointVolume::GetMute = True before each run): input is digital silence.
+# Monitor gain -60 dB so nothing audible could reach the live speakers. These runs show device/buffer stability and the
+# reopen path on real WASAPI hardware; they do NOT show audible monitoring quality.
+
+## Run A: --monitor 30 --gain-db -60
+# (In this first build the report was printed after monitoring was switched off, hence "monitoring_enabled": false; fixed afterwards.)
+input:  Microphone Array (2- Realtek(R) Audio)
+output: Speakers (2- Realtek(R) Audio) (renders 48000 Hz, 2 ch; device stream 32-bit IEEE Floating Point, 48000 Hz, 2 ch)
+monitor note: monitor channel map: input 2 ch -> stereo (1 ch: L=R; >2 ch: first two) -> output 2 ch (copied)
+monitor note: monitor buffer target 20 ms, capacity 200 ms; underruns play silence; excess latency is trimmed (counted)
+t= 1s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 49920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 2s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 97920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 3s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 146400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 4s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 194400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 5s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 242400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 6s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 290880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 7s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 337920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 8s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 386400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 9s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 434400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=10s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 482400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=11s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 530880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=12s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 577920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=13s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 625920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=14s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 673920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=15s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 722400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=16s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 770400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=17s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 818400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=18s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 866400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=19s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 914400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=20s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 962880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=21s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1009920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=22s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1058400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=23s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1106400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=24s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1154400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=25s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1202880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=26s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1249920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=27s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1297920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=28s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1346400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=29s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1394400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=30s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1441920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+
+engine report:
+{
+  "backend": "WASAPI",
+  "capture": {
+    "open": true,
+    "fault": "none",
+    "device": "Microphone Array (2- Realtek(R) Audio)",
+    "sample_rate": 48000,
+    "channels": 2,
+    "device_internal": "32-bit IEEE Floating Point, 48000 Hz, 2 ch, period 480 x 3",
+    "master_processing": ["no sample-format conversion by miniaudio (device stream is float32)", "WASAPI shared mode: samples are the Windows audio engine's capture stream (after any driver/Windows processing), not raw converter data", "no gain, noise suppression, AGC, compression or limiting is applied by this app"],
+    "callbacks": 3012,
+    "frames_captured": 1445760,
+    "record_ring_capacity_ms": 10922.7,
+    "record_ring_fill_ms": 10.0,
+    "record_ring_max_fill_ms": 40.0,
+    "record_ring_overrun_events": 0,
+    "record_ring_overrun_frames": 0,
+    "gap_events_lost": 0,
+    "callback_timing_anomalies": 0,
+    "clipped_samples": 0,
+    "max_callback_us": 333
+  },
+  "playback": {
+    "open": true,
+    "fault": "none",
+    "device": "Speakers (2- Realtek(R) Audio)",
+    "sample_rate": 48000,
+    "channels": 2,
+    "device_internal": "32-bit IEEE Floating Point, 48000 Hz, 2 ch, period 480 x 3",
+    "monitor_processing": ["monitor channel map: input 2 ch -> stereo (1 ch: L=R; >2 ch: first two) -> output 2 ch (copied)", "monitor buffer target 20 ms, capacity 200 ms; underruns play silence; excess latency is trimmed (counted)"],
+    "monitoring_enabled": false,
+    "monitor_gain_db": -60.0,
+    "monitor_rate": 48000,
+    "monitor_target_ms": 20.0,
+    "monitor_capacity_ms": 341.3,
+    "monitor_fill_ms": 10.0,
+    "monitor_max_fill_ms": 10.0,
+    "render_callbacks": 3004,
+    "frames_played": 1441920,
+    "monitor_frames_pushed": 1440000,
+    "monitor_overflow_events": 0,
+    "monitor_overflow_frames": 0,
+    "monitor_underrun_events": 0,
+    "monitor_underrun_frames": 0,
+    "monitor_prefill_events": 1,
+    "monitor_drift_trim_events": 0,
+    "monitor_drift_trim_frames": 0,
+    "max_render_us": 331
+  },
+  "device_events": {"capture_opens": 1, "capture_faults": 0, "playback_opens": 1, "playback_faults": 0}
+}
+
+## Run B (before the start-trim fix): --monitor 120 --gain-db -60 --reopen-input-at 60
+# Shows the defect: monitor fill stayed at 40 ms after the reopen (backlog never trimmed).
+input:  Microphone Array (2- Realtek(R) Audio)
+output: Speakers (2- Realtek(R) Audio) (renders 48000 Hz, 2 ch; device stream 32-bit IEEE Floating Point, 48000 Hz, 2 ch)
+monitor note: monitor channel map: input 2 ch -> stereo (1 ch: L=R; >2 ch: first two) -> output 2 ch (copied)
+monitor note: monitor buffer target 20 ms, capacity 200 ms; underruns play silence; excess latency is trimmed (counted)
+t= 1s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 49920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 2s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 97920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 3s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 145920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 4s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 194400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 5s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 242400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 6s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 290400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 7s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 337920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 8s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 386400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 9s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 434400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=10s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 482400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=11s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 530400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=12s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 578400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=13s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 626400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=14s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 674400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=15s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 722400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=16s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 770880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=17s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 817920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=18s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 866400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=19s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 914400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=20s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 962400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=21s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1010400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=22s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1058400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=23s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1106400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=24s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1154400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=25s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1202400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=26s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1250400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=27s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1298400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=28s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1346400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=29s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1394400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=30s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1441920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=31s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1490880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=32s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1538400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=33s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1586400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=34s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1634400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=35s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1682400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=36s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1730400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=37s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1777920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=38s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1826400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=39s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1874400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=40s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1921920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=41s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1970400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=42s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2018400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=43s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2066400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=44s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2113920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=45s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2162880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=46s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2209920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=47s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2258400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=48s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2306400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=49s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2354400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=50s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2401920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=51s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2450880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=52s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2498880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=53s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2545920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=54s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2594400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=55s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2642400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=56s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2690880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=57s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2738400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=58s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2785920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=59s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 2834880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=60s RE-OPENED INPUT while output running: ok  (output open: yes)
+t=60s monitor fill 50.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 2886240 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=61s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 2916000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=62s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 2964000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=63s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3012000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=64s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3060000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=65s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3107520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=66s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3156000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=67s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3204000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=68s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3252000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=69s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3300000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=70s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3348000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=71s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3396000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=72s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3443520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=73s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3492000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=74s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3540480 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=75s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3588000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=76s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3636000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=77s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3683520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=78s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3731520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=79s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3779520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=80s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3827520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=81s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3875520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=82s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3923520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=83s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 3972000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=84s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4020000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=85s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4068000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=86s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4116000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=87s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4164000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=88s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4212000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=89s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4260000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=90s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4308000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=91s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4356000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=92s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4404000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=93s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4452000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=94s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4500000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=95s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4548000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=96s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4596000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=97s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4644000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=98s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4691520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=99s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4740480 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=100s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4788000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=101s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4835520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=102s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4884000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=103s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4932000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=104s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 4980000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=105s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5028000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=106s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5076000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=107s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5124000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=108s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5172480 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=109s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5219520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=110s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5267520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=111s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5315520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=112s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5363520 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=113s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5412000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=114s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5460480 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=115s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5508000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=116s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5556000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=117s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5604000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=118s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5652000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=119s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5700000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=120s monitor fill 40.0 ms (max 80.0) underruns 1 overflows 0 trims 0 played 5748000 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+
+## Run C (after the fix): --monitor 60 --gain-db -60 --reopen-input-at 30
+input:  Microphone Array (2- Realtek(R) Audio)
+output: Speakers (2- Realtek(R) Audio) (renders 48000 Hz, 2 ch; device stream 32-bit IEEE Floating Point, 48000 Hz, 2 ch)
+monitor note: monitor channel map: input 2 ch -> stereo (1 ch: L=R; >2 ch: first two) -> output 2 ch (copied)
+monitor note: monitor buffer target 20 ms, capacity 200 ms; underruns play silence; excess latency is trimmed (counted)
+t= 1s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 50400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 2s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 98400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 3s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 145920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 4s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 194400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 5s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 241920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 6s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 289920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 7s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 338400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 8s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 386400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t= 9s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 434400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=10s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 482400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=11s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 530400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=12s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 578400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=13s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 626400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=14s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 674400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=15s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 722880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=16s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 769920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=17s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 817920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=18s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 865920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=19s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 913920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=20s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 962400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=21s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1010400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=22s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1057920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=23s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1105920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=24s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1153920 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=25s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1202880 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=26s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1250400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=27s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1298400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=28s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1346400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=29s monitor fill 10.0 ms (max 10.0) underruns 0 overflows 0 trims 0 played 1394400 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=30s RE-OPENED INPUT while output running: ok  (output open: yes)
+t=30s monitor fill 0.0 ms (max 10.0) underruns 1 overflows 0 trims 0 played 1444800 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=31s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1470720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=32s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1518720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=33s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1567200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=34s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1614720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=35s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1663200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=36s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1711200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=37s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1759200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=38s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1807200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=39s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1855200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=40s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1903200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=41s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1950720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=42s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 1999200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=43s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2046720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=44s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2094720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=45s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2142720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=46s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2190720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=47s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2238720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=48s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2286720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=49s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2334720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=50s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2383200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=51s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2431200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=52s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2479200 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=53s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2526720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=54s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2574720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=55s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2622720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=56s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2670720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=57s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2718720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=58s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2766720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=59s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2814720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+t=60s monitor fill 10.0 ms (max 10.0) underruns 2 overflows 0 trims 0 played 2862720 | in ch1 peak -120.0 rms -120.0 dBFS clip 0
+
+engine report:
+{
+  "backend": "WASAPI",
+  "capture": {
+    "open": true,
+    "fault": "none",
+    "device": "Microphone Array (2- Realtek(R) Audio)",
+    "sample_rate": 48000,
+    "channels": 2,
+    "device_internal": "32-bit IEEE Floating Point, 48000 Hz, 2 ch, period 480 x 3",
+    "master_processing": ["no sample-format conversion by miniaudio (device stream is float32)", "WASAPI shared mode: samples are the Windows audio engine's capture stream (after any driver/Windows processing), not raw converter data", "no gain, noise suppression, AGC, compression or limiting is applied by this app"],
+    "callbacks": 2962,
+    "frames_captured": 1421760,
+    "record_ring_capacity_ms": 10922.7,
+    "record_ring_fill_ms": 20.0,
+    "record_ring_max_fill_ms": 40.0,
+    "record_ring_overrun_events": 0,
+    "record_ring_overrun_frames": 0,
+    "gap_events_lost": 0,
+    "callback_timing_anomalies": 0,
+    "clipped_samples": 0,
+    "max_callback_us": 292
+  },
+  "playback": {
+    "open": true,
+    "fault": "none",
+    "device": "Speakers (2- Realtek(R) Audio)",
+    "sample_rate": 48000,
+    "channels": 2,
+    "device_internal": "32-bit IEEE Floating Point, 48000 Hz, 2 ch, period 480 x 3",
+    "monitor_processing": ["monitor channel map: input 2 ch -> stereo (1 ch: L=R; >2 ch: first two) -> output 2 ch (copied)", "monitor buffer target 20 ms, capacity 200 ms; underruns play silence; excess latency is trimmed (counted)"],
+    "monitoring_enabled": true,
+    "monitor_gain_db": -60.0,
+    "monitor_rate": 48000,
+    "monitor_target_ms": 20.0,
+    "monitor_capacity_ms": 341.3,
+    "monitor_fill_ms": 10.0,
+    "monitor_max_fill_ms": 10.0,
+    "render_callbacks": 5964,
+    "frames_played": 2862720,
+    "monitor_frames_pushed": 2862240,
+    "monitor_overflow_events": 0,
+    "monitor_overflow_frames": 0,
+    "monitor_underrun_events": 2,
+    "monitor_underrun_frames": 960,
+    "monitor_prefill_events": 3,
+    "monitor_start_trim_frames": 4800,
+    "monitor_drift_trim_events": 0,
+    "monitor_drift_trim_frames": 0,
+    "max_render_us": 280
+  },
+  "device_events": {"capture_opens": 2, "capture_faults": 0, "playback_opens": 2, "playback_faults": 0}
+}

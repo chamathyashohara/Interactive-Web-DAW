@@ -1,0 +1,392 @@
+Stage 9 evidence: coordinated recording state and scheduled start/stop, development PC, 11 Oct 2026
+================================================================================================
+PC: Windows 11 Pro 10.0.26300, Realtek audio. The microphone endpoint is MUTED in Windows: the files are silent
+(digital near-silence), so nothing audible is claimed. Speakers live: the live output used -60 dB.
+Build: core-check-gcc (MinGW g++ 16.2), NOT the MSVC product build; Qt GUI not compiled.
+Set-up: TWO PROBE PROCESSES ON ONE PC (loopback), both recording the SAME physical input device (WASAPI
+shared mode). This is "real devices" on one PC, NOT the two-physical-PC acceptance test.
+Because both processes use the same monotonic clock (QueryPerformanceCounter is system-wide), the
+first-sample times of the two takes are compared DIRECTLY ("measured, shared clock", true offset 0).
+That checks the scheduling mechanism; it excludes device input latency and is not an acoustic result.
+Pairing codes are replaced by <redacted>.
+Runs: C1 used the Stage 9 build before D-76; C2 and C3 were rerun on the final build (D-76: link loss
+before the start now flags the take cancelled; missing timing values print "n/a"). C1 output has no missing values.
+
+### C1: five coordinated takes in one session; REAL input device on both sides; two-way live audio on the real output at -60 dB; the performer blackholes all incoming live media for 3 s during take 3
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --live --live-sink device --live-gain-db -60 --report rep_p.txt --log p.jsonl --script "wait-ready 30; checks; wait 2; record; wait-state Recording 10; wait 5; stop; wait-state Ready 20; wait 1; record; wait-state Recording 10; wait 5; stop; wait-state Ready 20; wait 1; record; wait-state Recording 10; wait 5; stop; wait-state Ready 20; wait 1; record; wait-state Recording 10; wait 5; stop; wait-state Ready 20; wait 1; record; wait-state Recording 10; wait 5; stop; wait-state Ready 20; wait 1; checks; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --live --live-sink device --live-gain-db -60 --report rep_r.txt --log r.jsonl --script "wait-ready 30; checks; wait 21; blackhole on; wait 3; blackhole off; wait-closed"
+exit codes: producer 0, performer 0
+-- producer (selected lines) --
+[producer] live output: Speakers (2- Realtek(R) Audio) at 48000 Hz, gain -60.0 dB. Use HEADPHONES (no echo cancellation).
+[producer] 13:54:07.382  link Connected: performer joined
+[producer] 13:54:09.398  state NotReady -> Ready (all readiness conditions hold)
+[producer] readiness, this PC:
+[producer]   [OK  ] Input device open: Microphone Array (2- Realtek(R) Audio)
+[producer]   [OK  ] Audio engine healthy: 48000 Hz, 2 ch, last callback 0 ms ago, record-ring overruns 0
+[producer]   [OK  ] Recording folder writable: takes_p
+[producer]   [OK  ] Enough disk space for the longest take: 37045 MB free, 660 MB needed for 1800 s
+[producer]   [OK  ] No other recording active: idle
+[producer]   [OK  ] Recording consent given (armed): given
+[producer]   [OK  ] Connected to the other PC: connected
+[producer] readiness, other PC (from its READY_STATUS):
+[producer]   [OK  ] Input device open
+[producer]   [OK  ] Audio engine healthy
+[producer]   [OK  ] Recording folder writable
+[producer]   [OK  ] Enough disk space for the longest take
+[producer]   [OK  ] No other recording active
+[producer]   [OK  ] Recording consent given (armed)
+[producer]   [OK  ] Connected to the other PC
+[producer]   [OK  ] Clock offset to the producer measured
+[producer] > wait-state Recording 10
+[producer] 13:54:11.417  state Ready -> Armed (producer pressed Record)
+[producer] 13:54:11.417  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 13:54:11.448  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 1: recording starts in 955 ms, at about 2026-10-11T13:54:12.448Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 13:54:11.492  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 13:54:11.492  take 1: START_ACK received; both scheduled
+[producer] 13:54:12.463  state Scheduled -> Recording (local recording started)
+[producer] 13:54:12.476  take 1: estimated recording-start offset (performer - producer) -0.003 ms +/- 0.013 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > wait-state Ready 20
+[producer] 13:54:17.472  state Recording -> Stopping (producer pressed Stop)
+[producer] 13:54:17.472  take 1: STOP_SCHEDULE sent
+[producer] 13:54:17.505  take 1: STOP_ACK received
+[producer] 13:54:17.806  state Stopping -> Finalising (local take complete)
+[producer] 13:54:17.806  take 1: LOCAL take complete (finalised), 255538 frames
+[producer] 13:54:17.837  take 1: performer's take complete, 255538 frames
+[producer] 13:54:17.837  state Finalising -> Completed (both takes reported)
+[producer] 13:54:17.838  state Completed -> Ready (all readiness conditions hold)
+[producer] 13:54:17.838  take 1 timing: first sample 0.005 ms after the scheduled time (0 late frames), 255538 frames, complete
+[producer] > wait-state Recording 10
+[producer] 13:54:18.848  state Ready -> Armed (producer pressed Record)
+[producer] 13:54:18.848  take 2: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 13:54:18.880  take 2: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 2: recording starts in 946 ms, at about 2026-10-11T13:54:19.880Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 13:54:18.934  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 13:54:18.934  take 2: START_ACK received; both scheduled
+[producer] 13:54:19.903  state Scheduled -> Recording (local recording started)
+[producer] 13:54:19.915  take 2: estimated recording-start offset (performer - producer) -0.030 ms +/- 0.013 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > wait-state Ready 20
+[producer] 13:54:24.916  state Recording -> Stopping (producer pressed Stop)
+[producer] 13:54:24.916  take 2: STOP_SCHEDULE sent
+[producer] 13:54:24.948  take 2: STOP_ACK received
+[producer] 13:54:25.259  state Stopping -> Finalising (local take complete)
+[producer] 13:54:25.259  take 2: LOCAL take complete (finalised), 256107 frames
+[producer] 13:54:25.292  take 2: performer's take complete, 256107 frames
+[producer] 13:54:25.292  state Finalising -> Completed (both takes reported)
+[producer] 13:54:25.293  state Completed -> Ready (all readiness conditions hold)
+[producer] 13:54:25.293  take 2 timing: first sample 0.016 ms after the scheduled time (0 late frames), 256107 frames, complete
+[producer] > wait-state Recording 10
+[producer] 13:54:26.306  state Ready -> Armed (producer pressed Record)
+[producer] 13:54:26.306  take 3: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 13:54:26.369  take 3: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 3: recording starts in 953 ms, at about 2026-10-11T13:54:27.369Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 13:54:26.415  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 13:54:26.415  take 3: START_ACK received; both scheduled
+[producer] 13:54:27.386  state Scheduled -> Recording (local recording started)
+[producer] 13:54:27.408  take 3: estimated recording-start offset (performer - producer) -0.016 ms +/- 0.027 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > wait-state Ready 20
+[producer] 13:54:32.403  state Recording -> Stopping (producer pressed Stop)
+[producer] 13:54:32.403  take 3: STOP_SCHEDULE sent
+[producer] 13:54:32.478  take 3: STOP_ACK received
+[producer] 13:54:32.746  state Stopping -> Finalising (local take complete)
+[producer] 13:54:32.746  take 3: LOCAL take complete (finalised), 256027 frames
+[producer] 13:54:32.756  take 3: performer's take complete, 256029 frames
+[producer] 13:54:32.756  state Finalising -> Completed (both takes reported)
+[producer] 13:54:32.756  state Completed -> Ready (all readiness conditions hold)
+[producer] 13:54:32.756  take 3 timing: first sample 0.000 ms after the scheduled time (0 late frames), 256027 frames, complete
+[producer] > wait-state Recording 10
+[producer] 13:54:33.759  state Ready -> Armed (producer pressed Record)
+[producer] 13:54:33.759  take 4: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 13:54:33.801  take 4: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 4: recording starts in 946 ms, at about 2026-10-11T13:54:34.801Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 13:54:33.854  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 13:54:33.854  take 4: START_ACK received; both scheduled
+[producer] 13:54:34.815  state Scheduled -> Recording (local recording started)
+[producer] 13:54:34.837  take 4: estimated recording-start offset (performer - producer) -0.007 ms +/- 0.040 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > wait-state Ready 20
+[producer] 13:54:39.836  state Recording -> Stopping (producer pressed Stop)
+[producer] 13:54:39.836  take 4: STOP_SCHEDULE sent
+[producer] 13:54:39.879  take 4: STOP_ACK received
+[producer] 13:54:40.175  state Stopping -> Finalising (local take complete)
+[producer] 13:54:40.175  take 4: LOCAL take complete (finalised), 256078 frames
+[producer] 13:54:40.207  take 4: performer's take complete, 256076 frames
+[producer] 13:54:40.207  state Finalising -> Completed (both takes reported)
+[producer] 13:54:40.208  state Completed -> Ready (all readiness conditions hold)
+[producer] 13:54:40.208  take 4 timing: first sample -0.005 ms after the scheduled time (0 late frames), 256078 frames, complete
+[producer] > wait-state Recording 10
+[producer] 13:54:41.214  state Ready -> Armed (producer pressed Record)
+[producer] 13:54:41.214  take 5: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 13:54:41.257  take 5: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 5: recording starts in 954 ms, at about 2026-10-11T13:54:42.256Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 13:54:41.301  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 13:54:41.301  take 5: START_ACK received; both scheduled
+[producer] 13:54:42.291  state Scheduled -> Recording (local recording started)
+[producer] 13:54:42.303  take 5: estimated recording-start offset (performer - producer) 0.034 ms +/- 0.035 ms (clock-offset uncertainty only; device input latency not included)
+[producer] > wait-state Ready 20
+[producer] 13:54:47.294  state Recording -> Stopping (producer pressed Stop)
+[producer] 13:54:47.294  take 5: STOP_SCHEDULE sent
+[producer] 13:54:47.337  take 5: STOP_ACK received
+[producer] 13:54:47.634  state Stopping -> Finalising (local take complete)
+[producer] 13:54:47.634  take 5: LOCAL take complete (finalised), 256182 frames
+[producer] 13:54:47.645  take 5: performer's take complete, 256184 frames
+[producer] 13:54:47.645  state Finalising -> Completed (both takes reported)
+[producer] 13:54:47.646  state Completed -> Ready (all readiness conditions hold)
+[producer] 13:54:47.646  take 5 timing: first sample -0.042 ms after the scheduled time (0 late frames), 256182 frames, complete
+[producer] readiness, this PC:
+[producer]   [OK  ] Input device open: Microphone Array (2- Realtek(R) Audio)
+[producer]   [OK  ] Audio engine healthy: 48000 Hz, 2 ch, last callback 1 ms ago, record-ring overruns 0
+[producer]   [OK  ] Recording folder writable: takes_p
+[producer]   [OK  ] Enough disk space for the longest take: 37023 MB free, 660 MB needed for 1800 s
+[producer]   [OK  ] No other recording active: idle
+[producer]   [OK  ] Recording consent given (armed): given
+[producer]   [OK  ] Connected to the other PC: connected
+[producer] readiness, other PC (from its READY_STATUS):
+[producer]   [OK  ] Input device open
+[producer]   [OK  ] Audio engine healthy
+[producer]   [OK  ] Recording folder writable
+[producer]   [OK  ] Enough disk space for the longest take
+[producer]   [OK  ] No other recording active
+[producer]   [OK  ] Recording consent given (armed)
+[producer]   [OK  ] Connected to the other PC
+[producer]   [OK  ] Clock offset to the producer measured
+  link Connected, session Ready, session id 3271b55a, peer 'Probe performer' at 127.0.0.1
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED yes, STOP_ACK yes, TAKE_FINALISED complete
+  estimated recording-start offset (performer - producer): 0.034 ms +/- 0.035 ms (clock-offset uncertainty only; device input latency not included)
+  timing take 5: lead 1000 ms, scheduled start (local) 85949088066100 ns, first sample -0.042 ms after it (0 late frames, first frame 1681500), device period 480 frames x 3, clock offset 0.015 ms +/- 0.035 ms from 16 samples
+  timing producer: ARM->ARM_ACK 42.894 ms, SCHEDULE_START->START_ACK 42.880 ms, START_ACK 957.120 ms before the start, TAKE_STARTED 45.276 ms after the start, STOP_SCHEDULE->STOP_ACK 42.644 ms, stop->performer report 350.766 ms
+-- performer (selected lines) --
+[performer] 13:54:09.387  state NotReady -> Ready (all readiness conditions hold)
+[performer] readiness, this PC:
+[performer]   [OK  ] Input device open: Microphone Array (2- Realtek(R) Audio)
+[performer]   [OK  ] Audio engine healthy: 48000 Hz, 2 ch, last callback 0 ms ago, record-ring overruns 0
+[performer]   [OK  ] Recording folder writable: takes_r
+[performer]   [OK  ] Enough disk space for the longest take: 37045 MB free, 660 MB needed for 1800 s
+[performer]   [OK  ] No other recording active: idle
+[performer]   [OK  ] Recording consent given (armed): given
+[performer]   [OK  ] Connected to the other PC: connected
+[performer]   [OK  ] Clock offset to the producer measured: 3 of 3 samples, +/- 0.015 ms
+[performer] readiness, other PC (from its READY_STATUS):
+[performer]   [OK  ] Input device open
+[performer]   [OK  ] Audio engine healthy
+[performer]   [OK  ] Recording folder writable
+[performer]   [OK  ] Enough disk space for the longest take
+[performer]   [OK  ] No other recording active
+[performer]   [OK  ] Recording consent given (armed)
+[performer]   [OK  ] Connected to the other PC
+[performer] SCHEDULED take 1: recording starts in 966 ms, at about 2026-10-11T13:54:12.447Z (this PC's clock); controlled by 'Probe producer'
+[performer] 13:54:12.463  state Scheduled -> Recording (local recording started)
+[performer] 13:54:17.807  state Completed -> Ready (all readiness conditions hold)
+[performer] 13:54:17.807  take 1: LOCAL take complete (finalised), 255538 frames
+[performer] SCHEDULED take 2: recording starts in 972 ms, at about 2026-10-11T13:54:19.880Z (this PC's clock); controlled by 'Probe producer'
+[performer] 13:54:19.903  state Scheduled -> Recording (local recording started)
+[performer] 13:54:25.260  state Completed -> Ready (all readiness conditions hold)
+[performer] 13:54:25.260  take 2: LOCAL take complete (finalised), 256107 frames
+[performer] SCHEDULED take 3: recording starts in 986 ms, at about 2026-10-11T13:54:27.369Z (this PC's clock); controlled by 'Probe producer'
+[performer] 13:54:27.386  state Scheduled -> Recording (local recording started)
+[performer] > blackhole on
+[performer] IN  stream 1: NO PACKETS for 1.1 s (remote not sending, or the network/firewall blocks this direction); buffering | received 2300, lost est 0, dup 0, reordered 0, late 0, jitter 0.512 ms, max gap 12.4 ms, buf
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 115
+[performer] 13:54:32.746  take 3: LOCAL take complete (finalised), 256029 frames
+[performer] > blackhole off
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer] SCHEDULED take 4: recording starts in 977 ms, at about 2026-10-11T13:54:34.800Z (this PC's clock); controlled by 'Probe producer'
+[performer] 13:54:34.815  state Scheduled -> Recording (local recording started)
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer] 13:54:40.196  take 4: LOCAL take complete (finalised), 256076 frames
+[performer] SCHEDULED take 5: recording starts in 966 ms, at about 2026-10-11T13:54:42.257Z (this PC's clock); controlled by 'Probe producer'
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer] 13:54:42.277  state Scheduled -> Recording (local recording started)
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+[performer] 13:54:47.634  take 5: LOCAL take complete (finalised), 256184 frames
+[performer]   invalid 0 (wrong stream 0), TEST blackholed 307
+WAV files written: 10
+analyse_take_timing.py p.jsonl r.jsonl --same-pc:
+  take outcome(producer/performer) frames(prod/perf) est_offset_ms +/-u_ms first_sample_vs_schedule_ms(prod/perf) arm->ack_ms sched->ack_ms ack_margin_ms MEASURED_shared_clock_ms theta_error_ms
+     1 complete/complete 255538/255538 -0.003 0.013 0.005/0.007 31.737 42.012 957.988 0.000 0.003
+     2 complete/complete 256107/256107 -0.030 0.013 0.016/-0.011 31.880 52.688 947.312 -0.027 0.003
+     3 complete/complete 256027/256029 -0.016 0.027 0.000/-0.008 63.013 45.347 954.653 -0.009 0.008
+     4 complete/complete 256078/256076 -0.007 0.040 -0.005/-0.004 41.843 52.251 947.749 0.020 0.028
+     5 complete/complete 256182/256184 0.034 0.035 -0.042/0.008 42.894 42.880 957.120 0.050 0.015
+  measured start difference (shared clock): mean 0.007 ms, min -0.027 ms, max 0.050 ms, n=5
+  estimated offset: mean -0.004 ms, |max| 0.034 ms; reported uncertainty u: max 0.040 ms
+  estimate - measured: max |0.027| ms
+verify_take_wav.py (independent structural reader, every sample) exit 0:
+  take01_producer_3271b55a.wav: PASS; 255538 frames = 5.324 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 255538
+  take02_producer_3271b55a.wav: PASS; 256107 frames = 5.336 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256107
+  take03_producer_3271b55a.wav: PASS; 256027 frames = 5.334 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256027
+  take04_producer_3271b55a.wav: PASS; 256078 frames = 5.335 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256078
+  take05_producer_3271b55a.wav: PASS; 256182 frames = 5.337 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256182
+  take01_performer_3271b55a.wav: PASS; 255538 frames = 5.324 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 255538
+  take02_performer_3271b55a.wav: PASS; 256107 frames = 5.336 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256107
+  take03_performer_3271b55a.wav: PASS; 256029 frames = 5.334 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256029
+  take04_performer_3271b55a.wav: PASS; 256076 frames = 5.335 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256076
+  take05_performer_3271b55a.wav: PASS; 256184 frames = 5.337 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS; metadata frames 256184
+Windows MCI open check (tools/audit/MciOpenCheck.c), files copied to short names m1..m10:
+  m1.wav: Windows MCI opened it: length 5324 ms, format tag 3, 2 ch, 48000 Hz
+  m2.wav: Windows MCI opened it: length 5336 ms, format tag 3, 2 ch, 48000 Hz
+  m3.wav: Windows MCI opened it: length 5334 ms, format tag 3, 2 ch, 48000 Hz
+  m4.wav: Windows MCI opened it: length 5335 ms, format tag 3, 2 ch, 48000 Hz
+  m5.wav: Windows MCI opened it: length 5337 ms, format tag 3, 2 ch, 48000 Hz
+  m6.wav: Windows MCI opened it: length 5324 ms, format tag 3, 2 ch, 48000 Hz
+  m7.wav: Windows MCI opened it: length 5336 ms, format tag 3, 2 ch, 48000 Hz
+  m8.wav: Windows MCI opened it: length 5334 ms, format tag 3, 2 ch, 48000 Hz
+  m9.wav: Windows MCI opened it: length 5335 ms, format tag 3, 2 ch, 48000 Hz
+  m10.wav: Windows MCI opened it: length 5337 ms, format tag 3, 2 ch, 48000 Hz
+  (m1-m5 = producer takes 1-5, m6-m10 = performer takes 1-5)
+live endpoint_stopped {"out_stream":"1","packets_sent":"4126","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"2","received":"4127","lost_estimate":"0","late":"0","underruns":"0","queue_full_drops":"0","invalid":"0"}}
+live endpoint_stopped {"out_stream":"2","packets_sent":"4128","send_errors":"0","muted_frames":"0","tap_gap_frames":"0","backlog_trim_frames":"0","in_stream":"1","received":"3825","lost_estimate":"301","late":"0","underruns":"20","queue_full_drops":"0","invalid":"0"}}
+take_timing records (JSONL, verbatim fields):
+  p.jsonl {"take":"1","session":"3271b55a","role":"producer","outcome":"complete","start_lead_ms":"1000","start_at_local_ns":"85919279261200","local_first_sample_ns":"85919279266700","local_first_frame":"250686","local_late_frames":"0","first_sample_minus_scheduled_ms":"0.005","local_start_seen_ns":"85919294274600","stop_cmd_ns":"85924303161800","stop_at_local_ns":"85924603153700","local_finalised_ns":"85924636849900","local_status":"complete","local_frames":"255538","device_period_frames":"480","device_periods":"3","theta_ns":"3000","theta_uncertainty_ns":"12800","offset_samples":"5","arm_sent_ns":"85918247522400","arm_ack_rx_ns":"85918279259600","schedule_sent_ns":"85918279261500","start_ack_rx_ns":"85918321273400","arm_to_ack_ms":"31.737","schedule_to_ack_ms":"42.012","ack_margin_before_start_ms":"957.988","peer_planned_start_ns":"85919279259850","peer_first_sample_ns":"85919279266800","peer_first_frame":"250686","peer_late_frames":"0","peer_started_rx_ns":"85919306583700","stop_ack_rx_ns":"85924335918400","peer_finalised_rx_ns":"85924667654400","peer_status":"complete","peer_frames":"255538","start_offset_estimate_ms":"-0.003","start_offset_uncertainty_ms":"0.013"}}
+  p.jsonl {"take":"2","session":"3271b55a","role":"producer","outcome":"complete","start_lead_ms":"1000","start_at_local_ns":"85926711138400","local_first_sample_ns":"85926711154100","local_first_frame":"607413","local_late_frames":"0","first_sample_minus_scheduled_ms":"0.016","local_start_seen_ns":"85926733861300","stop_cmd_ns":"85931746768100","stop_at_local_ns":"85932046761300","local_finalised_ns":"85932090196600","local_status":"complete","local_frames":"256107","device_period_frames":"480","device_periods":"3","theta_ns":"3000","theta_uncertainty_ns":"12800","offset_samples":"12","arm_sent_ns":"85925679257600","arm_ack_rx_ns":"85925711137200","schedule_sent_ns":"85925711138600","start_ack_rx_ns":"85925763826500","arm_to_ack_ms":"31.880","schedule_to_ack_ms":"52.688","ack_margin_before_start_ms":"947.312","peer_planned_start_ns":"85926711137700","peer_first_sample_ns":"85926711127200","peer_first_frame":"607413","peer_late_frames":"0","peer_started_rx_ns":"85926745966300","stop_ack_rx_ns":"85931778533700","peer_finalised_rx_ns":"85932122803000","peer_status":"complete","peer_frames":"256107","start_offset_estimate_ms":"-0.030","start_offset_uncertainty_ms":"0.013"}}
+  p.jsonl {"take":"3","session":"3271b55a","role":"producer","outcome":"complete","start_lead_ms":"1000","start_at_local_ns":"85934200337000","local_first_sample_ns":"85934200337233","local_first_frame":"966892","local_late_frames":"0","first_sample_minus_scheduled_ms":"0.000","local_start_seen_ns":"85934216386100","stop_cmd_ns":"85939234200600","stop_at_local_ns":"85939534194600","local_finalised_ns":"85939576610100","local_status":"complete","local_frames":"256027","device_period_frames":"480","device_periods":"3","theta_ns":"7700","theta_uncertainty_ns":"26600","offset_samples":"16","arm_sent_ns":"85933137322500","arm_ack_rx_ns":"85933200335600","schedule_sent_ns":"85933200337300","start_ack_rx_ns":"85933245684300","arm_to_ack_ms":"63.013","schedule_to_ack_ms":"45.347","ack_margin_before_start_ms":"954.653","peer_planned_start_ns":"85934200336300","peer_first_sample_ns":"85934200328667","peer_first_frame":"966890","peer_late_frames":"0","peer_started_rx_ns":"85934238915000","stop_ack_rx_ns":"85939308874300","peer_finalised_rx_ns":"85939586620900","peer_status":"complete","peer_frames":"256029","start_offset_estimate_ms":"-0.016","start_offset_uncertainty_ms":"0.027"}}
+  p.jsonl {"take":"4","session":"3271b55a","role":"producer","outcome":"complete","start_lead_ms":"1000","start_at_local_ns":"85941632061100","local_first_sample_ns":"85941632055667","local_first_frame":"1323614","local_late_frames":"0","first_sample_minus_scheduled_ms":"-0.005","local_start_seen_ns":"85941645613100","stop_cmd_ns":"85946667055300","stop_at_local_ns":"85946967049100","local_finalised_ns":"85947005674300","local_status":"complete","local_frames":"256078","device_period_frames":"480","device_periods":"3","theta_ns":"27600","theta_uncertainty_ns":"40000","offset_samples":"16","arm_sent_ns":"85940590217000","arm_ack_rx_ns":"85940632059900","schedule_sent_ns":"85940632061200","start_ack_rx_ns":"85940684312500","arm_to_ack_ms":"41.843","schedule_to_ack_ms":"52.251","ack_margin_before_start_ms":"947.749","peer_planned_start_ns":"85941632080050","peer_first_sample_ns":"85941632076100","peer_first_frame":"1323615","peer_late_frames":"0","peer_started_rx_ns":"85941667564600","stop_ack_rx_ns":"85946709455800","peer_finalised_rx_ns":"85947037598200","peer_status":"complete","peer_frames":"256076","start_offset_estimate_ms":"-0.007","start_offset_uncertainty_ms":"0.040"}}
+  p.jsonl {"take":"5","session":"3271b55a","role":"producer","outcome":"complete","start_lead_ms":"1000","start_at_local_ns":"85949088066100","local_first_sample_ns":"85949088024300","local_first_frame":"1681500","local_late_frames":"0","first_sample_minus_scheduled_ms":"-0.042","local_start_seen_ns":"85949121540300","stop_cmd_ns":"85954125131700","stop_at_local_ns":"85954425125200","local_finalised_ns":"85954465129600","local_status":"complete","local_frames":"256182","device_period_frames":"480","device_periods":"3","theta_ns":"15450","theta_uncertainty_ns":"34850","offset_samples":"16","arm_sent_ns":"85948045170700","arm_ack_rx_ns":"85948088064600","schedule_sent_ns":"85948088066200","start_ack_rx_ns":"85948130946600","arm_to_ack_ms":"42.894","schedule_to_ack_ms":"42.880","ack_margin_before_start_ms":"957.120","peer_planned_start_ns":"85949088066200","peer_first_sample_ns":"85949088074000","peer_first_frame":"1681500","peer_late_frames":"0","peer_started_rx_ns":"85949133341600","stop_ack_rx_ns":"85954167775400","peer_finalised_rx_ns":"85954475897900","peer_status":"complete","peer_frames":"256184","start_offset_estimate_ms":"0.034","start_offset_uncertainty_ms":"0.035"}}
+  r.jsonl {"take":"1","session":"3271b55a","role":"performer","outcome":"complete","start_lead_ms":"0","start_at_local_ns":"85919279259850","local_first_sample_ns":"85919279266800","local_first_frame":"250686","local_late_frames":"0","first_sample_minus_scheduled_ms":"0.007","local_start_seen_ns":"85919294286200","stop_cmd_ns":"85924323781200","stop_at_local_ns":"85924603153000","local_finalised_ns":"85924636835800","local_status":"complete","local_frames":"255538","device_period_frames":"480","device_periods":"3","theta_ns":"1350","theta_uncertainty_ns":"15250","offset_samples":"5","arm_rx_ns":"85918258422000","schedule_rx_ns":"85918311159900","start_ack_sent_ns":"85918311957000","schedule_rx_to_start_ms":"968.100"}}
+  r.jsonl {"take":"2","session":"3271b55a","role":"performer","outcome":"complete","start_lead_ms":"0","start_at_local_ns":"85926711137700","local_first_sample_ns":"85926711127200","local_first_frame":"607413","local_late_frames":"0","first_sample_minus_scheduled_ms":"-0.011","local_start_seen_ns":"85926733828500","stop_cmd_ns":"85931755854900","stop_at_local_ns":"85932046760600","local_finalised_ns":"85932090195700","local_status":"complete","local_frames":"256107","device_period_frames":"480","device_periods":"3","theta_ns":"700","theta_uncertainty_ns":"10300","offset_samples":"12","arm_rx_ns":"85925699514400","schedule_rx_ns":"85925732426200","start_ack_sent_ns":"85925737896500","schedule_rx_to_start_ms":"978.712"}}
+  r.jsonl {"take":"3","session":"3271b55a","role":"performer","outcome":"complete","start_lead_ms":"0","start_at_local_ns":"85934200336300","local_first_sample_ns":"85934200328667","local_first_frame":"966890","local_late_frames":"0","first_sample_minus_scheduled_ms":"-0.008","local_start_seen_ns":"85934216344100","stop_cmd_ns":"85939275523500","stop_at_local_ns":"85939534193900","local_finalised_ns":"85939576610100","local_status":"complete","local_frames":"256029","device_period_frames":"480","device_periods":"3","theta_ns":"700","theta_uncertainty_ns":"10300","offset_samples":"16","arm_rx_ns":"85933167750000","schedule_rx_ns":"85933212034800","start_ack_sent_ns":"85933212886600","schedule_rx_to_start_ms":"988.302"}}
+  r.jsonl {"take":"4","session":"3271b55a","role":"performer","outcome":"complete","start_lead_ms":"0","start_at_local_ns":"85941632080050","local_first_sample_ns":"85941632076100","local_first_frame":"1323615","local_late_frames":"0","first_sample_minus_scheduled_ms":"-0.004","local_start_seen_ns":"85941645633100","stop_cmd_ns":"85946698952400","stop_at_local_ns":"85946967049200","local_finalised_ns":"85947026534300","local_status":"complete","local_frames":"256076","device_period_frames":"480","device_periods":"3","theta_ns":"-18950","theta_uncertainty_ns":"32150","offset_samples":"16","arm_rx_ns":"85940620964600","schedule_rx_ns":"85940653313400","start_ack_sent_ns":"85940653866800","schedule_rx_to_start_ms":"978.767"}}
+  r.jsonl {"take":"5","session":"3271b55a","role":"performer","outcome":"complete","start_lead_ms":"0","start_at_local_ns":"85949088066200","local_first_sample_ns":"85949088074000","local_first_frame":"1681500","local_late_frames":"0","first_sample_minus_scheduled_ms":"0.008","local_start_seen_ns":"85949107939100","stop_cmd_ns":"85954155969100","stop_at_local_ns":"85954425125300","local_finalised_ns":"85954464150500","local_status":"complete","local_frames":"256184","device_period_frames":"480","device_periods":"3","theta_ns":"-100","theta_uncertainty_ns":"31300","offset_samples":"16","arm_rx_ns":"85948067641100","schedule_rx_ns":"85948119831800","start_ack_sent_ns":"85948120835900","schedule_rx_to_start_ms":"968.234"}}
+pairing code occurrences in p.jsonl + r.jsonl: 0
+
+### C2: stop before the start (producer Stop while Scheduled)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Scheduled 5; stop-now; wait 3; checks; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0
+-- producer --
+[producer] 14:16:24.307  link Connected: performer joined
+[producer] 14:16:26.372  state NotReady -> Ready (all readiness conditions hold)
+[producer] > wait-state Scheduled 5
+[producer] 14:16:26.373  state Ready -> Armed (producer pressed Record)
+[producer] 14:16:26.373  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 14:16:26.433  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] SCHEDULED take 1: recording starts in 934 ms, at about 2026-10-11T14:16:27.433Z (this PC's clock); controlled by 'this PC (producer)'
+[producer] 14:16:26.499  state Armed -> Scheduled (performer confirmed the start time)
+[producer] 14:16:26.499  take 1: START_ACK received; both scheduled
+[producer] 14:16:26.499  take 1: producer pressed Stop before the start; CANCEL sent, nothing recorded
+[producer] 14:16:26.499  state Scheduled -> NotReady (producer pressed Stop before the start)
+[producer] 14:16:26.499  take 1 timing: first sample n/a ms after the scheduled time (0 late frames), 0 frames, cancelled
+[producer] 14:16:26.591  state NotReady -> Ready (all readiness conditions hold)
+[producer] readiness, this PC:
+[producer]   [OK  ] Input device open: Microphone Array (2- Realtek(R) Audio)
+[producer]   [OK  ] Audio engine healthy: 48000 Hz, 2 ch, last callback 8 ms ago, record-ring overruns 0
+[producer]   [OK  ] Recording folder writable: takes_p
+[producer]   [OK  ] Enough disk space for the longest take: 36831 MB free, 660 MB needed for 1800 s
+[producer]   [OK  ] No other recording active: idle
+[producer]   [OK  ] Recording consent given (armed): given
+[producer]   [OK  ] Connected to the other PC: connected
+[producer] readiness, other PC (from its READY_STATUS):
+[producer]   [OK  ] Input device open
+[producer]   [OK  ] Audio engine healthy
+[producer]   [OK  ] Recording folder writable
+[producer]   [OK  ] Enough disk space for the longest take
+[producer]   [OK  ] No other recording active
+[producer]   [OK  ] Recording consent given (armed)
+[producer]   [OK  ] Connected to the other PC
+[producer]   [OK  ] Clock offset to the producer measured
+  link Connected, session Ready, session id 01f79ba2, peer 'Probe performer' at 127.0.0.1
+  performer confirmations: ARM_ACK yes, START_ACK yes, TAKE_STARTED no, STOP_ACK no, TAKE_FINALISED no
+  timing take 1: lead 1000 ms, scheduled start (local) 87254264224300 ns, first sample n/a ms after it (0 late frames, first frame 0), device period 0 frames x 0, clock offset -0.001 ms +/- 0.012 ms from 3 samples, CANCELLED
+  timing producer: ARM->ARM_ACK 60.650 ms, SCHEDULE_START->START_ACK 63.502 ms, START_ACK 936.498 ms before the start, TAKE_STARTED n/a ms after the start, STOP_SCHEDULE->STOP_ACK n/a ms, stop->performer report n/a ms
+-- performer --
+[performer] 14:16:24.294  link Connected: joined the producer's session
+[performer] 14:16:26.325  state NotReady -> Ready (all readiness conditions hold)
+[performer] 14:16:26.403  state Ready -> Armed (producer armed take 1)
+[performer] 14:16:26.403  take 1: ARM accepted
+[performer] SCHEDULED take 1: recording starts in 966 ms, at about 2026-10-11T14:16:27.433Z (this PC's clock); controlled by 'Probe producer'
+[performer] 14:16:26.466  state Armed -> Scheduled (start scheduled)
+[performer] 14:16:26.528  state Scheduled -> Ready (producer cancelled take 1)
+[performer] 14:16:26.528  take 1: cancelled by the producer
+[performer] 14:16:26.528  take 1 timing: first sample n/a ms after the scheduled time (0 late frames), 0 frames, cancelled
+[performer] 14:16:26.529  state Ready -> NotReady (not ready: No other recording active: a local take is still active)
+[performer] 14:16:26.544  state NotReady -> Ready (all readiness conditions hold)
+[performer] 14:16:29.555  state Ready -> NotReady (control link lost)
+  timing take 1: lead n/a (set by the producer), scheduled start (local) 87254264220950 ns, first sample n/a ms after it (0 late frames, first frame 0), device period 0 frames x 0, clock offset 0.003 ms +/- 0.017 ms from 3 samples, CANCELLED
+  timing performer: SCHEDULE_START received 968.346 ms before the local start, START_ACK sent 1.133 ms after receipt
+WAV files written: 0 (none, as expected)
+pairing code occurrences in p.jsonl + r.jsonl: 0
+
+### C3: disconnect before the start (performer drops the control link while Scheduled)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait 6; checks; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --log r.jsonl --script "wait-ready 30; wait-state Scheduled 10; drop-link; wait-closed"
+exit codes: producer 0, performer 0
+-- producer --
+[producer] 14:16:30.807  link Connected: performer joined
+[producer] 14:16:32.890  state NotReady -> Ready (all readiness conditions hold)
+[producer] 14:16:32.890  state Ready -> Armed (producer pressed Record)
+[producer] 14:16:32.890  take 1: ARM sent (waiting for the performer's ARM_ACK)
+[producer] 14:16:32.950  take 1: ARM_ACK received; SCHEDULE_START sent (start in 1000 ms)
+[producer] 14:16:33.013  link LinkLost: the other side closed the connection
+[producer] 14:16:33.013  state Armed -> NotReady (control link lost)
+[producer] 14:16:33.013  take 1: cancelled, control link lost before the start
+[producer] 14:16:33.013  take 1 timing: first sample n/a ms after the scheduled time (0 late frames), 0 frames, cancelled
+[producer] 14:16:35.014  link Connected: performer reconnected
+[producer] 14:16:35.046  state NotReady -> Ready (all readiness conditions hold)
+[producer] readiness, this PC:
+[producer]   [OK  ] Input device open: Microphone Array (2- Realtek(R) Audio)
+[producer]   [OK  ] Audio engine healthy: 48000 Hz, 2 ch, last callback 7 ms ago, record-ring overruns 0
+[producer]   [OK  ] Recording folder writable: takes_p
+[producer]   [OK  ] Enough disk space for the longest take: 36830 MB free, 660 MB needed for 1800 s
+[producer]   [OK  ] No other recording active: idle
+[producer]   [OK  ] Recording consent given (armed): given
+[producer]   [OK  ] Connected to the other PC: connected
+[producer] readiness, other PC (from its READY_STATUS):
+[producer]   [OK  ] Input device open
+[producer]   [OK  ] Audio engine healthy
+[producer]   [OK  ] Recording folder writable
+[producer]   [OK  ] Enough disk space for the longest take
+[producer]   [OK  ] No other recording active
+[producer]   [OK  ] Recording consent given (armed)
+[producer]   [OK  ] Connected to the other PC
+[producer]   [OK  ] Clock offset to the producer measured
+  link Connected, session Ready, session id 32e83b79, peer 'Probe performer' at 127.0.0.1
+  performer confirmations: ARM_ACK yes, START_ACK no, TAKE_STARTED no, STOP_ACK no, TAKE_FINALISED no
+  timing take 1: lead 1000 ms, scheduled start (local) 87260781284500 ns, first sample n/a ms after it (0 late frames, first frame 0), device period 0 frames x 0, clock offset 0.001 ms +/- 0.015 ms from 3 samples, CANCELLED
+  timing producer: ARM->ARM_ACK 60.199 ms, SCHEDULE_START->START_ACK n/a ms, START_ACK n/a ms before the start, TAKE_STARTED n/a ms after the start, STOP_SCHEDULE->STOP_ACK n/a ms, stop->performer report n/a ms
+-- performer --
+[performer] 14:16:30.796  link Connected: joined the producer's session
+[performer] 14:16:32.843  state NotReady -> Ready (all readiness conditions hold)
+[performer] > wait-state Scheduled 10
+[performer] 14:16:32.921  state Ready -> Armed (producer armed take 1)
+[performer] 14:16:32.921  take 1: ARM accepted
+[performer] SCHEDULED take 1: recording starts in 967 ms, at about 2026-10-11T14:16:33.950Z (this PC's clock); controlled by 'Probe producer'
+[performer] 14:16:32.983  state Armed -> Scheduled (start scheduled)
+[performer] 14:16:33.013  link LinkLost: test: connection dropped
+[performer] 14:16:33.013  state Scheduled -> NotReady (control link lost)
+[performer] 14:16:33.013  take 1: cancelled, control link lost before the start
+[performer] 14:16:33.013  take 1 timing: first sample n/a ms after the scheduled time (0 late frames), 0 frames, cancelled
+[performer] 14:16:35.014  link Connected: reconnected to the producer
+[performer] 14:16:35.015  state NotReady -> Ready (all readiness conditions hold)
+[performer] 14:16:38.955  state Ready -> NotReady (control link lost)
+  timing take 1: lead n/a (set by the producer), scheduled start (local) 87260781280200 ns, first sample n/a ms after it (0 late frames, first frame 0), device period 0 frames x 0, clock offset 0.004 ms +/- 0.019 ms from 3 samples, CANCELLED
+  timing performer: SCHEDULE_START received 968.938 ms before the local start, START_ACK sent 1.144 ms after receipt
+WAV files written: 0 (none, as expected)
+pairing code occurrences in p.jsonl + r.jsonl: 0
+
+NOTES
+----------------------------------------
+- C1:
+  - All 5 coordinated takes completed on both PCs, each from a single producer action (`record`).
+  - The performer never pressed anything: its recorder started at the agreed time.
+  - On the producer, "RECORDING (confirmed by the performer)" followed the performer's TAKE_STARTED.
+  - Both readiness checklists were complete and visible on both sides before the first take.
+- C1 timing (shared clock; 1000 ms lead):
+  - Each PC's first written sample was within -0.042 ... +0.016 ms of its own scheduled local time. This is the fit through the capture-callback stamps; device input latency is not included.
+  - Producer -> performer acknowledgements: ARM->ARM_ACK 31.7-63.0 ms and SCHEDULE_START->START_ACK 42.0-52.7 ms, through both probes' 10 ms poll loops and the link's 20 ms select. START_ACK therefore arrived 947-958 ms before the start.
+  - Measured start difference (performer - producer) on the shared clock: mean +0.007 ms, range -0.027 ... +0.050 ms (n = 5).
+  - Producer's estimate: within 0.027 ms of the measured value. Reported uncertainty u was 0.013-0.040 ms.
+  - The theta estimate (true value 0 on one PC) was 0.003-0.028 ms.
+- C1 live impairment: the performer dropped all incoming live media for about 3 s during take 3 (301 producer -> performer packets lost, 20 underruns). Take 3 still completed on both PCs: the recording does not depend on the live stream.
+- C1 files: all 10 WAVs pass the independent structural check (sizes consistent, every sample finite, frames = metadata), and Windows MCI opens each one with a length matching its frame count.
+- C2: Stop while Scheduled sent CANCEL. Both PCs went back to Ready and no file was created on either.
+- C3: the control link was dropped while the performer was Scheduled and the producer was still waiting for START_ACK. Both cancelled, no file was created, and the link reconnected to Ready.
+- NOT shown:
+  - two physical PCs (the acceptance test);
+  - an acoustic alignment measurement (shared sound recorded on two PCs);
+  - inter-PC clock drift;
+  - audible playback;
+  - the Qt Session panel (not compiled).
+  - The one-PC numbers must not be quoted as two-PC accuracy or as "sample-accurate alignment".
