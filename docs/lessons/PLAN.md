@@ -552,3 +552,11 @@ Verified: 12 unit tests (every lesson's setup, each check passing and failing wi
 track untouched); 29/29 in the built app with real mouse input (pad click, Shift+click accent, Copy to all bars, bar
 buttons, Loop and a two-bar drag in the LOOP strip, row select + Ramp Build up, TAP tempo, tick boxes, own workspace
 per lesson, card progress, DAW `completedLessons`).
+
+## Navigation bar at the top (2026-10-23)
+
+The Learn view's left sidebar is now a horizontal navigation bar under the header, on every lessons page: Home,
+Studio, Collaborate, Learn (highlighted, underlined), Projects on the left; Settings and Log out on the right. Items
+that do not exist in the app yet stay visibly disabled ("Soon"). Narrow windows show icons only. The pages below use
+the full width. Verified: 27/27 main-page checks (bar above the page, Learn highlighted, disabled items, narrow
+window), Kick Drums 44/44 and Drum sequencer 29/29.

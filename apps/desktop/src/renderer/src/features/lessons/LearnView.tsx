@@ -65,16 +65,18 @@ function NavButton({ item }: { item: NavItem }) {
       disabled={!available}
       aria-current={item.active ? "page" : undefined}
       title={available ? item.label : `${item.label}: not available yet`}
-      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
-        item.active ? "bg-emerald-400/10 font-semibold text-white ring-1 ring-emerald-300/20" : available ? "text-slate-300 hover:bg-white/5 hover:text-white" : "cursor-not-allowed text-slate-600"
+      aria-label={item.label}
+      className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60 ${
+        item.active ? "bg-emerald-400/10 font-semibold text-white ring-1 ring-emerald-300/25" : available ? "text-slate-300 hover:bg-white/5 hover:text-white" : "cursor-not-allowed text-slate-600"
       }`}
       data-testid={item.testId}
     >
       <span className={item.active ? "text-emerald-300" : ""}>
-        <item.Icon size={20} />
+        <item.Icon size={18} />
       </span>
-      <span className="hidden lg:inline">{item.label}</span>
-      {!available && <span className="ml-auto hidden text-[10px] text-slate-600 lg:inline">Soon</span>}
+      <span className="hidden md:inline">{item.label}</span>
+      {!available && <span className="hidden text-[10px] text-slate-600 lg:inline">Soon</span>}
+      {item.active && <span className="absolute inset-x-3 -bottom-1.5 h-0.5 rounded-full bg-emerald-300" aria-hidden="true" />}
     </button>
   );
 }
@@ -219,8 +221,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <nav aria-label="Main" className="flex w-16 shrink-0 flex-col gap-1 border-r border-white/10 bg-[#0d1016] p-2 lg:w-56 lg:p-3">
+      <nav aria-label="Main" className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0d1016] px-3 py-1.5 lg:px-5">
           {[
             { label: "Home", Icon: HomeIcon },
             { label: "Studio", Icon: MusicIcon, onClick: exit, testId: "learn-exit" },
@@ -230,12 +231,13 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
           ].map((item) => (
             <NavButton key={item.label} item={item} />
           ))}
-          <div className="mt-auto flex flex-col gap-1 border-t border-white/10 pt-3">
+          <div className="ml-auto flex items-center gap-1 border-l border-white/10 pl-2">
             <NavButton item={{ label: "Settings", Icon: GearIcon }} />
             <NavButton item={{ label: "Log out", Icon: LogoutIcon }} />
           </div>
         </nav>
 
+      <div className="flex min-h-0 flex-1">
       <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-5 lg:px-6">
         {view.kind === "lessons" && <LessonsHome onOpen={openMain} />}
 
