@@ -49,6 +49,25 @@ export interface Note {
   muted?: boolean;
 }
 
+/**
+ * How a clip on a sample track sounds. Everything is optional; absent means "as recorded".
+ * Times that depend on the sample (`startSec`) are in the sample's own seconds, so they survive tempo changes;
+ * fades are in ticks, so they follow the arrangement.
+ */
+export interface ClipAudio {
+  /** Level change in dB (-60 .. +12). */
+  gainDb?: number;
+  /** Fade-in / fade-out lengths in ticks (their sum never exceeds the clip length). */
+  fadeInTicks?: number;
+  fadeOutTicks?: number;
+  /** Where in the sample the clip starts playing (seconds from its beginning): trimming the start. */
+  startSec?: number;
+  /** true: the sound is cut where the clip ends (instead of ringing out to its own end). Set when the clip is shortened. */
+  cut?: boolean;
+}
+export const MIN_GAIN_DB = -60;
+export const MAX_GAIN_DB = 12;
+
 export interface Clip {
   id: string;
   /** Display name, 1-40 characters. Optional. */
@@ -58,6 +77,36 @@ export interface Clip {
   lengthTicks: number;
   /** Notes are relative to the clip start and always lie inside [0, lengthTicks]. */
   notes: Record<string, Note>;
+  /** Only on sample tracks. */
+  audio?: ClipAudio;
+}
+
+/** What an automation lane controls. */
+export type AutoParam = "volume" | "filter";
+export const AUTO_PARAMS: AutoParam[] = ["volume", "filter"];
+export const MAX_AUTO_POINTS = 64;
+
+/** One point of an automation curve: an arrangement tick and a value from 0 to 1. */
+export interface AutoPoint {
+  tick: number;
+  value: number;
+}
+
+/** Lowest and highest cutoff of the filter lane; value 0..1 runs between them on a logarithmic scale, 1 = wide open (no filtering). */
+export const FILTER_MIN_HZ = 20;
+export const FILTER_MAX_HZ = 20000;
+export const filterHz = (value: number): number => FILTER_MIN_HZ * (FILTER_MAX_HZ / FILTER_MIN_HZ) ** value;
+
+/** The value of a curve at `tick`: before the first point and after the last it holds that point's value; between points it is a straight line. */
+export function autoValueAt(points: readonly AutoPoint[], tick: number): number {
+  if (points.length === 0) return 1;
+  if (tick <= points[0]!.tick) return points[0]!.value;
+  const last = points[points.length - 1]!;
+  if (tick >= last.tick) return last.value;
+  let i = 1;
+  while (points[i]!.tick < tick) i++;
+  const a = points[i - 1]!, b = points[i]!;
+  return a.value + ((b.value - a.value) * (tick - a.tick)) / (b.tick - a.tick);
 }
 
 export interface Track {
@@ -74,6 +123,8 @@ export interface Track {
   solo: boolean;
   /** Only for instrument "sample". */
   sample?: SampleRef;
+  /** Curves that move a control over the song. A parameter without a curve is not automated. */
+  automation?: Partial<Record<AutoParam, AutoPoint[]>>;
   /** Clips on one track never overlap. */
   clips: Record<string, Clip>;
 }

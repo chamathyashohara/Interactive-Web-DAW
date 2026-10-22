@@ -8,6 +8,8 @@ struct SequencerSink
     virtual ~SequencerSink() = default;
     virtual void noteOn(int slot, int instrument, int sampleOffset, int pitch, int velocity) = 0;
     virtual void noteOff(int slot, int sampleOffset, int pitch) = 0;
+    /** Same as noteOn, but with the whole note (sample tracks need its clip settings). */
+    virtual void noteOnEx(int slot, int instrument, int sampleOffset, const NoteEvent& note) { noteOn(slot, instrument, sampleOffset, note.pitch, note.velocity); }
 };
 
 /**
@@ -30,6 +32,7 @@ public:
     void requestSeek(double tick) { seekTick.store(tick, std::memory_order_release); }
 
     double getTick() const { return posMirror.load(std::memory_order_relaxed); }
+    double getBpm() const { return bpm.load(std::memory_order_relaxed); }
     bool isPlaying() const { return playing.load(std::memory_order_relaxed); }
 
     /** Advances time by numSamples and emits note events (offs before ons at equal offsets). */

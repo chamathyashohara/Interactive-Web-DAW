@@ -37,6 +37,8 @@ export const FEATURES = [
   { id: "browser.samples", label: "Sample browser (Starter sounds, your own packs)", group: "Tracks", unlockedBy: "M6.2" },
   // arrangement
   { id: "arrangement.clips", label: "Edit clips and song length", group: "Arrangement", unlockedBy: "M8.2" },
+  { id: "automation.lanes", label: "Automation: volume and filter curves", group: "Mixing", unlockedBy: "M13.3" },
+  { id: "clips.audio", label: "Trim, fade and set the level of sound clips", group: "Arrangement", unlockedBy: "M13.3" },
   // mixing
   { id: "mixer.panel", label: "Mixer, volume and pan", group: "Mixing", unlockedBy: "M9.2" },
   { id: "mixer.muteSolo", label: "Mute and solo tracks", group: "Mixing", unlockedBy: "M9.4" },
@@ -63,6 +65,7 @@ export const LESSON_TITLES: Record<string, string> = {
   "M9.2": "Volume faders",
   "M9.4": "Mute and solo to hear one part",
   "M10.3": "Export a WAV",
+  "M13.3": "Buildup tension tools",
 };
 
 export type ProgressMode = "beginner" | "all";

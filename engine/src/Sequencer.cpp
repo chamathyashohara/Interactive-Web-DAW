@@ -124,7 +124,7 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
                     sink.noteOff(slot, off, it->pitch); // retrigger
                     --activeCount[slot];
                 }
-                sink.noteOn(slot, tr.instrument, off, it->pitch, it->velocity);
+                sink.noteOnEx(slot, tr.instrument, off, *it);
                 a.on = true;
                 a.endTick = static_cast<double>(it->endTick);
                 ++activeCount[slot];

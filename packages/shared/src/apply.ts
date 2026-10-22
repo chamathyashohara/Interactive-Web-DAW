@@ -1,6 +1,10 @@
 import {
   ALL_INSTRUMENTS,
+  AUTO_PARAMS,
+  MAX_AUTO_POINTS,
   MAX_BPM,
+  MAX_GAIN_DB,
+  MIN_GAIN_DB,
   MAX_PITCH,
   MAX_SONG_BARS,
   MAX_TRACKS,
@@ -10,7 +14,9 @@ import {
   RECENT_OPS_LIMIT,
   TICKS_PER_BAR,
   songTicks,
+  type AutoPoint,
   type Clip,
+  type ClipAudio,
   type Note,
   type Project,
   type Track,
@@ -43,14 +49,42 @@ export function clipContentEnd(clip: Clip): number {
   return end;
 }
 
+function audioError(audio: ClipAudio, lengthTicks: number): string | null {
+  const { gainDb, fadeInTicks, fadeOutTicks, startSec, cut } = audio;
+  if (gainDb !== undefined && (typeof gainDb !== "number" || !Number.isFinite(gainDb) || gainDb < MIN_GAIN_DB || gainDb > MAX_GAIN_DB)) return `gain must be ${MIN_GAIN_DB} to ${MAX_GAIN_DB} dB`;
+  if (fadeInTicks !== undefined && (!isInt(fadeInTicks) || fadeInTicks < 0)) return "fade in must be a non-negative whole number of ticks";
+  if (fadeOutTicks !== undefined && (!isInt(fadeOutTicks) || fadeOutTicks < 0)) return "fade out must be a non-negative whole number of ticks";
+  if ((fadeInTicks ?? 0) + (fadeOutTicks ?? 0) > lengthTicks) return "the fades are longer than the clip";
+  if (startSec !== undefined && (typeof startSec !== "number" || !Number.isFinite(startSec) || startSec < 0 || startSec > 3600)) return "start point must be 0 to 3600 seconds";
+  if (cut !== undefined && typeof cut !== "boolean") return "cut must be boolean";
+  return null;
+}
+
+/** An audio setting that says nothing (all defaults) is removed, so projects stay small and equal settings compare equal. */
+function cleanAudio(audio: ClipAudio | null | undefined): ClipAudio | undefined {
+  if (!audio) return undefined;
+  const out: ClipAudio = {};
+  if (audio.gainDb) out.gainDb = audio.gainDb;
+  if (audio.fadeInTicks) out.fadeInTicks = audio.fadeInTicks;
+  if (audio.fadeOutTicks) out.fadeOutTicks = audio.fadeOutTicks;
+  if (audio.startSec) out.startSec = audio.startSec;
+  if (audio.cut) out.cut = true;
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Checks a clip's own shape and its place among its track's other clips. */
-function clipError(clips: Record<string, Clip>, clip: Clip, songLen: number): string | null {
+function clipError(clips: Record<string, Clip>, clip: Clip, songLen: number, sampleTrack = false): string | null {
   if (!clip.id || typeof clip.id !== "string") return "clip id required";
   if (clip.name !== undefined && (typeof clip.name !== "string" || clip.name.length < 1 || clip.name.length > 40)) return "clip name must be 1-40 characters";
   if (!isInt(clip.startTick) || clip.startTick < 0) return "clip start must be a non-negative integer";
   if (!isInt(clip.lengthTicks) || clip.lengthTicks < MIN_CLIP_TICKS) return "clip must be at least one beat long";
   if (clip.startTick + clip.lengthTicks > songLen) return "clip extends past the end of the song";
   if (clipContentEnd(clip) > clip.lengthTicks) return "clip is shorter than its notes";
+  if (clip.audio !== undefined) {
+    if (!sampleTrack) return "only clips on sample tracks have audio settings";
+    const err = audioError(clip.audio, clip.lengthTicks);
+    if (err) return err;
+  }
   for (const other of Object.values(clips)) {
     if (other.id === clip.id) continue;
     if (clip.startTick < other.startTick + other.lengthTicks && other.startTick < clip.startTick + clip.lengthTicks) return "clips on a track cannot overlap";
@@ -58,6 +92,19 @@ function clipError(clips: Record<string, Clip>, clip: Clip, songLen: number): st
   for (const n of Object.values(clip.notes)) {
     const err = validateNote(clip, n);
     if (err) return err;
+  }
+  return null;
+}
+
+/** Points must be in time order (strictly), inside the song, with values from 0 to 1. */
+function autoError(points: AutoPoint[], songLen: number): string | null {
+  if (!Array.isArray(points) || points.length > MAX_AUTO_POINTS) return `an automation curve has at most ${MAX_AUTO_POINTS} points`;
+  let prev = -1;
+  for (const p of points) {
+    if (!p || !isInt(p.tick) || p.tick < 0 || p.tick > songLen) return "automation points must lie inside the song";
+    if (typeof p.value !== "number" || !Number.isFinite(p.value) || p.value < 0 || p.value > 1) return "automation values must be 0 to 1";
+    if (p.tick <= prev) return "automation points must be in time order, one per moment";
+    prev = p.tick;
   }
   return null;
 }
@@ -84,9 +131,14 @@ function validateTrack(t: Track, songLen: number): string | null {
   if (t.name === undefined || t.color === undefined || t.volume === undefined || t.pan === undefined || t.mute === undefined || t.solo === undefined) {
     return "track is missing fields";
   }
+  for (const [param, pts] of Object.entries(t.automation ?? {})) {
+    if (!AUTO_PARAMS.includes(param as never)) return "unknown automation parameter";
+    const err = autoError(pts as AutoPoint[], songLen);
+    if (err) return err;
+  }
   const placed: Record<string, Clip> = {};
   for (const clip of Object.values(t.clips ?? {})) {
-    const err = clipError(placed, clip, songLen);
+    const err = clipError(placed, clip, songLen, t.instrument === "sample");
     if (err) return err;
     placed[clip.id] = clip;
   }
@@ -180,11 +232,26 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (fit !== undefined) sample.fit = fit;
       return done(withTrack(project, op.trackId, { ...track, sample }), op.opId);
     }
+    case "setAutomation": {
+      const track = project.tracks[op.trackId];
+      if (!track) return { ok: false, reason: "unknown track" };
+      if (!AUTO_PARAMS.includes(op.param)) return { ok: false, reason: "unknown automation parameter" };
+      if (op.points !== null) {
+        const err = autoError(op.points, songTicks(project));
+        if (err) return { ok: false, reason: err };
+      }
+      const automation = { ...track.automation };
+      if (op.points === null || op.points.length === 0) delete automation[op.param];
+      else automation[op.param] = op.points.map((p) => ({ tick: p.tick, value: p.value }));
+      const next: Track = { ...track, automation };
+      if (Object.keys(automation).length === 0) delete next.automation;
+      return done(withTrack(project, op.trackId, next), op.opId);
+    }
     case "addClip": {
       const track = project.tracks[op.trackId];
       if (!track) return { ok: false, reason: "unknown track" };
       if (track.clips[op.clip.id]) return { ok: false, reason: "clip id already exists" };
-      const err = clipError(track.clips, op.clip, songTicks(project));
+      const err = clipError(track.clips, op.clip, songTicks(project), track.instrument === "sample");
       if (err) return { ok: false, reason: err };
       return done(withClip(project, op.trackId, op.clip.id, clone(op.clip)), op.opId);
     }
@@ -197,8 +264,14 @@ export function applyOp(project: Project, op: Op): ApplyResult {
     case "updateClip": {
       const clip = project.tracks[op.trackId]?.clips[op.clipId];
       if (!clip) return { ok: false, reason: "unknown track or clip" };
-      const updated: Clip = { ...clip, ...op.changes };
-      const err = clipError(project.tracks[op.trackId]!.clips, updated, songTicks(project));
+      const { audio: audioChange, ...rest } = op.changes;
+      const updated: Clip = { ...clip, ...rest };
+      if (audioChange !== undefined) {
+        const cleaned = cleanAudio(audioChange);
+        if (cleaned) updated.audio = cleaned;
+        else delete updated.audio;
+      }
+      const err = clipError(project.tracks[op.trackId]!.clips, updated, songTicks(project), project.tracks[op.trackId]!.instrument === "sample");
       if (err) return { ok: false, reason: err };
       return done(withClip(project, op.trackId, op.clipId, updated), op.opId);
     }
@@ -278,6 +351,11 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       if (op.changes.fit !== undefined) changes.fit = sample.fit ?? false;
       return { ...base, type: "updateSample", trackId: op.trackId, changes };
     }
+    case "setAutomation": {
+      const track = before.tracks[op.trackId];
+      if (!track) return null;
+      return { ...base, type: "setAutomation", trackId: op.trackId, param: op.param, points: track.automation?.[op.param]?.map((p) => ({ ...p })) ?? null };
+    }
     case "addClip":
       return { ...base, type: "deleteClip", trackId: op.trackId, clipId: op.clip.id };
     case "deleteClip": {
@@ -288,7 +366,7 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       const clip = before.tracks[op.trackId]?.clips[op.clipId];
       if (!clip) return null;
       const changes: Record<string, unknown> = {};
-      for (const key of Object.keys(op.changes) as (keyof ClipFields)[]) changes[key] = clip[key];
+      for (const key of Object.keys(op.changes) as (keyof ClipFields)[]) changes[key] = key === "audio" ? (clip.audio ?? null) : clip[key];
       return { ...base, type: "updateClip", trackId: op.trackId, clipId: op.clipId, changes: changes as Partial<ClipFields> };
     }
     case "addNote":

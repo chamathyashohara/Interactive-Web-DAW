@@ -139,9 +139,30 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
                     e.velocity = std::clamp(static_cast<int>(n["velocity"]), 1, 127);
                     e.startTick = static_cast<juce::int64>(n["startTick"]);
                     e.endTick = std::min<juce::int64>(e.startTick + static_cast<juce::int64>(n["durationTicks"]), model->loopTicks);
+                    if (tm.instrument == kSample)
+                    {
+                        if (n.hasProperty("gain")) e.gain = std::clamp(static_cast<float>(static_cast<double>(n["gain"])), 0.0f, 8.0f);
+                        e.offsetSec = std::max(0.0, static_cast<double>(n["offsetSec"]));
+                        e.fadeInSec = std::max(0.0, static_cast<double>(n["fadeInSec"]));
+                        e.fadeOutSec = std::max(0.0, static_cast<double>(n["fadeOutSec"]));
+                        e.cut = static_cast<bool>(n["cut"]);
+                        e.lengthSec = static_cast<double>(e.endTick - e.startTick) * 60.0 / (model->tempo * model->ppq);
+                    }
                     if (e.startTick >= 0 && e.startTick < model->loopTicks && e.endTick > e.startTick)
                         tm.notes.push_back(e);
                 }
+            }
+            if (const auto automation = t["automation"]; automation.isObject())
+            {
+                const auto readCurve = [](const juce::var& curve, std::vector<AutoPoint>& out) {
+                    if (const auto* arr = curve.getArray())
+                        for (const auto& pt : *arr)
+                            if (const auto* pair = pt.getArray(); pair != nullptr && pair->size() == 2)
+                                out.push_back({ static_cast<double>((*pair)[0]), std::clamp(static_cast<float>(static_cast<double>((*pair)[1])), 0.0f, 1.0f) });
+                    std::stable_sort(out.begin(), out.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.tick < b.tick; });
+                };
+                readCurve(automation["volume"], tm.volumeAuto);
+                readCurve(automation["filter"], tm.filterAuto);
             }
             std::stable_sort(tm.notes.begin(), tm.notes.end(),
                              [](const NoteEvent& a, const NoteEvent& b) { return a.startTick < b.startTick; });

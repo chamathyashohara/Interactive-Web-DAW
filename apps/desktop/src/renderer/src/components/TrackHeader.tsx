@@ -48,6 +48,9 @@ function NameField({ trackId, name }: { trackId: string; name: string }) {
 }
 
 interface HeaderProps {
+  /** The automation lane under this track is open (and how to toggle it). */
+  autoOpen?: boolean;
+  onToggleAuto?: () => void;
   project: Project;
   trackId: string;
   index: number;
@@ -95,7 +98,7 @@ function SampleFit({ trackId, sample, projectTempo }: { trackId: string; sample:
 }
 
 /** One track's controls: colour, name, instrument, mute, solo, delete, volume and level meter. */
-export function TrackHeader({ project, trackId: id, index, selected, onSelect }: HeaderProps) {
+export function TrackHeader({ project, trackId: id, index, selected, onSelect, autoOpen, onToggleAuto }: HeaderProps) {
   const t = project.tracks[id]!;
   const unlock = useUnlock();
   return (
@@ -114,6 +117,18 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect }:
         <span className="w-4 text-center text-[10px] text-slate-500">{index + 1}</span>
         <NameField trackId={id} name={t.name} />
         <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : t.instrument === "sample" ? "SMP" : "SYN"}</span>
+        {onToggleAuto && (
+          <button
+            className={`${small} ${autoOpen ? "bg-cyan-400/25 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"} disabled:opacity-40`}
+            onClick={onToggleAuto}
+            disabled={!unlock.can("automation.lanes")}
+            aria-pressed={!!autoOpen}
+            title={unlock.reason("automation.lanes") ?? "Automation: draw volume or filter curves for this track over time"}
+            data-testid={`auto-toggle-${id}`}
+          >
+            ∿
+          </button>
+        )}
         <button className={`${small} ${t.mute ? "bg-amber-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { mute: !t.mute })} aria-label={`Mute ${t.name}`} aria-pressed={t.mute} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Mute"}>M</button>
         <button className={`${small} ${t.solo ? "bg-cyan-400 text-slate-900" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => update(id, { solo: !t.solo })} aria-label={`Solo ${t.name}`} aria-pressed={t.solo} disabled={!unlock.can("mixer.muteSolo")} title={unlock.reason("mixer.muteSolo") ?? "Solo"}>S</button>
         <button

@@ -1,4 +1,4 @@
-import { DEFAULT_CLIP_BARS, MIN_CLIP_TICKS, TICKS_PER_BAR, type Clip, type Note, type Track } from "./model";
+import { DEFAULT_CLIP_BARS, MIN_CLIP_TICKS, TICKS_PER_BAR, type Clip, type ClipAudio, type Note, type Track } from "./model";
 import type { OpBody } from "./ops";
 
 /** Pure builders for arrangement edits. Each returns ops that the main process applies as ONE undo step (or null if impossible). */
@@ -53,28 +53,75 @@ export function moveClipOps(trackId: string, track: Track, clip: Clip, newStart:
   return [{ type: "updateClip", trackId, clipId: clip.id, changes: { startTick: start } }];
 }
 
-/** Resize from the right edge. Notes that no longer fit are trimmed or removed first so the clip stays valid. */
+/**
+ * Notes that no longer fit are trimmed or removed so the clip stays valid. On a sample track a note that ran to the clip's end
+ * (the one made by dropping a sound) keeps running to the new end, so lengthening and shortening a clip trims or extends the sound.
+ */
+function fitNotesOps(trackId: string, track: Track, clip: Clip, newLength: number): OpBody[] {
+  const ops: OpBody[] = [];
+  const sample = track.instrument === "sample";
+  for (const n of Object.values(clip.notes)) {
+    const end = n.startTick + n.durationTicks;
+    if (n.startTick >= newLength) ops.push({ type: "deleteNote", trackId, clipId: clip.id, noteId: n.id });
+    else if (sample && end >= clip.lengthTicks && end !== newLength) ops.push({ type: "updateNote", trackId, clipId: clip.id, noteId: n.id, changes: { durationTicks: newLength - n.startTick } });
+    else if (end > newLength) ops.push({ type: "updateNote", trackId, clipId: clip.id, noteId: n.id, changes: { durationTicks: newLength - n.startTick } });
+  }
+  return ops;
+}
+
+/** The clip's audio settings after its length changed: fades shrink to fit, and a shortened clip now cuts its sound. */
+function audioForLength(track: Track, clip: Clip, newLength: number, extra: Partial<ClipAudio> = {}): ClipAudio | null | undefined {
+  if (track.instrument !== "sample") return undefined;
+  const audio: ClipAudio = { ...clip.audio, ...extra };
+  if (newLength < clip.lengthTicks) audio.cut = true;
+  let fadeIn = audio.fadeInTicks ?? 0, fadeOut = audio.fadeOutTicks ?? 0;
+  if (fadeIn + fadeOut > newLength) {
+    const scale = newLength / (fadeIn + fadeOut);
+    fadeIn = Math.floor(fadeIn * scale);
+    fadeOut = Math.floor(fadeOut * scale);
+    audio.fadeInTicks = fadeIn;
+    audio.fadeOutTicks = fadeOut;
+  }
+  return audio;
+}
+
+/** Resize from the right edge. */
 export function resizeClipOps(trackId: string, track: Track, clip: Clip, newLength: number, songLen: number): OpBody[] | null {
   const length = Math.round(newLength);
   if (length === clip.lengthTicks) return [];
   if (length < MIN_CLIP_TICKS || clip.startTick + length > songLen) return null;
   if (overlapsAny(track, clip.startTick, length, clip.id)) return null;
-  const ops: OpBody[] = [];
-  if (length < clip.lengthTicks) {
-    for (const n of Object.values(clip.notes)) {
-      if (n.startTick >= length) ops.push({ type: "deleteNote", trackId, clipId: clip.id, noteId: n.id });
-      else if (n.startTick + n.durationTicks > length) ops.push({ type: "updateNote", trackId, clipId: clip.id, noteId: n.id, changes: { durationTicks: length - n.startTick } });
-    }
-  }
-  ops.push({ type: "updateClip", trackId, clipId: clip.id, changes: { lengthTicks: length } });
-  return ops;
+  const notes = fitNotesOps(trackId, track, clip, length);
+  const audio = audioForLength(track, clip, length);
+  const clipOp: OpBody = { type: "updateClip", trackId, clipId: clip.id, changes: audio !== undefined ? { lengthTicks: length, audio } : { lengthTicks: length } };
+  return length > clip.lengthTicks ? [clipOp, ...notes] : [...notes, clipOp]; // a note must never be longer than its clip, in either order
+}
+
+/**
+ * Trim the start of a sample clip: the clip's left edge moves to `newStart` and the sound still lines up (the part before the new
+ * edge is hidden, or, when the edge moves left, the sound's earlier part is revealed). `nativeSecPerTick` converts arrangement time
+ * to the sample's own time (60 / (tempo * PPQ), times the stretch ratio when the loop is fitted to the tempo).
+ */
+export function trimClipStartOps(trackId: string, track: Track, clip: Clip, newStart: number, songLen: number, nativeSecPerTick: number): OpBody[] | null {
+  if (track.instrument !== "sample") return null;
+  const start = Math.round(newStart);
+  const delta = start - clip.startTick;
+  if (delta === 0) return [];
+  const length = clip.lengthTicks - delta;
+  const startSec = (clip.audio?.startSec ?? 0) + delta * nativeSecPerTick;
+  if (start < 0 || length < MIN_CLIP_TICKS || start + length > songLen || startSec < -1e-9) return null;
+  if (overlapsAny(track, start, length, clip.id)) return null;
+  const notes = fitNotesOps(trackId, track, clip, length);
+  const audio = audioForLength(track, clip, length, { startSec: Math.max(0, startSec) });
+  const clipOp: OpBody = { type: "updateClip", trackId, clipId: clip.id, changes: { startTick: start, lengthTicks: length, audio: audio ?? null } };
+  return length > clip.lengthTicks ? [clipOp, ...notes] : [...notes, clipOp];
 }
 
 /**
  * Split a clip in two at an absolute tick. Notes entirely after the cut move to the new clip; a note that crosses the cut
  * is shortened in the left clip and continues (as a new note) at the start of the right clip. Nothing is lost.
  */
-export function splitClipOps(trackId: string, clip: Clip, atTick: number, newClipId: string, newNoteId: IdGen): OpBody[] | null {
+export function splitClipOps(trackId: string, clip: Clip, atTick: number, newClipId: string, newNoteId: IdGen, nativeSecPerTick?: number): OpBody[] | null {
   const cut = Math.round(atTick) - clip.startTick; // relative to the clip
   if (cut < MIN_CLIP_TICKS || clip.lengthTicks - cut < MIN_CLIP_TICKS) return null;
   const ops: OpBody[] = [];
@@ -97,8 +144,20 @@ export function splitClipOps(trackId: string, clip: Clip, atTick: number, newCli
       rightNotes[m.id] = m;
     }
   }
-  ops.push({ type: "updateClip", trackId, clipId: clip.id, changes: { lengthTicks: cut } });
-  const right: Clip = { id: newClipId, startTick: clip.startTick + cut, lengthTicks: clip.lengthTicks - cut, notes: rightNotes };
+  const rightLength = clip.lengthTicks - cut;
+  const right: Clip = { id: newClipId, startTick: clip.startTick + cut, lengthTicks: rightLength, notes: rightNotes };
+  if (nativeSecPerTick !== undefined) {
+    // sample clip: the left half keeps its fade-in and ends with a cut; the right half continues the sound where the left stopped and keeps the fade-out
+    const a = clip.audio ?? {};
+    const leftAudio: ClipAudio = { ...a, cut: true };
+    delete leftAudio.fadeOutTicks;
+    if ((leftAudio.fadeInTicks ?? 0) > cut) leftAudio.fadeInTicks = cut;
+    const rightAudio: ClipAudio = { ...a, startSec: (a.startSec ?? 0) + cut * nativeSecPerTick };
+    delete rightAudio.fadeInTicks;
+    if ((rightAudio.fadeOutTicks ?? 0) > rightLength) rightAudio.fadeOutTicks = rightLength;
+    ops.push({ type: "updateClip", trackId, clipId: clip.id, changes: { lengthTicks: cut, audio: leftAudio } });
+    right.audio = rightAudio;
+  } else ops.push({ type: "updateClip", trackId, clipId: clip.id, changes: { lengthTicks: cut } });
   if (clip.name) right.name = clip.name;
   ops.push({ type: "addClip", trackId, clip: right });
   return ops;
@@ -116,6 +175,7 @@ export function duplicateClipOps(trackId: string, track: Track, clip: Clip, newC
   }
   const copy: Clip = { id: newClipId, startTick: start, lengthTicks: clip.lengthTicks, notes };
   if (clip.name) copy.name = clip.name;
+  if (clip.audio) copy.audio = { ...clip.audio };
   return [{ type: "addClip", trackId, clip: copy }];
 }
 

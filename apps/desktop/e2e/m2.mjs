@@ -299,6 +299,7 @@ try {
         JSON.stringify(a.clips) === JSON.stringify(b.clips);
     });
   check("M2-24. force-killed app: all tracks, names, mixer settings, notes and muted notes are restored", same && after.tracks[ids[1]].name === "Lead" && after.tracks[ids[1]].mute === true && after.tracks[ids[1]].pan === -55);
+  await until(async () => ((await c.evalJs(`document.querySelector('[data-testid=engine-chip]')?.textContent ?? ''`)).includes("Engine connected")), 15000); // the engine starts a moment after the window
   await c.evalJs(`window.daw.play()`);
   await sleep(800);
   check("M2-25. after relaunch the restored project plays", (await peak(`[data-testid=meter-list-${ids[0]}]`, 600)) > 0.001 || (await peak(`[data-testid=meter-list-${ids[2]}]`, 600)) > 0.001);

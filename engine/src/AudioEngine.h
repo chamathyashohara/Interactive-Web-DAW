@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 /**
@@ -14,6 +15,46 @@
  * -> master (smoothed gain, soft clip). The callback never allocates, locks, waits on I/O or parses messages.
  * Commands arrive through atomics, an immutable model pointer and a small lock-free FIFO for note previews.
  */
+/** Second-order low-pass (RBJ, Q 0.707) for the filter automation lane. Three channels: the mono instrument mix and the two sample channels. */
+struct SlotFilter
+{
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    double z1[3] = {}, z2[3] = {};
+    bool engaged = false;
+
+    void set(double cutoffHz, double sr)
+    {
+        const double w0 = 6.283185307179586 * std::min(cutoffHz, sr * 0.45) / sr;
+        const double cw = std::cos(w0), alpha = std::sin(w0) / (2.0 * 0.70710678);
+        const double a0 = 1.0 + alpha;
+        b0 = (1.0 - cw) / 2.0 / a0;
+        b1 = (1.0 - cw) / a0;
+        b2 = b0;
+        a1 = -2.0 * cw / a0;
+        a2 = (1.0 - alpha) / a0;
+        engaged = true;
+    }
+    void reset()
+    {
+        engaged = false;
+        for (int i = 0; i < 3; ++i) z1[i] = z2[i] = 0.0;
+    }
+    void run(int ch, float* x, int n)
+    {
+        double s1 = z1[ch], s2 = z2[ch];
+        for (int i = 0; i < n; ++i)
+        {
+            const double in = x[i];
+            const double out = b0 * in + s1;
+            s1 = b1 * in - a1 * out + s2;
+            s2 = b2 * in - a2 * out;
+            x[i] = static_cast<float>(out);
+        }
+        z1[ch] = s1;
+        z2[ch] = s2;
+    }
+};
+
 class AudioEngine : public juce::AudioIODeviceCallback, private SequencerSink
 {
 public:
@@ -114,13 +155,19 @@ public:
         }
 
         // Which sample each slot plays comes from the current model (the audio thread reads it, never writes it).
-        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; }
+        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; slotVolumeAuto[s] = nullptr; slotFilterAuto[s] = nullptr; }
+        const bool playingNow = sequencer.isPlaying();
+        blockTick = sequencer.getTick();
+        segTps = playingNow ? sequencer.getBpm() * (m != nullptr ? m->ppq : 960) / (60.0 * sampleRate) : 0.0;
+        loopTicksNow = m != nullptr ? static_cast<double>(m->loopTicks) : 0.0;
         if (m != nullptr)
             for (const auto& tr : m->tracks)
             {
                 const int s = std::clamp(tr.slot, 0, kMaxSlots - 1);
                 slotSample[s] = tr.sample.get();
                 slotGate[s] = tr.gate;
+                slotVolumeAuto[s] = tr.volumeAuto.empty() ? nullptr : &tr.volumeAuto;
+                slotFilterAuto[s] = tr.filterAuto.empty() ? nullptr : &tr.filterAuto;
             }
         const int cut = cutSerial.load(std::memory_order_acquire);
         if (cut != seenCut)
@@ -152,7 +199,7 @@ public:
         {
             if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive())
             {
-                slots[s].gain = targetGain[s];
+                slots[s].gain = targetGain[s] * volumeMul(s, blockTick);
                 slots[s].pan = targetPan[s];
             }
         }
@@ -172,13 +219,14 @@ public:
             const Event& e = events[i];
             if (e.offset > cursor)
             {
+                segTick = tickAt(cursor);
                 renderSegment(cursor, e.offset - cursor, targetGain, targetPan, localPeak);
                 cursor = e.offset;
             }
             if (e.type == 1)
             {
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
-                else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot]);
+                else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot], &e.note);
                 else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
             }
             else
@@ -188,7 +236,10 @@ public:
             }
         }
         if (cursor < numSamples)
+        {
+            segTick = tickAt(cursor);
             renderSegment(cursor, numSamples - cursor, targetGain, targetPan, localPeak);
+        }
 
         preview.renderAdd(bufL.data(), bufR.data(), numSamples);
 
@@ -238,24 +289,32 @@ private:
         int instrument;
         int pitch;
         int velocity;
+        NoteEvent note; // full note (sample tracks use its clip settings)
     };
     struct SlotState
     {
         Synth synth;
         DrumKit drums;
         SampleVoices samp;
+        SlotFilter filter;
         float gain = 0.0f;
         float pan = 0.0f;
     };
 
     static constexpr int kMaxEvents = 2048;
-    Event events[kMaxEvents];
+    std::unique_ptr<Event[]> events = std::make_unique<Event[]>(kMaxEvents); // on the heap (made once, here): the engine object lives on the stack
     int eventCount = 0;
     SlotState slots[kMaxSlots];
     std::vector<float> tmp, bufL, bufR, sampL, sampR;
     const SampleData* slotSample[kMaxSlots] = {};
+    const std::vector<AutoPoint>* slotVolumeAuto[kMaxSlots] = {};
+    const std::vector<AutoPoint>* slotFilterAuto[kMaxSlots] = {};
+    double segTick = 0.0;    // arrangement tick at the start of the segment being rendered
+    double segTps = 0.0;     // ticks per sample (0 while stopped: the curves are read at the playhead)
+    double loopTicksNow = 0.0;
     bool slotGate[kMaxSlots] = {};
     std::atomic<int> cutSerial{ 0 };
+    double blockTick = 0.0;
     int seenCut = 0;
     float masterGain = 0.64f;
     bool masterInitialised = false;
@@ -276,7 +335,24 @@ private:
         return x < 0.0f ? -y : y;
     }
 
-    void push(int offset, int type, int slot, int instrument, int pitch, int velocity)
+    /** The arrangement position `sample` frames into the current block (wrapped at the loop end); the playhead itself while stopped. */
+    double tickAt(int sample) const
+    {
+        double t = blockTick + sample * segTps;
+        if (loopTicksNow > 0.0)
+            while (t >= loopTicksNow) t -= loopTicksNow;
+        return t;
+    }
+    /** Gain factor of the slot's volume curve at `tick` (1 without a curve). The curve acts like the fader: value squared. */
+    float volumeMul(int s, double tick) const
+    {
+        const auto* c = slotVolumeAuto[s];
+        if (c == nullptr) return 1.0f;
+        const float v = autoAt(*c, tick);
+        return v * v;
+    }
+
+    void push(int offset, int type, int slot, int instrument, int pitch, int velocity, const NoteEvent* note = nullptr)
     {
         if (eventCount >= kMaxEvents) return;
         int i = eventCount++;
@@ -285,9 +361,10 @@ private:
             events[i] = events[i - 1];
             --i;
         }
-        events[i] = { offset, type, slot, instrument, pitch, velocity };
+        events[i] = { offset, type, slot, instrument, pitch, velocity, note != nullptr ? *note : NoteEvent{} };
     }
     void noteOn(int slot, int instrument, int o, int p, int v) override { push(o, 1, std::clamp(slot, 0, kMaxSlots - 1), instrument, p, v); }
+    void noteOnEx(int slot, int instrument, int o, const NoteEvent& n) override { push(o, 1, std::clamp(slot, 0, kMaxSlots - 1), instrument, n.pitch, n.velocity, &n); }
     void noteOff(int slot, int o, int p) override { push(o, 0, std::clamp(slot, 0, kMaxSlots - 1), 0, p, 0); }
 
     void applyPreview(const PreviewMsg& pm, const PlaybackModel* m)
@@ -327,7 +404,8 @@ private:
             SlotState& st = slots[s];
             if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive())
             {
-                st.gain = targetGain[s]; // idle: no ramp needed
+                st.gain = targetGain[s] * volumeMul(s, segTick); // idle: no ramp needed
+                st.filter.reset();
                 st.pan = targetPan[s];
                 continue;
             }
@@ -335,6 +413,12 @@ private:
             juce::FloatVectorOperations::clear(t, len);
             st.synth.render(t, len);
             st.drums.render(t, len);
+            const double tickMid = segTick + 0.5 * len * segTps;
+            const float autoTarget = targetGain[s] * volumeMul(s, tickMid);
+            const bool filtering = slotFilterAuto[s] != nullptr && autoAt(*slotFilterAuto[s], tickMid) < 0.9995f;
+            if (filtering) st.filter.set(20.0 * std::pow(1000.0, static_cast<double>(autoAt(*slotFilterAuto[s], tickMid))), sampleRate);
+            else if (st.filter.engaged) st.filter.reset();
+            if (filtering) st.filter.run(0, t, len);
 
             st.pan += (targetPan[s] - st.pan) * segCoef;
             const float angle = (st.pan + 1.0f) * 0.78539816f; // 0..pi/2
@@ -352,6 +436,11 @@ private:
                 juce::FloatVectorOperations::clear(sl, len);
                 juce::FloatVectorOperations::clear(sr, len);
                 st.samp.render(sl, sr, len);
+                if (filtering)
+                {
+                    st.filter.run(1, sl, len);
+                    st.filter.run(2, sr, len);
+                }
             }
             // Stereo samples keep their width: pan acts as a balance (centre = unchanged). Everything else is panned as before.
             const float p = st.pan;
@@ -359,7 +448,7 @@ private:
             const float balR = p < 0.0f ? std::cos(-p * 1.57079633f) : 1.0f;
             for (int i = 0; i < len; ++i)
             {
-                g += (targetGain[s] - g) * sampleCoef;
+                g += (autoTarget - g) * sampleCoef;
                 const float v = t[i] * g;
                 float lo = v * gl, ro = v * gr;
                 float spk = std::fabs(v);
