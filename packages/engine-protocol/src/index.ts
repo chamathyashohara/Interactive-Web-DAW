@@ -23,7 +23,7 @@ export interface EngineNote {
   cut?: boolean;
 }
 
-export type EngineInstrument = "synth" | "drums" | "sample";
+export type EngineInstrument = "synth" | "drums" | "sample" | "plugin";
 
 export interface EngineTrack {
   /** Stable engine voice slot (0..15) for this track; keeps voices/meters stable across edits. */
@@ -40,6 +40,10 @@ export interface EngineTrack {
   gate?: boolean;
   /** instrument "sample": speed factor for time-stretching without changing pitch (project tempo / the sound's own tempo). Omitted = play as recorded. */
   stretchRatio?: number;
+  /** instrument "plugin": absolute path of the .vst3 to load (omitted when none is chosen; the engine plays silence or, until the host is built, the built-in synth). */
+  pluginPath?: string;
+  /** instrument "plugin": base64 of the plugin's saved state, restored after loading. */
+  pluginState?: string;
   /** Automation curves as [tick, value 0..1] pairs in time order (see Track.automation in the shared package). */
   automation?: { volume?: [number, number][]; filter?: [number, number][] };
 }

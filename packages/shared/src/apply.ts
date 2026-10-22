@@ -20,6 +20,10 @@ import {
   type AutoPoint,
   type Clip,
   type Marker,
+  type PluginRef,
+  MAX_PLUGIN_ID,
+  MAX_PLUGIN_NAME,
+  MAX_PLUGIN_STATE,
   type ClipAudio,
   type Note,
   type Project,
@@ -137,9 +141,21 @@ function validateTrackFields(t: Partial<TrackFields>): string | null {
   return null;
 }
 
+function validatePlugin(p: unknown): string | null {
+  if (typeof p !== "object" || p === null) return "plugin must be an object";
+  const r = p as Partial<PluginRef>;
+  if (typeof r.id !== "string" || r.id.length === 0 || r.id.length > MAX_PLUGIN_ID) return "plugin id (path) missing or too long";
+  if (typeof r.name !== "string" || r.name.length === 0 || r.name.length > MAX_PLUGIN_NAME) return "plugin name missing or too long";
+  if (r.state !== undefined && (typeof r.state !== "string" || r.state.length > MAX_PLUGIN_STATE)) return "plugin state must be a bounded string";
+  return null;
+}
 function validateTrack(t: Track, songLen: number): string | null {
   if (!t.id || typeof t.id !== "string") return "track id required";
   if (!ALL_INSTRUMENTS.includes(t.instrument)) return "unknown instrument";
+  if (t.instrument === "plugin" && t.plugin !== undefined) {
+    const err = validatePlugin(t.plugin);
+    if (err) return err;
+  }
   if (t.instrument === "sample") {
     if (!t.sample || typeof t.sample.id !== "string" || t.sample.id.length < 1 || t.sample.id.length > 200) return "a sample track needs a sample";
     if (typeof t.sample.name !== "string" || typeof t.sample.gate !== "boolean") return "invalid sample reference";
@@ -271,6 +287,18 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (fit !== undefined) sample.fit = fit;
       return done(withTrack(project, op.trackId, { ...track, sample }), op.opId);
     }
+    case "setPlugin": {
+      const track = project.tracks[op.trackId];
+      if (!track || track.instrument !== "plugin") return { ok: false, reason: "not a plugin track" };
+      if (op.plugin === null) {
+        const { plugin: _gone, ...rest } = track;
+        return done(withTrack(project, op.trackId, rest as Track), op.opId);
+      }
+      const err = validatePlugin(op.plugin);
+      if (err) return { ok: false, reason: err };
+      const plugin: PluginRef = { id: op.plugin.id, name: op.plugin.name, ...(op.plugin.state !== undefined ? { state: op.plugin.state } : {}) };
+      return done(withTrack(project, op.trackId, { ...track, plugin }), op.opId);
+    }
     case "setAutomation": {
       const track = project.tracks[op.trackId];
       if (!track) return { ok: false, reason: "unknown track" };
@@ -369,6 +397,10 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       return { ...base, type: "setSongLength", bars: before.songBars };
     case "setKey":
       return { ...base, type: "setKey", key: before.key };
+    case "setPlugin": {
+      const track = before.tracks[op.trackId];
+      return track ? { ...base, type: "setPlugin", trackId: op.trackId, plugin: track.plugin ? { ...track.plugin } : null } : null;
+    }
     case "setLoop":
       return { ...base, type: "setLoop", loop: before.loop ? { ...before.loop } : null };
     case "setMarkers":

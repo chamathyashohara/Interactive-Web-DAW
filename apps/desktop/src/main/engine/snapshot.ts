@@ -80,6 +80,10 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
       pan: track.pan / 100,
       notes,
     };
+    if (track.instrument === "plugin" && track.plugin) {
+      et.pluginPath = track.plugin.id;
+      if (track.plugin.state) et.pluginState = track.plugin.state;
+    }
     if (track.instrument === "sample" && track.sample) {
       const file = sampleFile(track.sample.id);
       if (file) et.samplePath = file;

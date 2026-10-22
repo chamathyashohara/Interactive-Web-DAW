@@ -17,12 +17,25 @@ export const DEFAULT_SONG_BARS = 8;
 export const MIN_CLIP_TICKS = PPQ;
 export const DEFAULT_CLIP_BARS = 4;
 
-export type InstrumentKind = "synth" | "drums" | "sample";
+export type InstrumentKind = "synth" | "drums" | "sample" | "plugin";
 /** The instruments offered by "+ Add track". Sample tracks are created by dropping a sound from the browser. */
 export const INSTRUMENTS: InstrumentKind[] = ["synth", "drums"];
-export const ALL_INSTRUMENTS: InstrumentKind[] = ["synth", "drums", "sample"];
+export const ALL_INSTRUMENTS: InstrumentKind[] = ["synth", "drums", "sample", "plugin"];
 
 /** The sound a sample track plays. The audio itself is never stored in the project, only its library id. */
+/** The VST3 instrument a plugin track plays. The plugin binary and its audio are never in the project, only the path and the plugin's own saved settings. */
+export interface PluginRef {
+  /** The plugin's .vst3 path on this computer (what the engine is told to load). */
+  id: string;
+  /** Display name, shown if the plugin is missing from this computer. */
+  name: string;
+  /** Base64 of the plugin's own saved state (its patch/settings); omitted until the plugin has been opened and saved. */
+  state?: string;
+}
+export const MAX_PLUGIN_ID = 1024;
+export const MAX_PLUGIN_NAME = 200;
+export const MAX_PLUGIN_STATE = 8_000_000; // a plugin's saved patch, base64; generous but bounded so a project cannot grow without limit
+
 export interface SampleRef {
   /** Library id, e.g. "starter/kick/punch-kick" or "imported/<hash>". */
   id: string;
@@ -123,6 +136,8 @@ export interface Track {
   solo: boolean;
   /** Only for instrument "sample". */
   sample?: SampleRef;
+  /** Only for instrument "plugin": the VST3 instrument this track plays (absent until one is chosen). */
+  plugin?: PluginRef;
   /** Curves that move a control over the song. A parameter without a curve is not automated. */
   automation?: Partial<Record<AutoParam, AutoPoint[]>>;
   /** Clips on one track never overlap. */
