@@ -1,6 +1,7 @@
 import { TICKS_PER_BAR, type Project, type Track } from "@daw/shared";
 import type { CheckResult } from "../types";
 import { KICK, SNARE, SONG, barTick } from "./exampleSong";
+import { runSeqCheck } from "./seqChecks";
 import type { Role, SoundInfo, SoundWant, StudioCheck, StudioCtx } from "./types";
 
 /** Tracks the Kick lessons create: sounds dropped in the lesson workspace, and the example song. */
@@ -281,5 +282,8 @@ export function runStudioCheck(p: Project, check: StudioCheck, ctx: StudioCtx): 
         "Breakdown, build-up and drop: a complete section, the way real tracks do it.",
       );
     }
+    default:
+      // The step sequencer lessons (Drum sequencer course).
+      return runSeqCheck(p, check)!;
   }
 }

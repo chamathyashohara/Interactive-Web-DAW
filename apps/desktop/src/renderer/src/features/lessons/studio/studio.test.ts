@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { TICKS_PER_BAR, applyOp, createProject, dropSampleOps, type Op, type OpBody, type Project } from "@daw/shared";
 import { lessonView, runStudioCheck } from "./checks";
 import { SONG, SNARE, barTick, songSetupOps, stageSetupOps } from "./exampleSong";
-import { KICK_MODULES, STUDIO_LESSONS, nextStudioLesson } from "./kickCurriculum";
+import { KICK_MODULES } from "./kickCurriculum";
+import { STUDIO_LESSONS, nextStudioLesson } from "./courses";
 import { lessonTracksOf, spaceSwitchOps } from "./space";
 import { createStudioState } from "./studioState";
 import type { SoundInfo, StudioCheck, StudioCtx } from "./types";
@@ -320,5 +321,109 @@ describe("each lesson has its own workspace", () => {
     state.switchSpace("M12.1", []);
     expect(state.owner()).toBe("M12.1:practice");
     expect(state.heard()).toEqual(["Kick/Kick/Punch Kick"]);
+  });
+});
+
+describe("Drum sequencer course", () => {
+  const SEQ = ["M14.1", "M14.2", "M14.3", "M14.4", "M14.5", "M14.6", "M14.7", "M14.8", "M14.9", "M14.10"];
+  const pad = (n: number) => (n - 1) * 240;
+  /** The lesson's drum track after its Practice (or Try) setup. */
+  const setUp = (id: string, stage: "tryIt" | "practice" = "practice") => {
+    const r = stageSetupOps(createProject("p"), STUDIO_LESSONS[id]![stage].setup!, () => `i${++n}`);
+    if (!r.ok) throw new Error(r.reason);
+    return applyAll(createProject("p"), r.ops);
+  };
+  const notes = (p: Project) => p.tracks["lesson-k-seq"]!.clips["lesson-k-seq-clip"]!.notes;
+  const add = (p: Project, pitch: number, pads: number[], velocity = 100) =>
+    applyAll(p, pads.map((x) => ({ type: "addNote" as const, trackId: "lesson-k-seq", clipId: "lesson-k-seq-clip", note: { id: `a${++n}`, pitch, startTick: pad(x), durationTicks: 240, velocity } })));
+  const remove = (p: Project, pitch: number, pads: number[]) =>
+    applyAll(p, Object.values(notes(p)).filter((x) => x.pitch === pitch && pads.includes(x.startTick / 240 + 1)).map((x) => ({ type: "deleteNote" as const, trackId: "lesson-k-seq", clipId: "lesson-k-seq-clip", noteId: x.id })));
+  const run = (p: Project, id: string, stage: "tryIt" | "practice" = "practice") => runStudioCheck(lessonView(p), STUDIO_LESSONS[id]![stage].check!, ctx());
+
+  it("has ten lessons M14.1-M14.10 on the step sequencer, each with its own drum track setup", () => {
+    for (const id of SEQ) {
+      const l = STUDIO_LESSONS[id]!;
+      expect(l.space, id).toBe("sequencer");
+      expect(l.practice.hints).toHaveLength(3);
+      expect(setUp(id).tracks["lesson-k-seq"]!.instrument, id).toBe("drums");
+    }
+    expect(nextStudioLesson("M14.10")).toBeNull();
+    expect(nextStudioLesson("M14.5")?.id).toBe("M14.6");
+  });
+
+  it("M14.1: a kick (36) on pad 1; the hint names the top row", () => {
+    expect(run(setUp("M14.1"), "M14.1").feedback).toMatch(/kick row is the top row/);
+    expect(run(add(setUp("M14.1"), 36, [1]), "M14.1").pass).toBe(true);
+    expect(STUDIO_LESSONS["M14.1"]!.practice.confirm).toEqual(["I pressed Play and heard the kick"]);
+  });
+
+  it("M14.2: kicks on exactly 1, 5, 9, 13, naming missing beats and extra pads", () => {
+    expect(run(add(setUp("M14.2"), 36, [1, 5, 13]), "M14.2").feedback).toMatch(/No kick on beat 3 \(pad 9\)/);
+    expect(run(add(setUp("M14.2"), 36, [1, 3, 5, 9, 13]), "M14.2").feedback).toMatch(/Extra kick on pad 3/);
+    expect(run(add(setUp("M14.2"), 36, [1, 5, 9, 13]), "M14.2").pass).toBe(true);
+  });
+
+  it("M14.3: the K2 pattern is already there (Click and TAP are ticked by the learner)", () => {
+    expect(run(setUp("M14.3"), "M14.3").pass).toBe(true);
+    expect(STUDIO_LESSONS["M14.3"]!.practice.confirm).toHaveLength(2);
+    expect(run(remove(setUp("M14.3"), 36, [9]), "M14.3").pass).toBe(false);
+  });
+
+  it("M14.4: kicks only on 1 and 9", () => {
+    expect(run(add(setUp("M14.4"), 36, [1, 9, 13]), "M14.4").pass).toBe(false);
+    expect(run(add(setUp("M14.4"), 36, [1, 9]), "M14.4").pass).toBe(true);
+  });
+
+  it("M14.5: at least three kicks, one off the beat", () => {
+    expect(run(add(setUp("M14.5"), 36, [5]), "M14.5").feedback).toMatch(/Every kick is on a beat/);
+    expect(run(add(setUp("M14.5"), 36, [7]), "M14.5").pass).toBe(true);
+  });
+
+  it("M14.6: pad 1 accented (127), another kick softer", () => {
+    const p = setUp("M14.6");
+    expect(run(p, "M14.6").feedback).toMatch(/Hold Shift and click the pad/);
+    const accented = applyAll(p, Object.values(notes(p)).filter((x) => x.startTick === 0).map((x) => ({ type: "updateNote" as const, trackId: "lesson-k-seq", clipId: "lesson-k-seq-clip", noteId: x.id, changes: { velocity: 127 } })));
+    expect(run(accented, "M14.6").pass).toBe(true);
+    const allLoud = applyAll(p, Object.values(notes(p)).map((x) => ({ type: "updateNote" as const, trackId: "lesson-k-seq", clipId: "lesson-k-seq-clip", noteId: x.id, changes: { velocity: 127 } })));
+    expect(run(allLoud, "M14.6").feedback).toMatch(/Leave the other kicks normal/);
+  });
+
+  it("M14.7: snares on 5 and 13 with no kick under them", () => {
+    let p = add(setUp("M14.7"), 38, [5, 13]);
+    expect(run(p, "M14.7").feedback).toMatch(/The snare owns pads 5 and 13. Move the kick off pad 5 and pad 13/);
+    p = remove(p, 36, [5, 13]);
+    expect(run(p, "M14.7").pass).toBe(true);
+  });
+
+  it("M14.8: all four bars have kicks and bar 4 differs from bar 1", () => {
+    let p = setUp("M14.8");
+    expect(run(p, "M14.8").feedback).toMatch(/Bar 2 has no kick. Use Copy to all bars first/);
+    p = add(p, 36, [17, 25, 33, 41, 49, 57]); // bars 2-4 copied
+    expect(run(p, "M14.8", "tryIt").pass).toBe(true);
+    expect(run(p, "M14.8").feedback).toMatch(/Bar 4 is the same as bar 1/);
+    expect(run(add(p, 36, [64]), "M14.8").pass).toBe(true); // pad 16 of bar 4
+  });
+
+  it("M14.9: a loop region of at least two bars", () => {
+    const p = setUp("M14.9");
+    expect(run(p, "M14.9").feedback).toMatch(/Drag in the thin LOOP strip above the numbers/);
+    expect(run(applyAll(p, [{ type: "setLoop", loop: { startTick: 0, endTick: 3840 } }]), "M14.9").pass).toBe(false);
+    expect(run(applyAll(p, [{ type: "setLoop", loop: { startTick: 0, endTick: 3840 } }]), "M14.9", "tryIt").pass).toBe(true);
+    expect(run(applyAll(p, [{ type: "setLoop", loop: { startTick: 0, endTick: 7680 } }]), "M14.9").pass).toBe(true);
+  });
+
+  it("M14.10: kick velocities rise by at least 40 from the first to the last", () => {
+    const p = setUp("M14.10");
+    expect(run(p, "M14.10").feedback).toMatch(/Click the Kick name first/);
+    const kicks = Object.values(notes(p)).filter((x) => x.pitch === 36).sort((a, b) => a.startTick - b.startTick);
+    const ramped = applyAll(p, kicks.map((x, i) => ({ type: "updateNote" as const, trackId: "lesson-k-seq", clipId: "lesson-k-seq-clip", noteId: x.id, changes: { velocity: Math.round(30 + (90 * i) / (kicks.length - 1)) } })));
+    expect(run(ramped, "M14.10").pass).toBe(true);
+  });
+
+  it("a sequencer setup never touches the Piano lessons' practice track or the learner's tracks", () => {
+    const p = applyAll(createProject("p"), [{ type: "addTrack", track: { ...createProject("q").tracks["track-1"]!, id: "lesson-practice", name: "Lesson: Practice" } }]);
+    const r = stageSetupOps(p, STUDIO_LESSONS["M14.1"]!.practice.setup!, () => "x");
+    const after = applyAll(p, r.ok ? r.ops : []);
+    expect(after.trackOrder).toEqual(["track-1", "lesson-practice", "lesson-k-seq"]);
   });
 });

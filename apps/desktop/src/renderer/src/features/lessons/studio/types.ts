@@ -53,7 +53,22 @@ export type StudioCheck =
   /** An impact, the kick and the bass all start on this bar. */
   | { kind: "drop"; bar: number }
   /** The final exercise: breakdown, build-up and drop together. */
-  | { kind: "fullSection"; breakdown: [number, number]; buildup: [number, number]; dropBar: number };
+  | { kind: "fullSection"; breakdown: [number, number]; buildup: [number, number]; dropBar: number }
+  // ---- step sequencer (Drum sequencer course): pads count from 1, sixteen per bar ----
+  /** Kicks on exactly these pads (`exact`), or at least on these (`has`). */
+  | { kind: "kickPads"; exact?: number[]; has?: number[]; pitch?: number }
+  /** At least `min` kicks, at least one of them off the beat pads (1, 5, 9, 13). */
+  | { kind: "offBeat"; min: number }
+  /** The kick on pad 1 is an accent (127) and at least one other kick is softer. */
+  | { kind: "accent" }
+  /** Snares on these pads, and no kick on them. */
+  | { kind: "snareRoom"; pads: number[] }
+  /** Every bar of the clip has kicks, and the last bar differs from the first. */
+  | { kind: "bars"; bars: number; lastDiffers?: boolean }
+  /** The song has a loop region at least this many bars long. */
+  | { kind: "loopRegion"; minBars: number }
+  /** Kick velocities rise from the first to the last by at least `rise`. */
+  | { kind: "kickRamp"; rise: number };
 
 /** The example song a stage starts from (lesson tracks only; the learner's own tracks are never touched). */
 export type SongSetup = "full" | "buildup" | "pause" | "drop" | "final";
@@ -61,7 +76,12 @@ export type SongSetup = "full" | "buildup" | "pause" | "drop" | "final";
  * What a Try or Practice stage starts from, the first time it opens: "clear" removes the lesson's tracks (a fresh
  * arrangement), "loop" is a fresh arrangement with one drum loop made at 90 BPM, the others are the example song.
  */
-export type Setup = "clear" | "loop" | SongSetup;
+export type Setup = "clear" | "loop" | SongSetup | SeqSetup;
+
+/** A drum track for the step sequencer: `bars` long, with these hits already on it (pads count from 1 across bars). */
+export interface SeqSetup {
+  seq: { bars: number; hits?: { pitch: number; pad: number; velocity?: number }[] };
+}
 
 /** A place in the arrangement shown as a dashed target (where to drop, what to edit). */
 export interface Target {
@@ -88,6 +108,15 @@ export interface Exercise {
   targets?: Target[];
   /** The exercise edits notes: the notes editor opens for the selected clip. */
   editNotes?: boolean;
+  /** Things the project cannot show (Click, TAP): the learner ticks each one when done. */
+  confirm?: string[];
+}
+
+/** Drum hits shown and played in a demonstration (pads count from 1, sixteen per bar). */
+export interface PadDemo {
+  pitch: number;
+  pads: number[];
+  velocity?: number;
 }
 
 export interface WatchStep {
@@ -96,6 +125,8 @@ export interface WatchStep {
   sound?: SoundWant;
   /** Light these bars of the arrangement (and play them when the example song is there). */
   bars?: [number, number];
+  /** Light these pads on the step sequencer demo and play them. */
+  pads?: PadDemo[];
   targets?: Target[];
 }
 
@@ -113,7 +144,9 @@ export interface StudioLesson {
   title: string;
   /** One line under the title. */
   summary: string;
-  hook: { headline: string; text: string; sounds?: SoundWant[] };
+  hook: { headline: string; text: string; sounds?: SoundWant[]; pattern?: PadDemo[] };
+  /** Where the practical work happens: the sound browser and arrangement (default) or the drum step sequencer. */
+  space?: "arrangement" | "sequencer";
   /** `setup` prepares the arrangement the Watch captions talk about (the example song, a loop). */
   watch: { setup?: Setup; steps: WatchStep[] };
   tryIt: Exercise;

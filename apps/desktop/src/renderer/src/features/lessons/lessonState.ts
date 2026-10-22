@@ -11,12 +11,13 @@ import type { StarterNote } from "./types";
 
 /**
  * "lessons" is the main Lessons page; "path" is the Piano learning path (L1-L6); "kick" the Kick Drums course and "studio"
- * one of its lessons; "collection" a main lesson not built yet.
+ * one of its lessons (the Drum sequencer course is "sequencer"); "collection" a main lesson not built yet.
  */
 export type LearnViewState =
   | { kind: "lessons" }
   | { kind: "path" }
   | { kind: "kick" }
+  | { kind: "sequencer" }
   | { kind: "collection"; id: string }
   | { kind: "sub"; id: string }
   | { kind: "earlier"; id: string }

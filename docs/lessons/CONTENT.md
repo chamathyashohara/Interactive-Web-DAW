@@ -288,3 +288,18 @@ Create your sound."
 | M13.4 | The pause before the drop | Delete the snares on beat 4 of bar 16 | Every track silent on beat 4 of bar 16 | Nothing sounds there; the roll is still there |
 | M13.5 | The drop | An impact exactly on bar 17 | Impact, kick and bass back on bar 17 | Impact, a kick and a bass clip starting on bar 17 |
 | M13.6 | Final exercise | Delete the drums in bars 1-8 | 8 bars breakdown, 8 bars build-up, drop on 17 | No drums in 1-8; roll never thins out in 9-16 and ends denser; a riser ends on bar 17; kick and bass in bar 17 |
+
+## Drum sequencer course (step sequencer; one bar = 16 pads, beats = pads 1, 5, 9, 13)
+
+| Id | Lesson | Try | Practice | Check | Hint if wrong |
+| --- | --- | --- | --- | --- | --- |
+| M14.1 | Your first kick | Click pad 1 in the Kick row | Kick on pad 1 and press Play (tick box) | Pitch 36 at tick 0 | The kick row is the top row. Click the first pad. |
+| M14.2 | Four on the floor | Kicks on pads 1 and 5 | Kick on every beat: pads 1, 5, 9, 13 | Kicks exactly at 0, 960, 1920, 2880 | Names the missing beats ("No kick on beat 3 (pad 9)") |
+| M14.3 | Feel the pulse | Click on, Play (tick box) | Hear the kick on the click, tap TAP (tick boxes) | Self-confirmed, K2 pattern still there | Press Click so you can hear the beat. |
+| M14.4 | Kick on 1 and 3 | Remove the kick on pad 5 | Kicks on pads 1 and 9 only | Kicks only at 0 and 1920 | Beat 1 is pad 1 and beat 3 is pad 9. |
+| M14.5 | Off-beat kicks | Add a kick on pad 7 | Add a kick between the beats | At least 3 kicks, one off the beat pads | Every kick is on a beat. Try one pad to the right of a beat pad. |
+| M14.6 | Loud and soft kicks | Shift+click pad 1 | Accent on beat 1, others normal | Pad 1 at 127, another kick below 127 | Hold Shift and click the pad. It lights brighter. |
+| M14.7 | Leave room for the snare | Snare on pad 5, kick off it | Snares on 5 and 13, no kick under them | Snare (38) at 960 and 2880, no kick there | The snare owns pads 5 and 13. Move the kick off them. |
+| M14.8 | Make it four bars | Copy to all bars | Copy to all bars, then a kick on pad 16 of bar 4 | All four bars have kicks; bar 4 differs from bar 1 | Use Copy to all bars first, then open bar 4 with the bar buttons. |
+| M14.9 | Loop just the kick | Press Loop | Drag the LOOP strip over two bars | A loop region at least 2 bars long | Drag in the thin LOOP strip above the numbers. |
+| M14.10 | A kick that builds | Kick row, Ramp, Build up (1 bar) | The same over 4 bars | Kick velocities rise first to last by at least 40 | Click the Kick name first, so Ramp changes only the kick. |

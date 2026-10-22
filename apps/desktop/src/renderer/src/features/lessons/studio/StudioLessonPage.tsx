@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project } from "@daw/shared";
 import { libraryStore } from "../../../store";
+import { playEvents, type Preview } from "../audio";
 import { lessonEvents } from "../events";
 import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerIcon } from "../Icons";
 import { NotesTab } from "../LessonPage";
@@ -10,10 +11,11 @@ import { STAGES, type StageId } from "../subLesson";
 import type { CheckResult } from "../types";
 import { lessonView, runStudioCheck } from "./checks";
 import { barTick, hasSong, stageSetupOps } from "./exampleSong";
+import { SequencerPane } from "./SequencerPane";
 import { StudioPane, type StudioGuide } from "./StudioPane";
 import { lessonTracksOf, spaceSwitchOps } from "./space";
 import { completeStudioLesson, studioCtx, studioState, useStudioState, type StudioProgress } from "./studioState";
-import type { Exercise, Labels, Setup, SoundWant, StudioLesson } from "./types";
+import type { Exercise, Labels, PadDemo, Setup, SoundWant, StudioLesson } from "./types";
 
 const ghostBtn = "rounded-xl px-4 py-2 text-sm font-medium text-slate-200 ring-1 ring-white/10 transition-colors hover:bg-white/5 disabled:opacity-40";
 const solidBtn = "rounded-xl bg-emerald-300 px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-emerald-200 disabled:opacity-40";
@@ -88,14 +90,16 @@ interface Props {
   lesson: StudioLesson;
   project: Project;
   moduleCode: string;
+  /** The course the lesson belongs to ("Kick Drums"), for the way back. */
+  courseTitle: string;
   onBackToPath: () => void;
   next: { title: string; open: () => void } | null;
   voice: boolean;
   canSpeak: boolean;
 }
 
-/** One Kick Drums lesson in the Piano sub-lesson format: Hook, Watch, Try, Practice, Quick check, Done, with its workspace. */
-export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, next, voice, canSpeak }: Props) {
+/** One studio lesson (Kick Drums, Drum sequencer) in the Piano sub-lesson format: Hook, Watch, Try, Practice, Quick check, Done, with its workspace. */
+export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onBackToPath, next, voice, canSpeak }: Props) {
   useStudioState();
   const p = studioState.progress(lesson.id);
   const save = (patch: Partial<StudioProgress>) => studioState.saveProgress(lesson.id, { ...studioState.progress(lesson.id), ...patch });
@@ -159,6 +163,28 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Step sequencer demonstrations: a pattern shown on demo pads, played twice, the playing pad lit ----
+  const seqLesson = lesson.space === "sequencer";
+  const [demoPads, setDemoPads] = useState<PadDemo[] | null>(null);
+  const [demoStep, setDemoStep] = useState(-1);
+  const demoAudio = useRef<{ preview: Preview; timers: number[] } | null>(null);
+  const stopPattern = () => {
+    demoAudio.current?.preview.stop();
+    demoAudio.current?.timers.forEach((t) => window.clearTimeout(t));
+    demoAudio.current = null;
+    setDemoStep(-1);
+  };
+  const playPattern = (pattern: PadDemo[], times = 2) => {
+    stopPattern();
+    setDemoPads(pattern);
+    const step = 60 / project.tempo / 4;
+    const events = Array.from({ length: times }, (_, r) => pattern.flatMap((d) => d.pads.map((pad) => ({ time: (r * 16 + pad - 1) * step, duration: 0.12, pitch: d.pitch, gain: (d.velocity ?? 100) / 127 })))).flat();
+    const preview = playEvents(events, "drums", times * 16 * step + 0.5);
+    const timers = Array.from({ length: times * 16 + 1 }, (_, i) => window.setTimeout(() => setDemoStep(i < times * 16 ? i % 16 : -1), 60 + i * step * 1000));
+    demoAudio.current = { preview, timers };
+  };
+  useEffect(() => () => stopPattern(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---- Watch: captions step by step, lighting the sound list and the arrangement, with sound ----
   const steps = lesson.watch.steps;
   const [watchIndex, setWatchIndex] = useState(-1);
@@ -169,6 +195,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
   const songPlaying = useRef(false);
   const stopWatch = () => {
     token.current++;
+    stopPattern();
     if (songPlaying.current) window.daw.stop();
     songPlaying.current = false;
     setWatchRunning(false);
@@ -182,6 +209,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
     for (const [i, step] of steps.entries()) {
       if (mine !== token.current) return;
       setWatchIndex(i);
+      if (step.pads) playPattern(step.pads, 1);
       const e = step.sound ? demoSound(step.sound) : undefined;
       setLit(step.sound ? { litCategory: step.sound.category, litSoundId: e?.id } : {});
       if (step.bars && hasSong(project)) {
@@ -210,9 +238,21 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
   );
 
   // ---- Try / Practice checks ----
+  /** Steps the project cannot show (Click, TAP): ticked by the learner, per stage. */
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const check = (ex: Exercise, which: "try" | "practice") => {
     if (!ex.check) return;
-    const r = runStudioCheck(lessonView(project), ex.check, studioCtx());
+    const project_ = runStudioCheck(lessonView(project), ex.check, studioCtx());
+    const unticked = (ex.confirm ?? []).filter((c) => !confirmed[`${which}:${c}`]);
+    const r: CheckResult = ex.confirm
+      ? {
+          ...project_,
+          pass: project_.pass && unticked.length === 0,
+          feedback: !project_.pass ? project_.feedback : unticked.length ? `Tick "${unticked[0]}" when you have done it.` : project_.feedback,
+          items: [...project_.items, ...ex.confirm.map((c) => ({ label: c, ok: !unticked.includes(c) }))],
+          score: (project_.score * project_.items.length + ex.confirm.length - unticked.length) / (project_.items.length + ex.confirm.length),
+        }
+      : project_;
     if (which === "try") {
       setTryResult(r);
       if (r.pass) save({ tryPassed: true });
@@ -236,6 +276,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
   const canAdvance: Record<StageId, boolean> = { hook: true, watch: true, try: finished || tryPassed, practice: finished || practicePassed, quick: finished || quickResult === "right", done: false };
   const go = async (s: StageId) => {
     stopWatch();
+    stopPattern();
     stopSpeaking();
     if (s === "try" && !(await prepare("try", lesson.tryIt.setup))) return;
     if (s === "practice" && !(await prepare("practice", lesson.practice.setup))) return;
@@ -254,6 +295,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
   }, [voice, canSpeak, stage]);
 
   const playHookExample = async () => {
+    if (lesson.hook.pattern) return playPattern(lesson.hook.pattern);
     for (const s of lesson.hook.sounds ?? []) {
       const e = demoSound(s);
       setLit({ litCategory: s.category, litSoundId: e?.id });
@@ -295,7 +337,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
               <button onClick={() => speak(speech("hook"))} disabled={!canSpeak} title={canSpeak ? "Read this aloud" : "No speech voice is installed on this computer"} className="flex items-center gap-2 rounded-xl bg-violet-500/25 px-4 py-2.5 text-sm font-semibold text-violet-100 hover:bg-violet-500/40 disabled:opacity-40" data-testid="hook-hear">
                 <SpeakerIcon size={17} /> Hear it
               </button>
-              {(lesson.hook.sounds?.length ?? 0) > 0 && (
+              {((lesson.hook.sounds?.length ?? 0) > 0 || lesson.hook.pattern) && (
                 <button onClick={() => void playHookExample()} className="flex items-center gap-2 rounded-xl bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-100 ring-1 ring-white/10 hover:bg-white/10" data-testid="hook-play">
                   ▶ Play example
                 </button>
@@ -337,7 +379,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
               <p className="mt-1 text-sm leading-relaxed text-slate-200" data-testid="exercise-instruction">
                 {ex.instruction}
               </p>
-              {!labelsTask && <div className="mt-3 text-xs text-slate-400">{stage === "try" ? "Work in the panel on the right: the dashed box shows where." : "Work in the panel on the right, then check your work."}</div>}
+              {!labelsTask && <div className="mt-3 text-xs text-slate-400">{seqLesson ? "Work on the step sequencer on the right, then check your work." : stage === "try" ? "Work in the panel on the right: the dashed box shows where." : "Work in the panel on the right, then check your work."}</div>}
             </Card>
             {setupError && <p className="text-sm text-rose-300">{setupError}</p>}
             {labelsTask ? (
@@ -359,6 +401,19 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
                     </button>
                   )}
                 </div>
+                {ex.confirm && (
+                  <Card>
+                    <div className="text-sm font-semibold text-slate-100">Tell me when you did it</div>
+                    <div className="mt-2 flex flex-col gap-2">
+                      {ex.confirm.map((c, i) => (
+                        <label key={c} className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-200">
+                          <input type="checkbox" checked={!!confirmed[`${stage}:${c}`]} onChange={(e) => setConfirmed({ ...confirmed, [`${stage}:${c}`]: e.target.checked })} className="h-4 w-4 accent-emerald-400" data-testid={`confirm-${i}`} />
+                          {c}
+                        </label>
+                      ))}
+                    </div>
+                  </Card>
+                )}
                 {result && <ResultCard result={result} />}
               </>
             )}
@@ -436,7 +491,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
                 </button>
               )}
               <button className={next ? ghostBtn : solidBtn} onClick={onBackToPath} data-testid="back-to-path-done">
-                Back to Kick Drums
+                Back to {courseTitle}
               </button>
             </div>
           </div>
@@ -472,7 +527,11 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
           <div className="min-h-0 flex-1 overflow-y-auto p-4">{tab === "lesson" ? body : <NotesTab lessonId={lesson.id} />}</div>
           {tab === "lesson" && footer}
         </section>
-        <StudioPane project={project} guide={guide} ready={spaceReady} />
+        {seqLesson ? (
+          <SequencerPane project={project} ready={spaceReady} guide={stage === "hook" || stage === "watch" ? { demo: demoPads ?? lesson.hook.pattern ?? [], demoStep } : {}} />
+        ) : (
+          <StudioPane project={project} guide={guide} ready={spaceReady} />
+        )}
       </div>
 
       <div className="flex gap-4">
@@ -509,7 +568,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, onBackToPath, ne
         </section>
       </div>
       <button className="flex items-center gap-2 self-start text-sm text-slate-500 hover:text-slate-300" onClick={onBackToPath}>
-        <ArrowLeft size={15} /> Back to Kick Drums
+        <ArrowLeft size={15} /> Back to {courseTitle}
       </button>
     </>
   );

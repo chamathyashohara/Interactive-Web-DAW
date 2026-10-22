@@ -126,6 +126,7 @@ const MIN_BARS = 8;
  * `loop` is the library sound to use for "loop".
  */
 export function stageSetupOps(project: Project, setup: Setup, newId: () => string, loop?: DroppedSample): { ok: true; ops: OpBody[] } | { ok: false; reason: string } {
+  if (typeof setup === "object") return seqSetupOps(project, setup);
   const song = setup !== "clear" && setup !== "loop";
   const remove = project.trackOrder.filter((id) => isWorkspaceTrack(id) || (!song && Object.values(SONG).includes(id as never)));
   // The project must keep at least one track: never delete the last one.
@@ -146,5 +147,29 @@ export function stageSetupOps(project: Project, setup: Setup, newId: () => strin
     for (const op of r.ops) if (op.type === "addTrack" && op.track.sample) op.track.sample.fit = false; // the learner turns Fit on
     ops.push(...r.ops);
   }
+  return { ok: true, ops };
+}
+
+/** The step sequencer lessons' drum track (one per lesson workspace). */
+export const SEQ_TRACK = "lesson-k-seq";
+export const SEQ_CLIP = "lesson-k-seq-clip";
+
+/** A fresh drum track for a step sequencer stage, `bars` long, with the starting hits; no loop region yet. */
+function seqSetupOps(project: Project, setup: Extract<Setup, { seq: unknown }>): { ok: true; ops: OpBody[] } | { ok: false; reason: string } {
+  // Only workspace tracks: the Piano lessons' practice track ("lesson-practice") is never touched.
+  const remove = project.trackOrder.filter((id) => id.startsWith("lesson-k-") || id.startsWith("lesson-song-"));
+  const removable = remove.length >= project.trackOrder.length ? remove.slice(0, project.trackOrder.length - 1) : remove;
+  if (project.trackOrder.length - removable.length + 1 > MAX_TRACKS) return { ok: false, reason: `The lesson needs one free track (a song can have at most ${MAX_TRACKS}). Delete a track and try again.` };
+  const ops: OpBody[] = removable.map((trackId) => ({ type: "deleteTrack", trackId }));
+  const bars = Math.max(1, setup.seq.bars);
+  if (project.songBars < Math.max(bars, MIN_BARS)) ops.push({ type: "setSongLength", bars: Math.max(bars, MIN_BARS) });
+  if (project.loop) ops.push({ type: "setLoop", loop: null });
+  const notes: Record<string, Note> = {};
+  (setup.seq.hits ?? []).forEach((h, i) => {
+    const id = `${SEQ_CLIP}-n${i}`;
+    notes[id] = { id, pitch: h.pitch, startTick: (h.pad - 1) * (PPQ / 4), durationTicks: PPQ / 4, velocity: h.velocity ?? 100 };
+  });
+  const track: Track = { ...createTrack(SEQ_TRACK, "Drums", "drums", "#f472b6", SEQ_CLIP), clips: { [SEQ_CLIP]: { id: SEQ_CLIP, name: "Beat", startTick: 0, lengthTicks: bars * TICKS_PER_BAR, notes } } };
+  ops.push({ type: "addTrack", track });
   return { ok: true, ops };
 }

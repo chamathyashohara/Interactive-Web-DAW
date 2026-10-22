@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { MODULES, moduleProgress } from "./curriculum";
 import { lessonEvents } from "./events";
-import { ArrowRight, CheckIcon, DrumIcon, FadersIcon, GridIcon, PianoKeysIcon } from "./Icons";
-import { KICK_PATH } from "./studio/KickPath";
+import { ArrowRight, CheckIcon, DrumIcon, FadersIcon, GridIcon, PadsIcon, PianoKeysIcon } from "./Icons";
+import { coursePath } from "./studio/CoursePath";
 import { MAIN_LESSONS, type Accent, type MainLesson, type MainLessonId } from "./mainLessons";
 
 /** Colour sets for the four cards (full class names, so Tailwind keeps them). */
@@ -23,6 +23,14 @@ export const ACCENTS: Record<Accent, { card: string; tile: string; check: string
     text: "text-violet-300",
     bar: "bg-violet-400",
   },
+  rose: {
+    card: "border-rose-400/40 bg-gradient-to-br from-rose-500/[0.14] via-[#1a1016] to-[#100c10] shadow-[0_0_44px_-14px_rgba(251,113,133,0.5)] hover:border-rose-400/70",
+    tile: "bg-rose-500/25 text-rose-100 ring-1 ring-rose-400/30",
+    check: "bg-rose-400 text-slate-900",
+    button: "bg-rose-500 text-white hover:bg-rose-400 focus-visible:ring-rose-300",
+    text: "text-rose-300",
+    bar: "bg-rose-400",
+  },
   blue: {
     card: "border-sky-400/40 bg-gradient-to-br from-sky-500/[0.15] via-[#0d1626] to-[#0b0e16] shadow-[0_0_44px_-14px_rgba(56,189,248,0.5)] hover:border-sky-400/70",
     tile: "bg-sky-500/25 text-sky-100 ring-1 ring-sky-400/30",
@@ -41,7 +49,7 @@ export const ACCENTS: Record<Accent, { card: string; tile: string; check: string
   },
 };
 
-const ICONS: Record<MainLessonId, (p: { size?: number }) => ReactNode> = { piano: PianoKeysIcon, kick: DrumIcon, mixing: FadersIcon, daw: GridIcon };
+const ICONS: Record<MainLessonId, (p: { size?: number }) => ReactNode> = { piano: PianoKeysIcon, kick: DrumIcon, sequencer: PadsIcon, mixing: FadersIcon, daw: GridIcon };
 
 /** Decorative pictures in each card's top-right corner (hidden from screen readers). */
 function Illustration({ id }: { id: MainLessonId }) {
@@ -74,6 +82,18 @@ function Illustration({ id }: { id: MainLessonId }) {
           <ellipse cx="150" cy="70" rx="18" ry="18" fill="#a78bfa" fillOpacity="0.12" />
           <path d="M120 140 L175 90" stroke="#c4b5fd" strokeOpacity="0.8" strokeWidth="4" strokeLinecap="round" />
           <circle cx="178" cy="88" r="6" fill="#c4b5fd" fillOpacity="0.85" />
+        </svg>
+      );
+    case "sequencer":
+      return (
+        <svg className={common} viewBox="0 0 224 160" aria-hidden="true">
+          {Array.from({ length: 4 }, (_, r) =>
+            Array.from({ length: 8 }, (_, c) => {
+              const on = (r === 0 && c % 2 === 0) || (r === 1 && (c === 2 || c === 6)) || (r === 2 && c >= 4);
+              return <rect key={`${r}-${c}`} x={70 + c * 18} y={24 + r * 22} width="14" height="16" rx="3" fill="#fb7185" fillOpacity={on ? 0.85 : 0.12} />;
+            }),
+          )}
+          <circle cx="79" cy="14" r="3" fill="#fcd34d" />
         </svg>
       );
     case "mixing":
@@ -192,13 +212,15 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
     },
     { done: 0, total: 0 },
   );
-  const kick = KICK_PATH.reduce(
-    (acc, m) => {
-      const p = moduleProgress(m, lessonEvents.isCompleted, () => true);
-      return { done: acc.done + p.done, total: acc.total + p.built };
-    },
-    { done: 0, total: 0 },
-  );
+  const courseProgress = (id: "kick" | "sequencer") =>
+    coursePath(id).reduce(
+      (acc, m) => {
+        const p = moduleProgress(m, lessonEvents.isCompleted, () => true);
+        return { done: acc.done + p.done, total: acc.total + p.built };
+      },
+      { done: 0, total: 0 },
+    );
+  const kick = courseProgress("kick");
   return (
     <div className="relative" data-testid="lessons-home">
       <WaveBackdrop />
@@ -212,7 +234,7 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
       </div>
       <div className="relative mx-auto mt-8 grid max-w-5xl grid-cols-1 gap-6 md:grid-cols-2" data-testid="main-lessons-grid">
         {MAIN_LESSONS.map((l) => (
-          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : l.id === "kick" ? kick : undefined} />
+          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : l.id === "kick" ? kick : l.id === "sequencer" ? courseProgress("sequencer") : undefined} />
         ))}
       </div>
       <div className="relative mt-8 flex items-center justify-center gap-4 text-sm text-slate-400">

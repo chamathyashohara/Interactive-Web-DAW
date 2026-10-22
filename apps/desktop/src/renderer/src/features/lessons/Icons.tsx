@@ -170,6 +170,16 @@ export const PianoKeysIcon = (p: P) => (
     <path d="M6.5 4v8h3V4M14.5 4v8h3V4" fill="currentColor" />
   </Svg>
 );
+/** A 4 x 4 pad grid (the step sequencer). */
+export const PadsIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="6" height="6" rx="1.2" fill="currentColor" />
+    <rect x="14" y="4" width="6" height="6" rx="1.2" />
+    <rect x="4" y="14" width="6" height="6" rx="1.2" />
+    <rect x="14" y="14" width="6" height="6" rx="1.2" fill="currentColor" />
+  </Svg>
+);
+
 export const DrumIcon = (p: P) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8.5" />

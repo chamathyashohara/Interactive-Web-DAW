@@ -4,7 +4,7 @@ import { LESSONS } from "./content";
 import { BUILT, MODULES, nextBuilt, searchPath, type PathHit } from "./curriculum";
 import { lessonEvents } from "./events";
 import { CollectionPage } from "./CollectionPage";
-import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
+import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, PadsIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
 import { overallProgress } from "./learnModel";
 import { LearningPath } from "./LearningPath";
 import { LessonPage } from "./LessonPage";
@@ -15,8 +15,8 @@ import { browserStore, readJson, writeJson } from "./storage";
 import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
 import { studyLog } from "./studyLog";
-import { KickPath } from "./studio/KickPath";
-import { STUDIO_LESSONS, nextStudioLesson, studioModuleOf } from "./studio/kickCurriculum";
+import { CoursePath } from "./studio/CoursePath";
+import { COURSES, STUDIO_LESSONS, courseOf, nextStudioLesson, studioModuleOf } from "./studio/courses";
 import { StudioLessonPage } from "./studio/StudioLessonPage";
 import { studioState } from "./studio/studioState";
 import { SubLessonPage } from "./SubLessonPage";
@@ -42,7 +42,7 @@ function restoredView(): View {
   if (v.kind === "sub" && BUILT[v.id]) return v;
   if (v.kind === "earlier" && LESSONS.some((l) => l.id === v.id)) return v;
   if (v.kind === "collection" && mainLesson(v.id)) return v;
-  if (v.kind === "path" || v.kind === "kick") return v;
+  if (v.kind === "path" || v.kind === "kick" || v.kind === "sequencer") return v;
   if (v.kind === "studio" && STUDIO_LESSONS[v.id]) return v;
   return { kind: "lessons" };
 }
@@ -157,9 +157,9 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
     show({ kind: "sub", id });
   };
   const openHit = (h: PathHit) => (h.kind === "sub" ? openSub(h.id) : show({ kind: "earlier", id: h.id }));
-  /** Piano opens the L1-L6 learning path, Kick Drums its own course; the others their (not yet available) collection page. */
-  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : id === "kick" ? { kind: "kick" } : { kind: "collection", id });
-  /** Opens a Kick Drums lesson; a finished one starts again from Learn. */
+  /** Piano opens the L1-L6 learning path, Kick Drums and Drum sequencer their own courses; the others a collection page. */
+  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : id === "kick" || id === "sequencer" ? { kind: id } : { kind: "collection", id });
+  /** Opens a studio lesson (Kick Drums, Drum sequencer); a finished one starts again from Hook. */
   const openStudio = (id: string) => {
     studioState.replay(id);
     show({ kind: "studio", id });
@@ -170,6 +170,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   const sub = view.kind === "sub" ? BUILT[view.id] : undefined;
   const studio = view.kind === "studio" ? STUDIO_LESSONS[view.id] : undefined;
   const studioModule = studio ? studioModuleOf(studio.id) : undefined;
+  const studioCourse = studio ? courseOf(studio.id) : undefined;
   const earlierIndex = view.kind === "earlier" ? LESSONS.findIndex((l) => l.id === view.id) : -1;
   const earlier = earlierIndex >= 0 ? LESSONS[earlierIndex] : undefined;
   const progress = overallProgress(LESSONS, lessonEvents.isCompleted);
@@ -253,27 +254,27 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
           </>
         )}
 
-        {view.kind === "kick" && (
+        {(view.kind === "kick" || view.kind === "sequencer") && (
           <>
             <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-400">
               <button onClick={() => show({ kind: "lessons" })} className="flex items-center gap-2 hover:text-slate-200" data-testid="back-to-lessons">
                 <ArrowLeft size={16} /> All lessons
               </button>
               <span className="text-slate-600">/</span>
-              <span className="text-slate-200">Kick Drums</span>
+              <span className="text-slate-200">{COURSES[view.kind].title}</span>
             </nav>
-            <KickPath onOpen={openStudio} />
+            <CoursePath course={view.kind} onOpen={openStudio} />
           </>
         )}
 
         {studio && (
           <>
-            <button onClick={() => show({ kind: "kick" })} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-kick">
-              <ArrowLeft size={16} /> Back to Kick Drums
+            <button onClick={() => show({ kind: studioCourse!.id })} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-kick">
+              <ArrowLeft size={16} /> Back to {studioCourse!.title}
             </button>
             <div className="flex flex-wrap items-center gap-5">
               <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500 text-white shadow-lg shadow-violet-500/25">
-                <DrumIcon size={30} />
+                {studioCourse?.id === "sequencer" ? <PadsIcon size={30} /> : <DrumIcon size={30} />}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold tracking-widest text-violet-300 uppercase">
@@ -290,7 +291,8 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               lesson={studio}
               project={project}
               moduleCode={studioModule?.code ?? ""}
-              onBackToPath={() => show({ kind: "kick" })}
+              courseTitle={studioCourse!.title}
+              onBackToPath={() => show({ kind: studioCourse!.id })}
               next={(() => {
                 const n = nextStudioLesson(studio.id);
                 return n ? { title: n.title, open: () => openStudio(n.id) } : null;

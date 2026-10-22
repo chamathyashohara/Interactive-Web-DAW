@@ -1,13 +1,13 @@
 import { MODULES } from "./curriculum";
 
 /**
- * The four main lessons on the Lessons page. Piano opens the L1-L6 learning path and Kick Drums its own course. The
+ * The main lessons on the Lessons page. Piano opens the L1-L6 learning path; Kick Drums and Drum sequencer their own courses. The
  * others are ready to be connected to their own lesson pages later; until then they open a clear "not available yet"
  * page that links to the related lessons that do exist.
  */
 
-export type MainLessonId = "piano" | "kick" | "mixing" | "daw";
-export type Accent = "teal" | "purple" | "blue" | "amber";
+export type MainLessonId = "piano" | "kick" | "sequencer" | "mixing" | "daw";
+export type Accent = "teal" | "purple" | "rose" | "blue" | "amber";
 
 export interface RelatedLesson {
   kind: "sub" | "earlier";
@@ -47,6 +47,15 @@ export const MAIN_LESSONS: MainLesson[] = [
     description: "Find drum sounds, build beats, and use them to shape a song: breakdown, build-up and drop.",
     topics: ["Meet the sound browser", "Make a simple beat", "Snap, grid and loops", "Breakdown", "Build-up tension", "The drop"],
     accent: "purple",
+    available: true,
+    related: [],
+  },
+  {
+    id: "sequencer",
+    title: "Drum sequencer",
+    description: "Program kick patterns on the step sequencer: pads, beats, accents, four-bar patterns, loops and ramps.",
+    topics: ["Your first kick", "Four on the floor", "Kick on 1 and 3, off-beats", "Loud and soft kicks", "Four-bar patterns", "Loop and Ramp"],
+    accent: "rose",
     available: true,
     related: [],
   },

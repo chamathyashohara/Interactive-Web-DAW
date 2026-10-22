@@ -528,3 +528,27 @@ in the built app (including M12.2 -> M12.4 -> M12.2 -> M12.4 keeping each lesson
 (template parts, no redirect, Hook/Watch, M12.1 with clicks in the lesson's sound list, M12.2 real drag-and-drop and
 dragging a clip, M12.4 grid 1/4 vs 1 bar, M13.2 example song, Watch, deleting clips, M13.3 riser drop and the notes
 editor, DAW `completedLessons`).
+
+## Drum sequencer course (2026-10-22)
+
+New main lesson card **Drum sequencer** (third on the Lessons page, rose accent), its own course with ten lessons on
+the DAW's step sequencer: **S1 Kick basics** (M14.1-M14.5) and **S2 Shaping the beat** (M14.6-M14.10). Ids continue the
+curriculum after the Kick Drums course; passing Practice calls `window.daw.completeLesson("M14.x")`.
+
+- Same template as Kick Drums and Piano (Hook, Watch, Try, Practice, Quick check, Done; Notes; tracker; Replay), and
+  every lesson has its own workspace (its drum track is saved and swapped back in).
+- Workspace (`studio/SequencerPane.tsx`): Chamath's `StepSequencer` on the lesson's own drum track (`lesson-k-seq`),
+  with Play, Click (metronome, switched off when the lesson closes), TAP, the position readout, BPM, Loop and his LOOP
+  strip (`SectionRuler`). Hook and Watch show demonstration pads that light and play the pattern (Web Audio).
+- Pads: one bar is 16 pads, pad n starts at (n - 1) x 240 ticks, beats are pads 1, 5, 9, 13; kick 36 (35 counts as a
+  kick), snare 38. Checks in `studio/seqChecks.ts` use the hint wording from the brief.
+- Click and TAP cannot be read from the project, so M14.1 and M14.3 have "Tell me when you did it" tick boxes; Check
+  passes only with the pattern right and the boxes ticked.
+- Loop (M14.9) and Ramp (M14.10) work in the lesson workspace; in the Studio they unlock with M8.2 and M7.4 (the hook
+  text says so).
+- Sample kicks (sound browser) stay in the Kick Drums course; this course only uses the built-in drum track.
+
+Verified: 12 unit tests (every lesson's setup, each check passing and failing with the right hint, the Piano practice
+track untouched); 29/29 in the built app with real mouse input (pad click, Shift+click accent, Copy to all bars, bar
+buttons, Loop and a two-bar drag in the LOOP strip, row select + Ramp Build up, TAP tempo, tick boxes, own workspace
+per lesson, card progress, DAW `completedLessons`).

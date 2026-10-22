@@ -390,13 +390,3 @@ export const KICK_MODULES: StudioModule[] = [
   { id: "k1", code: "K1", title: "Sounds and beats", lessons: SOUNDS },
   { id: "k2", code: "K2", title: "Build-up and drop", lessons: DROP },
 ];
-
-export const STUDIO_LESSONS: Record<string, StudioLesson> = Object.fromEntries(KICK_MODULES.flatMap((m) => m.lessons).map((l) => [l.id, l]));
-export const studioModuleOf = (id: string) => KICK_MODULES.find((m) => m.lessons.some((l) => l.id === id));
-
-/** The next lesson after `id` in course order, or null. */
-export function nextStudioLesson(id: string): StudioLesson | null {
-  const all = KICK_MODULES.flatMap((m) => m.lessons);
-  const i = all.findIndex((l) => l.id === id);
-  return i >= 0 ? (all[i + 1] ?? null) : null;
-}
