@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Component 3 - Collaboration test DAW</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #1b1b1f; color: #eee; }
+  header { padding: 10px 14px; background: #26262c; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button, input, select { padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #333; color: #eee; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  #info { padding: 8px 14px; background: #2d2d35; display: none; gap: 14px; align-items: center; }
+  #status { margin-left: auto; font-size: 13px; opacity: .8; }
+  #notice { padding: 6px 14px; font-size: 12px; background: #4a3a1c; display: none; }
+  #workspace { display: none; gap: 16px; padding: 14px; align-items: flex-start; position: relative; }
+  #left { width: 330px; flex: none; }
+  #center { flex: 1; min-width: 0; }
+  #right { width: 250px; flex: none; }
+  h3 { margin: 0 0 6px; font-size: 13px; opacity: .8; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .track { display: flex; align-items: center; gap: 6px; padding: 6px; margin-bottom: 4px; border-radius: 4px;
+    background: #25252b; border-left: 5px solid #888; cursor: pointer; font-size: 13px; }
+  .track.sel { background: #33333c; }
+  .track .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track input[type=range] { width: 70px; padding: 0; }
+  .track button { padding: 2px 7px; }
+  .track button.on { background: #8b2e2e; }
+  #grid { display: grid; gap: 2px; user-select: none; }
+  .cell { height: 20px; border-radius: 2px; background: #2a2a31; cursor: pointer; }
+  .cell.beat { background: #32323a; }
+  .cell.on { outline: 1px solid #fff3; }
+  .plabel { font-size: 10px; opacity: .5; text-align: right; padding-right: 4px; line-height: 20px; }
+  #activity div { font-size: 12px; padding: 3px 6px; margin-bottom: 3px; border-radius: 3px; border-left: 4px solid #888; background: #25252b; }
+  #activity small { opacity: .5; }
+  #users span { display: inline-block; padding: 2px 8px; margin: 0 4px 4px 0; border-radius: 10px; font-size: 12px; color: #111; }
+  #cursors { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  .cursor { position: absolute; left: 0; top: 0; transition: transform 60ms linear; }
+  .cursor svg { display: block; }
+  .cursor span { position: absolute; left: 14px; top: 16px; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; color: #111; white-space: nowrap; }
+  #net { position: fixed; right: 12px; bottom: 12px; width: 270px; background: #26262c; border: 1px solid #444;
+    border-radius: 8px; padding: 10px 12px; font-size: 12px; display: none; z-index: 20; }
+  #net h4 { margin: 0 0 6px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+  #net table { width: 100%; border-collapse: collapse; }
+  #net td { padding: 2px 0; } #net td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  #net .hint { opacity: .6; font-size: 11px; margin-top: 6px; }
+  .q-good { color: #80ed99; } .q-fair { color: #ffd166; } .q-poor { color: #ff6b6b; } .q-unknown { opacity: .6; }
+</style>
+</head>
+<body>
+<header>
+  <button id="host">Host session</button>
+  <span>or server:</span>
+  <input id="addr" placeholder="IP or address (blank = this PC)" size="28" />
+  <input id="token" placeholder="access token (online hosting)" size="22" type="password" />
+  <button id="hostOnline">Host online</button>
+  <input id="code" placeholder="6-digit code" size="10" />
+  <button id="join">Join</button>
+  <button id="end" style="display:none;background:#8b2e2e">End session</button>
+  <button id="leave" style="display:none">Leave session</button>
+  <button id="netBtn">Network</button>
+  <span id="status">Not connected</span>
+</header>
+<div id="info"><div id="infoText"></div><button id="copyCode" title="Copy the 6-digit session code">Copy code</button></div>
+<div id="notice"></div>
+<div id="workspace">
+  <div id="left">
+    <h3>Project</h3>
+    <div class="row">Tempo <input id="tempo" type="number" min="20" max="300" style="width:70px" />
+      Master <input id="master" type="range" min="0" max="100" style="width:90px" /></div>
+    <h3>Tracks</h3>
+    <div id="tracks"></div>
+    <div class="row"><button id="addTrack">+ Add track</button></div>
+  </div>
+  <div id="center">
+    <h3 id="gridTitle">Notes</h3>
+    <div id="grid"></div>
+    <p style="font-size:11px;opacity:.5">Click a cell to add or remove a note. Open the app twice and click the same cell to see how conflicts are handled.</p>
+  </div>
+  <div id="right">
+    <h3>People in this session</h3>
+    <div id="users"></div>
+    <h3>Activity</h3>
+    <div id="activity"></div>
+  </div>
+</div>
+<div id="cursors"></div>
+<div id="net">
+  <h4><span>Network</span><span id="netQuality" class="q-unknown">no data</span></h4>
+  <table>
+    <tr><td>Connection</td><td id="netConn">-</td></tr>
+    <tr><td>Users online</td><td id="netUsers">-</td></tr>
+    <tr><td>Ping now / avg</td><td id="netPing">-</td></tr>
+    <tr><td>Ping min / max</td><td id="netMinMax">-</td></tr>
+    <tr><td>Jitter</td><td id="netJitter">-</td></tr>
+    <tr><td>Lost pings</td><td id="netLoss">-</td></tr>
+    <tr><td>Sync delay (last / avg)</td><td id="netSync">-</td></tr>
+    <tr><td>Sync delay (95th pct)</td><td id="netSync95">-</td></tr>
+    <tr><td>Download / upload</td><td id="netRate">-</td></tr>
+    <tr><td>Reconnects</td><td id="netReconn">-</td></tr>
+  </table>
+  <canvas id="netSpark" width="244" height="36" style="margin-top:6px"></canvas>
+  <div class="hint">Ping = round trip to the server. Sync delay = time for another user's updates to reach you.</div>
+  <button id="netExport" style="margin-top:6px">Export CSV</button>
+</div>
+<script src="renderer.js"></script>
+</body>
+</html>
