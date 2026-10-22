@@ -1,13 +1,17 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PPQ, TICKS_PER_BAR, isInKey, isTonic, keyLabel, outOfKeyMessage, type Clip, type Note, type NoteFields, type OpBody, type ProjectKey, type Track } from "@daw/shared";
 import { LockIcon } from "../unlock/LockIcon";
 import { useUnlock } from "../unlock/useUnlock";
 import { statusStore, useStore } from "../store";
 import { PianoKeys } from "./PianoKeys";
 import { WindowButtons } from "./WindowButtons";
+import { StepSequencer } from "./StepSequencer";
+import { VelocityRamp } from "./VelocityRamp";
 import { clampGroupMove, copyNotes, deleteOps, duplicateOps, fixOutOfKeyOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, type NoteClip } from "./editing";
 import {
   KEYS_W,
+  MAX_PX_PER_BEAT,
+  MIN_PX_PER_BEAT,
   PITCH_MAX,
   PITCH_MIN,
   clamp,
@@ -71,6 +75,9 @@ interface Props {
   snap: boolean;
   gridTicks: number;
   pxPerBeat: number;
+  /** Horizontal zoom (ctrl + middle mouse sweep). */
+  /** Ctrl + middle-drag zoom; the lessons' embedded roll zooms with its own sliders and leaves this out. */
+  onZoom?: (pxPerBeat: number) => void;
   rowH: number;
   onTool: (t: Tool) => void;
   /** Teaching overlay (lessons only). */
@@ -92,7 +99,7 @@ type Drag =
   | { kind: "resize"; ids: Set<string>; grabId: string; dDur: number }
   | { kind: "velocity"; id: string; velocity: number }
   | { kind: "marquee"; x0: number; y0: number; x1: number; y1: number; additive: boolean }
-  | { kind: "erase"; ids: Set<string> };
+  | { kind: "erase"; ids: Set<string>; lx: number; ly: number };
 
 const RULER_H = 26;
 const EDIT_H = 30;
@@ -111,9 +118,9 @@ const Playhead = memo(function Playhead({ pxPerBeat, clipStart, clipLength }: { 
   return <div className="pointer-events-none absolute top-0 bottom-0 z-[25] w-px bg-amber-300" style={{ left: x, boxShadow: "0 0 6px rgba(252,211,77,.7)" }} />;
 });
 
-const btn = "rounded px-2 py-0.5 text-[11px] font-medium bg-white/5 text-slate-300 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5";
+const btn = "hw-btn px-2 py-0.5 text-[11px]";
 
-export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, rowH, onTool: requestTool, guide, maximized = false, onToggleMaximize, onClose, musicKey, keyHelp, onToggleKeyHelp }: Props) {
+export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, onZoom, rowH, onTool: requestTool, guide, maximized = false, onToggleMaximize, onClose, musicKey, keyHelp, onToggleKeyHelp }: Props) {
   const allowed = guide?.tools;
   const tool: Tool = allowed && !allowed.includes(requestedTool) ? (allowed[0] ?? "select") : requestedTool;
   const onTool = (t: Tool) => {
@@ -130,6 +137,10 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   const gated = useUnlock();
   // A lesson's own roll is where these features are learned, so it is never locked; the lesson limits its tools itself.
   const unlock = guide ? { can: () => true, reason: () => null } : gated;
+  // Drum clips open in the step sequencer; the roll is one click away.
+  const [drumView, setDrumView] = useState<"steps" | "roll">("steps");
+  // A lesson's roll always shows the roll (its exercises draw ghost notes there).
+  const showSteps = !guide && isDrums && unlock.can("seq.steps") && drumView === "steps";
   // Key help applies to melodic tracks only (drum rows are instruments, not pitches) and only once its lesson is done.
   const keyHelpAvailable = !isDrums && musicKey !== null && unlock.can("key.help");
   const hint = keyHelpAvailable && keyHelp ? musicKey : null;
@@ -142,6 +153,8 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   const [drag, setDragState] = useState<Drag | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const lastDuration = useRef(PPQ / 2);
+  const zoomDrag = useRef<{ x0: number; zoom0: number; anchorTick: number; viewX: number } | null>(null);
+  const anchor = useRef<{ tick: number; viewX: number } | null>(null);
   const setDrag = useCallback((d: Drag | null) => {
     dragRef.current = d;
     setDragState(d);
@@ -222,6 +235,35 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusKey]);
 
+  // After a zoom, keep the moment under the cursor where it was.
+  useLayoutEffect(() => {
+    const a = anchor.current, el = scrollRef.current;
+    if (!a || !el) return;
+    anchor.current = null;
+    el.scrollLeft = Math.max(0, KEYS_W + tickToPx(a.tick, pxPerBeat) - a.viewX);
+  }, [pxPerBeat]);
+
+  // ---- horizontal zoom: hold Ctrl, press the middle mouse button and sweep left/right ----
+  const onZoomDown = (e: React.PointerEvent) => {
+    if (e.button !== 1 || !e.ctrlKey) return;
+    e.preventDefault();
+    const el = scrollRef.current!;
+    const viewX = e.clientX - el.getBoundingClientRect().left;
+    zoomDrag.current = { x0: e.clientX, zoom0: pxPerBeat, anchorTick: pxToTick(el.scrollLeft + viewX - KEYS_W, pxPerBeat), viewX };
+    el.setPointerCapture(e.pointerId);
+  };
+  const onZoomMove = (e: React.PointerEvent) => {
+    const z = zoomDrag.current;
+    if (!z) return;
+    const next = Math.round(clamp(z.zoom0 * Math.exp((e.clientX - z.x0) / 150), MIN_PX_PER_BEAT, MAX_PX_PER_BEAT));
+    if (next === pxPerBeat) return;
+    anchor.current = { tick: Math.max(0, z.anchorTick), viewX: z.viewX };
+    onZoom?.(next);
+  };
+  const onZoomUp = () => {
+    zoomDrag.current = null;
+  };
+
   // ---- editing commands (buttons + shortcuts) ----
   const targets = () => (selectedNotes.length ? selectedNotes : notes);
   const cmdCopy = () => {
@@ -247,7 +289,10 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
     if (unlock.can("edit.quantize")) batch(quantizeOps(noteClip, targets(), gridTicks));
   };
   const cmdFixKey = () => {
-    if (hint) batch(fixOutOfKeyOps(noteClip, notes, hint));
+    if (hint) {
+      window.daw.telemetry.event("ui.fix", {});
+      batch(fixOutOfKeyOps(noteClip, notes, hint));
+    }
   };
   const cmdDelete = () => {
     batch(deleteOps(noteClip, [...liveSelected]));
@@ -302,17 +347,21 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
 
   // ---- grid pointer handling ----
   const onGridPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 || readOnly) return;
+    if ((e.button !== 0 && e.button !== 2) || readOnly) return;
+    // In a lesson that does not allow deleting, the right button (sweep-delete) does nothing.
+    if (e.button === 2 && allowed && !allowed.includes("delete")) return;
     const { x, y } = gridPoint(e);
     const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
     const note = hit ? clip.notes[hit.dataset.noteId!] : undefined;
     const capture = () => gridRef.current!.setPointerCapture(e.pointerId);
 
-    if (tool === "delete") {
+    if (e.button === 2 || tool === "delete") {
+      // hold the right button (or use the eraser) and sweep over notes to delete them all at once
       capture();
-      setDrag({ kind: "erase", ids: new Set(note ? [note.id] : []) });
+      setDrag({ kind: "erase", ids: new Set(note ? [note.id] : []), lx: x, ly: y });
       return;
     }
+    if (note) lastDuration.current = note.durationTicks; // the next note drawn gets the width of the one just clicked
     if (tool === "mute") {
       if (note) batch(toggleMuteOps(noteClip, liveSelected.has(note.id) ? selectedNotes : [note]));
       return;
@@ -413,8 +462,14 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
     } else if (d.kind === "marquee") {
       setDrag({ ...d, x1: x, y1: y });
     } else if (d.kind === "erase") {
-      const n = noteAt(x, y);
-      if (n && !d.ids.has(n.id)) setDrag({ ...d, ids: new Set([...d.ids, n.id]) });
+      // check along the whole path since the last event, so a fast sweep cannot skip a note
+      const steps = Math.max(1, Math.ceil(Math.hypot(x - d.lx, y - d.ly) / 4));
+      let ids = d.ids;
+      for (let i = 1; i <= steps; i++) {
+        const n = noteAt(d.lx + ((x - d.lx) * i) / steps, d.ly + ((y - d.ly) * i) / steps);
+        if (n && !ids.has(n.id)) ids = new Set([...ids, n.id]);
+      }
+      setDrag({ ...d, ids, lx: x, ly: y });
     }
   };
 
@@ -462,6 +517,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
         if (!d.ids.has(n.id) || d.dDur === 0) continue;
         const dur = clamp(n.durationTicks + d.dDur, minDur, clip.lengthTicks - n.startTick);
         if (dur !== n.durationTicks) ops.push({ type: "updateNote", trackId: track.id, clipId, noteId: n.id, changes: { durationTicks: dur } });
+        if (n.id === d.grabId) lastDuration.current = dur;
       }
       batch(ops);
     } else if (d.kind === "marquee") {
@@ -476,18 +532,14 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
       });
       setSelected(new Set([...(d.additive ? liveSelected : []), ...inside.map((n) => n.id)]));
     } else if (d.kind === "erase") {
-      batch(deleteOps(noteClip, [...d.ids]));
-      setSelected(new Set());
+      if (d.ids.size) {
+        batch(deleteOps(noteClip, [...d.ids]));
+        setSelected(new Set());
+      }
     }
   };
 
-  const onContextMenu = (e: React.MouseEvent) => {
-    const noteEl = (e.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
-    if (!noteEl) return;
-    e.preventDefault();
-    if (readOnly || (allowed && !allowed.includes("delete"))) return;
-    batch(deleteOps(noteClip, [noteEl.dataset.noteId!]));
-  };
+  const onContextMenu = (e: React.MouseEvent) => e.preventDefault(); // right button = sweep-delete, handled on pointer down/up
 
   // ---- velocity lane ----
   const velFromEvent = (e: React.PointerEvent) => {
@@ -534,38 +586,57 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Edit strip */}
-      <div className="flex items-center gap-1.5 border-b border-white/10 bg-[#12151c] px-3" style={{ height: EDIT_H }} data-testid="edit-strip">
+      <div className="hw-panel flex items-center gap-1.5 border-b border-black px-3" style={{ height: EDIT_H }} data-testid="edit-strip">
         <span className="mr-1 flex items-center gap-1.5 text-[11px] text-slate-400">
           <span className="h-2.5 w-2.5 rounded-sm" style={{ background: track.color }} />
           {track.name}
           <span className="text-slate-600">· {isDrums ? "Drums" : "Synth"} · {clip.name ?? "Clip"}</span>
         </span>
-        {commands && (
+        {isDrums && !guide && (
+          <span className="flex gap-1" role="group" aria-label="Drum view">
+            <button className={`${btn} hw-teal`} aria-pressed={showSteps} disabled={!unlock.can("seq.steps")} onClick={() => (window.daw.telemetry.event("ui.view", { view: "steps" }), setDrumView("steps"))} title={unlock.reason("seq.steps") ?? "Step sequencer: place drum hits on pads"} data-testid="view-steps">Steps{!unlock.can("seq.steps") && <LockIcon className="ml-1" />}</button>
+            <button className={`${btn} hw-teal`} aria-pressed={!showSteps} onClick={() => (window.daw.telemetry.event("ui.view", { view: "roll" }), setDrumView("roll"))} title="Piano roll: every note on a grid" data-testid="view-roll">Roll</button>
+          </span>
+        )}
+        {!showSteps && commands && (
           <>
-            <button className={btn} disabled={!unlock.can("tool.select")} onClick={cmdSelectAll} title={unlock.reason("tool.select") ?? "Select all (Ctrl+A)"}>Select all{!unlock.can("tool.select") && <LockIcon className="ml-1" />}</button>
-            <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdCopy} title={unlock.reason("edit.clipboard") ?? "Copy (Ctrl+C)"}>Copy{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
-            <button className={btn} disabled={!unlock.can("edit.clipboard")} onClick={cmdPaste} title={unlock.reason("edit.clipboard") ?? "Paste at the playhead (Ctrl+V)"}>Paste{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
-            <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdDuplicate} title={unlock.reason("edit.clipboard") ?? "Duplicate after the selection (Ctrl+D)"}>Duplicate{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
-            <button className={btn} disabled={!notes.length || !unlock.can("edit.quantize")} onClick={cmdQuantize} title={unlock.reason("edit.quantize") ?? "Quantize selected notes (or all) to the grid (Q)"}>Quantize{!unlock.can("edit.quantize") && <LockIcon className="ml-1" />}</button>
-            <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
+        <button className={btn} disabled={!unlock.can("tool.select")} onClick={cmdSelectAll} title={unlock.reason("tool.select") ?? "Select all (Ctrl+A)"}>Select all{!unlock.can("tool.select") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdCopy} title={unlock.reason("edit.clipboard") ?? "Copy (Ctrl+C)"}>Copy{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!unlock.can("edit.clipboard")} onClick={cmdPaste} title={unlock.reason("edit.clipboard") ?? "Paste at the playhead (Ctrl+V)"}>Paste{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdDuplicate} title={unlock.reason("edit.clipboard") ?? "Duplicate after the selection (Ctrl+D)"}>Duplicate{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!notes.length || !unlock.can("edit.quantize")} onClick={cmdQuantize} title={unlock.reason("edit.quantize") ?? "Quantize selected notes (or all) to the grid (Q)"}>Quantize{!unlock.can("edit.quantize") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
+            <VelocityRamp clip={noteClip} notes={targets()} scope={selectedNotes.length ? "the selected notes" : "all the notes in this clip"} disabled={!unlock.can("velocity.ramp")} lockTitle={unlock.reason("velocity.ramp")} className={btn} />
           </>
         )}
         {keyHelpAvailable && (
-          <button className={`${btn} ${keyHelp ? "!bg-cyan-400/15 !text-cyan-200" : ""}`} onClick={onToggleKeyHelp} aria-pressed={keyHelp} title="Show or hide the key help (highlighted scale notes and red out-of-key notes)" data-testid="key-help-toggle">
+          <button className={`${btn} hw-teal`} onClick={onToggleKeyHelp} aria-pressed={keyHelp} title="Show or hide the key help (highlighted scale notes and red out-of-key notes)" data-testid="key-help-toggle">
             Key: {keyLabel(musicKey!)}
           </button>
         )}
         {badNotes.length > 0 && hint && (
           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-red-300" data-testid="key-warning" title={outOfKeyMessage(badNotes[0]!.pitch, hint)}>
             <span className="truncate">⚠ {badNotes.length} note{badNotes.length === 1 ? "" : "s"} outside {keyLabel(hint)}. {outOfKeyMessage(badNotes[0]!.pitch, hint)}</span>
-            <button className={`${btn} !bg-red-500/20 !text-red-200 hover:!bg-red-500/30`} onClick={cmdFixKey} data-testid="key-fix" title="Move each red note to the nearest note in the key">Fix</button>
+            <button className={`${btn} hw-red`} onClick={cmdFixKey} data-testid="key-fix" title="Move each red note to the nearest note in the key">Fix</button>
           </span>
         )}
         <span className="ml-auto text-[11px] text-slate-500" data-testid="selection-count">{liveSelected.size ? `${liveSelected.size} selected` : `${notes.length} notes`}</span>
         {onClose && onToggleMaximize && <WindowButtons maximized={maximized} onToggleMaximize={onToggleMaximize} onClose={onClose} />}
       </div>
 
-      <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-auto bg-[#0b0e14]" data-testid="piano-roll-scroll">
+      {showSteps ? (
+        <StepSequencer track={track} clip={clip} rampLocked={!unlock.can("velocity.ramp")} rampLockTitle={unlock.reason("velocity.ramp")} />
+      ) : (
+      <div
+        ref={scrollRef}
+        className="relative min-h-0 flex-1 overflow-auto bg-[#0b0e14]"
+        data-testid="piano-roll-scroll"
+        onPointerDown={onZoomDown}
+        onPointerMove={onZoomMove}
+        onPointerUp={onZoomUp}
+        onPointerCancel={onZoomUp}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+      >
         <div className="relative" style={{ width: KEYS_W + gridW, minHeight: "100%" }}>
           <Playhead pxPerBeat={pxPerBeat} clipStart={clip.startTick} clipLength={clip.lengthTicks} />
 
@@ -753,6 +824,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

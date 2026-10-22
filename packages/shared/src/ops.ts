@@ -1,9 +1,12 @@
-import type { Clip, Note, Track } from "./model";
+import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, Track } from "./model";
 import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
 export type TrackFields = Pick<Track, "name" | "color" | "volume" | "pan" | "mute" | "solo">;
-export type ClipFields = Pick<Clip, "name" | "startTick" | "lengthTicks">;
+export type ClipFields = Pick<Clip, "name" | "startTick" | "lengthTicks"> & {
+  /** The clip's whole audio settings (replaces the old ones); null or {} removes them. */
+  audio: ClipAudio | null;
+};
 
 interface OpBase {
   /** Globally unique; the same opId applied twice has the same effect as once. */
@@ -35,6 +38,13 @@ export interface UpdateSampleOp extends OpBase {
   type: "updateSample";
   trackId: string;
   changes: { bpm?: number | null; fit?: boolean };
+}
+/** Replaces one automation curve of a track (the whole list of points); null removes the curve. */
+export interface SetAutomationOp extends OpBase {
+  type: "setAutomation";
+  trackId: string;
+  param: AutoParam;
+  points: AutoPoint[] | null;
 }
 export interface SetTempoOp extends OpBase {
   type: "setTempo";
@@ -88,6 +98,18 @@ export interface SetKeyOp extends OpBase {
   key: ProjectKey | null;
 }
 
+export interface SetLoopOp extends OpBase {
+  type: "setLoop";
+  /** null = loop the whole song. */
+  loop: LoopRegion | null;
+}
+
+export interface SetMarkersOp extends OpBase {
+  type: "setMarkers";
+  /** The whole list (one undo step per change). */
+  markers: Marker[];
+}
+
 export type Op =
   | AddNoteOp
   | DeleteNoteOp
@@ -97,12 +119,15 @@ export type Op =
   | DeleteTrackOp
   | UpdateTrackOp
   | UpdateSampleOp
+  | SetAutomationOp
   | SetMasterVolumeOp
   | AddClipOp
   | DeleteClipOp
   | UpdateClipOp
   | SetSongLengthOp
-  | SetKeyOp;
+  | SetKeyOp
+  | SetLoopOp
+  | SetMarkersOp;
 
 type Body<T> = T extends Op ? Omit<T, "opId" | "clientId"> : never;
 /** An op before it is stamped with opId/clientId (what the UI sends to the main process). */

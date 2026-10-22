@@ -251,7 +251,7 @@ void SampleVoices::end(Voice& x)
     }
 }
 
-void SampleVoices::trigger(const SampleData* d, int pitch, int velocity, bool gate)
+void SampleVoices::trigger(const SampleData* d, int pitch, int velocity, bool gate, const NoteEvent* note)
 {
     if (d == nullptr || d->frames < 2) return;
     int slot = -1;
@@ -272,6 +272,15 @@ void SampleVoices::trigger(const SampleData* d, int pitch, int velocity, bool ga
     x.gain = static_cast<float>(velocity) / 127.0f;
     x.pitch = pitch;
     x.gate = gate;
+    if (note != nullptr)
+    {
+        x.gain *= note->gain;
+        x.pos = std::min(note->offsetSec * d->sampleRate, static_cast<double>(d->frames - 2));
+        x.gate = gate || note->cut;
+        x.fadeInFrames = static_cast<int64_t>(note->fadeInSec * deviceRate);
+        x.fadeOutFrames = static_cast<int64_t>(note->fadeOutSec * deviceRate);
+        x.fadeOutStart = static_cast<int64_t>(note->lengthSec * deviceRate) - x.fadeOutFrames;
+    }
     ++active;
 }
 
@@ -308,7 +317,12 @@ void SampleVoices::render(float* L, float* R, int n)
                 if (x.env <= 0.0f) break;
             }
             else if (x.env < 1.0f) x.env = std::min(1.0f, x.env + fadeInStep);
-            const float g = x.gain * x.env;
+            float shape = 1.0f;
+            if (x.fadeInFrames > 0 && x.elapsed < x.fadeInFrames) shape = static_cast<float>(x.elapsed) / static_cast<float>(x.fadeInFrames);
+            if (x.fadeOutFrames > 0 && x.elapsed >= x.fadeOutStart)
+                shape *= std::max(0.0f, 1.0f - static_cast<float>(x.elapsed - x.fadeOutStart) / static_cast<float>(x.fadeOutFrames));
+            ++x.elapsed;
+            const float g = x.gain * x.env * shape;
             L[i] += l * g;
             R[i] += r * g;
             x.pos += x.step;

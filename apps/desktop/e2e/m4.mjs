@@ -227,7 +227,7 @@ try {
   await sleep(300);
   const rowsInfo = await c.evalJs(`[...document.querySelectorAll('[data-testid=feature-row]')].map(r => [r.dataset.featureId, r.dataset.unlocked])`);
   const unlockedCount = rowsInfo.filter(([, u]) => u === "true").length;
-  check("U28. the Features panel lists every feature; after a reset only the 4 starter features are unlocked", rowsInfo.length === 19 && unlockedCount === 4 && (await featureRow("tool.draw")) === "true" && (await featureRow("export.wav")) === "false", `${rowsInfo.length} rows, ${unlockedCount} unlocked`);
+  check("U28. the Features panel lists every feature; after a reset only the 4 starter features are unlocked", rowsInfo.length === 25 && unlockedCount === 4 && (await featureRow("tool.draw")) === "true" && (await featureRow("export.wav")) === "false", `${rowsInfo.length} rows, ${unlockedCount} unlocked`);
   await c.evalJs(`(() => { const el = document.querySelector('[data-testid=dev-lesson-select]'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(el, 'M6.4'); el.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await c.clickEl("[data-testid=dev-complete]");
   await sleep(400);

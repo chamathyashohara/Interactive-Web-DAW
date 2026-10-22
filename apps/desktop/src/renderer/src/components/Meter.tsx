@@ -25,22 +25,11 @@ interface Props {
 export function Meter({ read, orientation = "vertical", color = "#34d399", testId, className = "" }: Props) {
   const level = read(useStore(statusStore));
   const pct = levelToPct(level);
-  const hot = level > 0.9;
+  void color; // the LEDs are green, amber and red like a real console; the track colour is not used here
   return (
-    <div
-      data-testid={testId}
-      data-level={level.toFixed(4)}
-      className={`relative overflow-hidden rounded-sm bg-black/50 ${className}`}
-      style={orientation === "vertical" ? { width: 8 } : { height: 4 }}
-    >
-      <div
-        className="absolute"
-        style={
-          orientation === "vertical"
-            ? { left: 0, right: 0, bottom: 0, height: `${pct}%`, background: hot ? "#f87171" : color, transition: "height 70ms linear" }
-            : { top: 0, bottom: 0, left: 0, width: `${pct}%`, background: hot ? "#f87171" : color, transition: "width 70ms linear" }
-        }
-      />
+    <div data-testid={testId} data-level={level.toFixed(4)} className={`hw-meter ${orientation === "vertical" ? "hw-meter-v" : "hw-meter-h"} ${className}`}>
+      <div className="hw-led hw-led-dim" />
+      <div className="hw-led hw-led-lit" style={{ clipPath: orientation === "vertical" ? `inset(${100 - pct}% 0 0 0)` : `inset(0 ${100 - pct}% 0 0)` }} />
     </div>
   );
 }

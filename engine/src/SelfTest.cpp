@@ -26,6 +26,8 @@ struct Recorder : SequencerSink
     std::vector<Recorded> events;
     void noteOn(int slot, int, int o, int p, int) override { events.push_back({ true, slot, blockBase + o, p }); }
     void noteOff(int slot, int o, int p) override { events.push_back({ false, slot, blockBase + o, p }); }
+    std::vector<std::pair<int64_t, bool>> beats; // absolute sample, downbeat
+    void beat(int o, bool downbeat) override { beats.push_back({ blockBase + o, downbeat }); }
 };
 
 struct Case
@@ -726,6 +728,350 @@ int runSelfTest()
         }
         std::string e3;
         expect(stretchSample(src, 9.0, e3) == nullptr && !e3.empty(), "stretch: an extreme tempo change is refused with a message");
+    }
+
+
+    // ---- 7. Clip settings of sample tracks: gain, start point, fade in, fade out, cut ----
+    {
+        // 1 s sound: the first half is quiet (0.2), the second half loud (0.8); a 440 Hz tone
+        auto sample = std::make_shared<SampleData>();
+        sample->sampleRate = 48000.0;
+        sample->channels = 1;
+        sample->frames = 48000;
+        sample->left.resize(48000);
+        for (int i = 0; i < 48000; ++i)
+            sample->left[static_cast<size_t>(i)] = (i < 24000 ? 0.2f : 0.8f) * static_cast<float>(std::sin(2.0 * 3.14159265358979 * 440.0 * i / 48000.0));
+        sample->peak = 0.8f;
+
+        // 120 BPM, 960 ppq: 1 s = 1920 ticks
+        const auto render = [&](int64_t lengthTicks, auto&& shape, int blocks = 100) {
+            PlaybackModel m;
+            m.ppq = 960;
+            m.tempo = 120.0;
+            m.loopTicks = 8 * 3840;
+            m.masterGain = 1.0f;
+            TrackModel t;
+            t.slot = 1;
+            t.instrument = kSample;
+            t.gain = 1.0f;
+            t.sample = sample;
+            NoteEvent n;
+            n.startTick = 0;
+            n.endTick = lengthTicks;
+            n.pitch = 60;
+            n.velocity = 127;
+            n.lengthSec = static_cast<double>(lengthTicks) / 1920.0;
+            shape(n);
+            t.notes.push_back(n);
+            m.tracks.push_back(std::move(t));
+            AudioEngine eng;
+            eng.prepare(48000.0, 480);
+            eng.sequencer.setModel(&m);
+            eng.sequencer.setBpm(120.0);
+            eng.sequencer.setPlaying(true);
+            std::vector<float> l(480), r(480), out;
+            float* po[2] = { l.data(), r.data() };
+            for (int b = 0; b < blocks; ++b)
+            {
+                eng.process(po, 2, 480);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            eng.sequencer.setModel(nullptr);
+            return out;
+        };
+        const auto peakIn = [](const std::vector<float>& x, size_t from, size_t to) {
+            float p = 0.0f;
+            for (size_t i = from; i < to && i < x.size(); ++i) p = std::max(p, std::fabs(x[i]));
+            return p;
+        };
+
+        const auto plain = render(1920, [](NoteEvent&) {});
+        const float plainLoud = peakIn(plain, 30000, 46000);
+        expect(plainLoud > 0.75f && plainLoud < 0.85f, "clip settings: unchanged sound plays as recorded");
+
+        const auto half = render(1920, [](NoteEvent& n) { n.gain = 0.5f; });
+        expect(std::fabs(peakIn(half, 30000, 46000) - 0.5f * plainLoud) < 0.02f, "clip settings: gain 0.5 halves the level");
+
+        const auto offset = render(960, [](NoteEvent& n) { n.offsetSec = 0.5; n.cut = true; });
+        expect(peakIn(offset, 1000, 20000) > 0.75f, "clip settings: starting 0.5 s into the sound skips the quiet half");
+        expect(peakIn(offset, 25000, 30000) < 0.01f, "clip settings: the clip end cuts the sound (0.5 s clip, then silence)");
+
+        const auto fin = render(1920, [](NoteEvent& n) { n.fadeInSec = 0.5; n.offsetSec = 0.5; });
+        const float early = peakIn(fin, 2000, 4000), mid = peakIn(fin, 11000, 13000), late = peakIn(fin, 22000, 23900);
+        expect(early < 0.16f && mid > 0.3f && mid < 0.5f && late > 0.7f, "clip settings: fade in ramps up over its length (about 0.13, 0.43, 0.78)");
+        expect(std::fabs(fin[0]) < 0.001f, "clip settings: fade in starts from silence");
+
+        const auto fout = render(1920, [](NoteEvent& n) { n.fadeOutSec = 0.5; n.offsetSec = 0.0; n.cut = true; });
+        // note is 1 s long: loud half from 0.5 s on, faded across 0.5..1.0 s
+        const float f1 = peakIn(fout, 24500, 26500), f2 = peakIn(fout, 35000, 37000), f3 = peakIn(fout, 46000, 47900);
+        expect(f1 > 0.6f && f2 > 0.25f && f2 < 0.55f && f3 < 0.12f, "clip settings: fade out ramps down to silence at the clip end");
+        expect(peakIn(fout, 49000, 60000) < 0.002f, "clip settings: silent after the fade out");
+
+        // both gain and fades together, and fades never make the sound louder
+        const auto both = render(1920, [](NoteEvent& n) { n.gain = 0.5f; n.fadeInSec = 0.25; n.fadeOutSec = 0.25; n.cut = true; });
+        expect(peakIn(both, 0, 48000) <= 0.5f * 0.82f, "clip settings: fades and gain together never exceed the gained level");
+        expect(sample->voices.load() == 0, "clip settings: voices released");
+    }
+
+
+    // ---- 8. Automation: volume and filter curves ----
+    {
+        expect(autoAt({}, 5.0) == 1.0f, "automation: no curve = 1");
+        const std::vector<AutoPoint> curve = { { 960.0, 0.0f }, { 1920.0, 1.0f }, { 2880.0, 0.5f } };
+        expect(autoAt(curve, 0.0) == 0.0f && autoAt(curve, 9999.0) == 0.5f, "automation: holds the first and last values outside the curve");
+        expect(std::fabs(autoAt(curve, 1440.0) - 0.5f) < 1e-6f && std::fabs(autoAt(curve, 2400.0) - 0.75f) < 1e-6f, "automation: straight lines between points");
+
+        // a long steady tone as a sample, played on a sample track so the level is easy to read
+        const auto makeTone = [](double hz) {
+            auto s = std::make_shared<SampleData>();
+            s->sampleRate = 48000.0;
+            s->channels = 1;
+            s->frames = 6 * 48000;
+            s->left.resize(static_cast<size_t>(s->frames));
+            for (int64_t i = 0; i < s->frames; ++i) s->left[static_cast<size_t>(i)] = 0.5f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * hz * static_cast<double>(i) / 48000.0));
+            s->peak = 0.5f;
+            return s;
+        };
+        const auto render = [&](const std::shared_ptr<SampleData>& tone, const std::vector<AutoPoint>& vol, const std::vector<AutoPoint>& filt, int blocks, int slot = 1) {
+            PlaybackModel m;
+            m.ppq = 960;
+            m.tempo = 120.0;
+            m.loopTicks = 16 * 3840;
+            m.masterGain = 1.0f;
+            TrackModel t;
+            t.slot = slot;
+            t.instrument = kSample;
+            t.gain = 1.0f;
+            t.sample = tone;
+            t.gate = true;
+            t.volumeAuto = vol;
+            t.filterAuto = filt;
+            NoteEvent n;
+            n.startTick = 0;
+            n.endTick = 5 * 1920;
+            n.pitch = 60;
+            n.velocity = 127;
+            n.lengthSec = 5.0;
+            t.notes.push_back(n);
+            m.tracks.push_back(std::move(t));
+            AudioEngine eng;
+            eng.prepare(48000.0, 480);
+            eng.sequencer.setModel(&m);
+            eng.sequencer.setBpm(120.0);
+            eng.sequencer.setPlaying(true);
+            std::vector<float> l(480), r(480), out;
+            float* po[2] = { l.data(), r.data() };
+            for (int b = 0; b < blocks; ++b)
+            {
+                eng.process(po, 2, 480);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            eng.sequencer.setModel(nullptr);
+            return out;
+        };
+        const auto peakIn = [](const std::vector<float>& x, double from, double to) {
+            float p = 0.0f;
+            for (size_t i = static_cast<size_t>(from * 48000); i < static_cast<size_t>(to * 48000) && i < x.size(); ++i) p = std::max(p, std::fabs(x[i]));
+            return p;
+        };
+
+        const auto tone = makeTone(440.0);
+        const auto plain = render(tone, {}, {}, 400);
+        const float full = peakIn(plain, 1.0, 1.5);
+        expect(full > 0.45f, "automation: reference tone is audible");
+
+        // volume swell: 0 at tick 0 to 1 at tick 3840 (2 s); the level follows value squared
+        const auto swell = render(tone, { { 0.0, 0.0f }, { 3840.0, 1.0f } }, {}, 400);
+        expect(peakIn(swell, 0.0, 0.01) < 0.01f, "automation: a swell starts from silence (no blip at the first note)");
+        const float at1 = peakIn(swell, 0.95, 1.05), at15 = peakIn(swell, 1.45, 1.55), at2 = peakIn(swell, 2.1, 2.5);
+        expect(std::fabs(at1 / full - 0.25f) < 0.03f, "automation: halfway up the ramp the level is a quarter (value squared, like the fader)");
+        expect(std::fabs(at15 / full - 0.5625f) < 0.04f, "automation: three quarters up it is 0.56 of full level");
+        expect(std::fabs(at2 / full - 1.0f) < 0.03f, "automation: after the last point the level holds at its value");
+
+        // a fade down to silence and a curve below the start
+        const auto down = render(tone, { { 0.0, 1.0f }, { 1920.0, 0.0f } }, {}, 400);
+        expect(peakIn(down, 0.05, 0.1) > 0.8f * full && peakIn(down, 1.5, 3.0) < 0.01f, "automation: a ramp down ends in silence and stays there");
+
+        // filter: 8 kHz tone, cutoff 20 * 1000^0.3 = 159 Hz is far below it
+        const auto bright = makeTone(8000.0);
+        const auto unfiltered = render(bright, {}, {}, 300);
+        const auto closed = render(bright, {}, { { 0.0, 0.3f } }, 300);
+        const auto wide = render(bright, {}, { { 0.0, 1.0f } }, 300);
+        expect(peakIn(closed, 0.5, 1.5) < 0.02f * peakIn(unfiltered, 0.5, 1.5), "automation: a low cutoff removes an 8 kHz tone (more than 34 dB)");
+        expect(peakIn(wide, 0.5, 1.5) > 0.98f * peakIn(unfiltered, 0.5, 1.5) && peakIn(wide, 0.5, 1.5) < 1.02f * peakIn(unfiltered, 0.5, 1.5), "automation: filter fully unfiltered changes nothing");
+        // a 100 Hz tone gets through a 159 Hz low-pass (about -3 dB or better), an 8 kHz tone does not
+        const auto lowTone = makeTone(100.0);
+        const auto bassOpen = render(lowTone, {}, {}, 300);
+        const auto bassFiltered = render(lowTone, {}, { { 0.0, 0.3f } }, 300);
+        expect(peakIn(bassFiltered, 0.5, 1.5) > 0.6f * peakIn(bassOpen, 0.5, 1.5), "automation: low notes pass a low cutoff");
+
+        // filter sweep: closed to unfiltered over 2 s; the tone grows from almost nothing to full
+        const auto sweep = render(bright, {}, { { 0.0, 0.2f }, { 3840.0, 1.0f } }, 400);
+        const auto sFirst = peakIn(sweep, 0.1, 0.4), sMid = peakIn(sweep, 1.4, 1.6), sEnd = peakIn(sweep, 2.5, 3.0);
+        expect(sFirst < 0.05f * sEnd && sMid > sFirst * 3.0f && sEnd > 0.95f * peakIn(unfiltered, 2.5, 3.0), "automation: a filter sweep opens up over time");
+
+        // volume and filter together, and the output never has sudden jumps (no zipper noise on a slow sweep)
+        float worstStep = 0.0f;
+        for (size_t i = 1; i < sweep.size(); ++i) worstStep = std::max(worstStep, std::fabs(sweep[i] - sweep[i - 1]));
+        expect(worstStep < 1.0f, "automation: the swept output stays in range");
+        expect(tone->voices.load() == 0 && bright->voices.load() == 0, "automation: voices released");
+
+        // offline export uses the same curves
+        {
+            PlaybackModel m;
+            m.ppq = 960;
+            m.tempo = 120.0;
+            m.loopTicks = 4 * 3840;
+            m.masterGain = 1.0f;
+            TrackModel t;
+            t.slot = 1;
+            t.instrument = kSample;
+            t.gain = 1.0f;
+            t.sample = tone;
+            t.gate = true;
+            t.volumeAuto = { { 0.0, 0.0f }, { 3840.0, 1.0f } };
+            NoteEvent n;
+            n.endTick = 4 * 3840;
+            n.velocity = 127;
+            n.lengthSec = 8.0;
+            t.notes.push_back(n);
+            m.tracks.push_back(std::move(t));
+            const juce::File file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("daw_selftest_auto_export.wav");
+            const ExportResult er = exportWav(m, file, 48000.0, 0.2);
+            expect(er.ok, "automation: exports");
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatReader> reader(wav.createReaderFor(file.createInputStream().release(), true));
+            if (reader != nullptr)
+            {
+                juce::AudioBuffer<float> buf(2, 4800);
+                float early = 0.0f, late = 0.0f;
+                reader->read(&buf, 0, 4800, 48000 / 2, true, true); // 0.5 s
+                for (int i = 0; i < 4800; ++i) early = std::max(early, std::fabs(buf.getSample(0, i)));
+                reader->read(&buf, 0, 4800, 48000 * 3, true, true); // 3 s, after the ramp
+                for (int i = 0; i < 4800; ++i) late = std::max(late, std::fabs(buf.getSample(0, i)));
+                expect(early < 0.1f * late && late > 0.4f, "automation: the exported WAV follows the volume curve");
+            }
+            file.deleteFile();
+        }
+    }
+
+
+    // ---- 9. Loop region and metronome ----
+    {
+        PlaybackModel m;
+        m.ppq = 960;
+        m.loopTicks = 4 * 3840;
+        m.loopStartTick = 3840; // bar 2
+        m.loopEndTick = 7680;   // end of bar 2
+        m.masterGain = 1.0f;
+        m.tracks.push_back(makeTrack(0, kSynth, 0.6f, 0, { 0, 3840, 5760, 7680 }, 60, m.loopTicks));
+        const auto run = [&](bool region, bool click, int64_t totalSamples, Recorder& rec, double* endTick) {
+            Sequencer seq;
+            seq.prepare(48000.0);
+            seq.setModel(&m);
+            seq.setBpm(120.0);
+            seq.setUseLoopRegion(region);
+            seq.setClick(click);
+            seq.setPlaying(true);
+            for (int64_t done = 0; done < totalSamples; done += 256)
+            {
+                rec.blockBase = done;
+                seq.process(256, rec);
+            }
+            if (endTick != nullptr) *endTick = seq.getTick();
+        };
+        const auto countOn = [](const Recorder& rec, int pitch) {
+            int n = 0;
+            for (const auto& e : rec.events) if (e.on && e.pitch == pitch) ++n;
+            return n;
+        };
+        const auto firstOn = [](const Recorder& rec, int pitch, int nth) {
+            int n = 0;
+            for (const auto& e : rec.events)
+                if (e.on && e.pitch == pitch && n++ == nth) return e.sample;
+            return static_cast<int64_t>(-1);
+        };
+
+        Recorder rec;
+        double endTick = 0.0;
+        run(true, false, 384000, rec, &endTick); // 8 s = 4 s to the region end, then the 2 s region twice
+        expect(countOn(rec, 60) == 1, "loop region: a note before the region plays once");
+        expect(countOn(rec, 61) == 3 && countOn(rec, 62) == 3, "loop region: notes inside it play on every pass");
+        expect(countOn(rec, 63) == 0, "loop region: a note at the end of the region never plays");
+        expect(std::llabs(firstOn(rec, 61, 1) - 192000) <= 1 && std::llabs(firstOn(rec, 61, 2) - 288000) <= 1 && std::llabs(firstOn(rec, 62, 2) - 336000) <= 1, "loop region: every pass starts exactly on the region start (no drift)");
+        expect(endTick >= 3840.0 && endTick < 7680.0, "loop region: the playhead stays inside the region");
+
+        Recorder whole;
+        run(false, false, 410000, whole, &endTick);
+        expect(countOn(whole, 63) >= 1 && countOn(whole, 60) >= 2, "loop region: switched off, the whole song plays and loops as before");
+
+        // a playhead already past the region plays on to the end of the song, then loops from the start
+        {
+            Sequencer seq;
+            seq.prepare(48000.0);
+            seq.setModel(&m);
+            seq.setBpm(120.0);
+            seq.setUseLoopRegion(true);
+            seq.requestSeek(9600.0);
+            seq.setPlaying(true);
+            Recorder past;
+            for (int64_t done = 0; done < 192000; done += 256)
+            {
+                past.blockBase = done;
+                seq.process(256, past);
+            }
+            expect(countOn(past, 63) == 0 && countOn(past, 60) == 1, "loop region: starting after it, the song plays out to its end, then loops into the region");
+        }
+
+        // metronome: a beat event on every quarter note, a downbeat on the first of each bar
+        Recorder clickRec;
+        m.loopStartTick = m.loopEndTick = 0;
+        run(false, true, 192000, clickRec, &endTick); // 4 s = 2 bars at 120 BPM
+        bool beatsOk = clickRec.beats.size() == 8;
+        for (size_t i = 0; beatsOk && i < clickRec.beats.size(); ++i)
+            beatsOk = std::llabs(clickRec.beats[i].first - static_cast<int64_t>(i) * 24000) <= 1 && clickRec.beats[i].second == (i % 4 == 0);
+        expect(beatsOk, "metronome: a beat every 24000 samples at 120 BPM, accent on every fourth");
+        Recorder quiet;
+        run(false, false, 192000, quiet, &endTick);
+        expect(quiet.beats.empty(), "metronome: off by default");
+
+        // the click keeps time through the loop region wrap: 8 beats, then 4 per pass
+        m.loopStartTick = 3840;
+        m.loopEndTick = 7680;
+        Recorder wrapped;
+        run(true, true, 384000, wrapped, &endTick);
+        expect(wrapped.beats.size() == 16, "metronome: counts through a loop region wrap (8 beats, then 4 per pass)");
+        bool onGrid = true;
+        for (size_t i = 8; i < wrapped.beats.size(); ++i) onGrid = onGrid && ((wrapped.beats[i].first - 192000) % 24000 <= 1 || (wrapped.beats[i].first - 192000) % 24000 >= 23999);
+        expect(onGrid && wrapped.beats[8].second, "metronome: the first beat of every pass is the bar's downbeat, on the grid");
+
+        // audible through the real render path, only while playing and switched on
+        {
+            PlaybackModel mm;
+            mm.ppq = 960;
+            mm.loopTicks = 4 * 3840;
+            mm.masterGain = 1.0f;
+            const auto level = [&](bool click, bool playing) {
+                AudioEngine eng;
+                eng.prepare(48000.0, 256);
+                eng.sequencer.setModel(&mm);
+                eng.sequencer.setBpm(120.0);
+                eng.setMetronome(click);
+                eng.sequencer.setPlaying(playing);
+                std::vector<float> l(256), r(256);
+                float* out[2] = { l.data(), r.data() };
+                float p = 0.0f;
+                for (int b = 0; b < 20; ++b)
+                {
+                    eng.process(out, 2, 256);
+                    for (float v : l) p = std::max(p, std::fabs(v));
+                }
+                eng.sequencer.setModel(nullptr);
+                return p;
+            };
+            expect(level(true, true) > 0.2f, "metronome: the click is audible while playing");
+            expect(level(false, true) == 0.0f && level(true, false) == 0.0f, "metronome: silent when off or when stopped");
+        }
     }
 
     std::printf("{\"t\":\"selftest\",\"pass\":%s,\"checked\":%d,\"failures\":%d,\"worstSampleError\":%lld}\n", failures == 0 ? "true" : "false",

@@ -11,6 +11,8 @@ import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
+import { TelemetryStore } from "./telemetry/telemetryStore";
+import { eventsToCsv, metricsToCsv } from "@daw/shared";
 
 interface EngineState {
   connected: boolean;
@@ -60,8 +62,12 @@ app.whenReady().then(() => {
   const service = new ProjectService(new LocalStore(dataDir));
 
   // Learner progress (which lessons are done, whether features are gated). Per user, never part of a project.
-  const progress = new ProgressStore(process.env.DAW_PROGRESS_DIR ?? app.getPath("userData"), process.env.DAW_PROGRESS_MODE === "beginner" ? "beginner" : "all");
+  const progressDir = process.env.DAW_PROGRESS_DIR ?? app.getPath("userData");
+  const progress = new ProgressStore(progressDir, process.env.DAW_PROGRESS_MODE === "beginner" ? "beginner" : "all");
   const publishProgress = () => sendToRenderer("progress:update", progress.get());
+  // Evaluation data: records nothing until the participant has agreed (see telemetry/telemetryStore.ts). Beside the progress files, never in a project.
+  const telemetry = new TelemetryStore(process.env.DAW_TELEMETRY_DIR ?? progressDir, () => progress.get().mode);
+  const publishTelemetry = () => sendToRenderer("telemetry:update", telemetry.state());
 
   const engine = new EngineBridge(resolveEnginePath(), process.env.DAW_ENGINE_BUFFER ? ["--buffer", process.env.DAW_ENGINE_BUFFER] : []);
 
@@ -85,11 +91,13 @@ app.whenReady().then(() => {
   const slots = new SlotAllocator();
   const pushProjectToEngine = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots, (id) => library.pathOf(id)) });
 
+  let metronomeOn = false; // a UI setting, not part of the project: kept here so a restarted engine gets it back
   engine.on("ready", (info) => {
     engineState.connected = true;
     engineState.info = info;
     engineState.lastError = null;
     pushProjectToEngine(service.current); // engine (re)starts from the main process' state
+    engine.send({ t: "setMetronome", on: metronomeOn });
     sendToRenderer("engine:state", engineState);
   });
   engine.on("down", () => {
@@ -130,12 +138,34 @@ app.whenReady().then(() => {
     engine: engineState,
     status: lastStatus,
   }));
-  ipcMain.handle("op:dispatch", (_e, body: OpBody, group?: string) => service.dispatch(body, group));
-  ipcMain.handle("op:batch", (_e, bodies: OpBody[], group?: string) => service.dispatchBatch(bodies, group));
-  ipcMain.handle("history:undo", () => service.undo());
-  ipcMain.handle("history:redo", () => service.redo());
+  ipcMain.handle("op:dispatch", (_e, body: OpBody, group?: string) => {
+    const before = service.current;
+    const result = service.dispatch(body, group);
+    if (result.ok) telemetry.recordOps(before, [body]);
+    return result;
+  });
+  ipcMain.handle("op:batch", (_e, bodies: OpBody[], group?: string) => {
+    const before = service.current;
+    const result = service.dispatchBatch(bodies, group);
+    if (result.ok) telemetry.recordOps(before, bodies);
+    return result;
+  });
+  ipcMain.handle("history:undo", () => {
+    const ok = service.undo();
+    if (ok) telemetry.record("history", { kind: "undo" });
+    return ok;
+  });
+  ipcMain.handle("history:redo", () => {
+    const ok = service.redo();
+    if (ok) telemetry.record("history", { kind: "redo" });
+    return ok;
+  });
   ipcMain.on("transport:play", () => engine.send({ t: "play" }));
   ipcMain.on("transport:stop", () => engine.send({ t: "stop" }));
+  ipcMain.on("transport:metronome", (_e, on: boolean) => {
+    metronomeOn = !!on;
+    engine.send({ t: "setMetronome", on: metronomeOn });
+  });
   ipcMain.on("transport:seek", (_e, tick: number) => engine.send({ t: "seek", tick }));
   ipcMain.on("engine:preview", (_e, p: { trackId: string; pitch: number; velocity: number; on: boolean }) => {
     const slot = slots.slotFor(p.trackId);
@@ -207,6 +237,52 @@ app.whenReady().then(() => {
     publishProgress();
     return result;
   });
+  // ---- evaluation data (research) ----
+  ipcMain.handle("telemetry:state", () => telemetry.state());
+  ipcMain.handle("telemetry:consent", (_e, code: unknown) => {
+    const result = telemetry.consent(code);
+    publishTelemetry();
+    return result;
+  });
+  ipcMain.handle("telemetry:withdraw", (_e, deleteData: unknown) => {
+    const state = telemetry.withdraw(deleteData === true);
+    publishTelemetry();
+    return state;
+  });
+  // Only interface events from the window ("ui.*"); edits and history are recorded here, from what was actually applied.
+  ipcMain.on("telemetry:event", (_e, name: unknown, data: unknown) => {
+    if (name === "ui.fix") telemetry.expectFix();
+    if (typeof name === "string" && name.startsWith("ui.") && data && typeof data === "object") telemetry.record(name, data as Record<string, string | number | boolean | null>);
+  });
+  ipcMain.handle("telemetry:export", async (_e, kind: unknown, explicitPath?: string) => {
+    telemetry.recordSummary(service.current);
+    const bundle = telemetry.buildExport(path.join(progressDir, "progress-events.ndjson"));
+    if (!bundle) return { ok: false, reason: "Recording has not been started." };
+    const csv = kind === "csv";
+    let target: string | undefined;
+    if (explicitPath && process.env.DAW_E2E === "1") target = explicitPath; // test hook: skip the dialog (never enabled in normal use)
+    else {
+      const picked = await dialog.showSaveDialog(win!, {
+        title: csv ? "Export study data (CSV)" : "Export study data (JSON)",
+        defaultPath: `daw-study-${bundle.participant}-${new Date().toISOString().slice(0, 10)}.${csv ? "csv" : "json"}`,
+        filters: csv ? [{ name: "CSV", extensions: ["csv"] }] : [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    try {
+      if (csv) {
+        const base = target.replace(/\.csv$/i, "");
+        fs.writeFileSync(`${base}-events.csv`, eventsToCsv(bundle.events));
+        fs.writeFileSync(`${base}-metrics.csv`, metricsToCsv(bundle.metrics));
+        return { ok: true, files: [`${base}-events.csv`, `${base}-metrics.csv`] };
+      }
+      fs.writeFileSync(target, JSON.stringify(bundle, null, 2));
+      return { ok: true, files: [target] };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+  });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
@@ -215,6 +291,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on("before-quit", () => {
+    telemetry.recordSummary(service.current);
     engine.stop();
     service.close();
   });

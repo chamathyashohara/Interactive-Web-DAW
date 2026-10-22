@@ -1,4 +1,5 @@
 #pragma once
+#include "Model.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <atomic>
 #include <cstdint>
@@ -75,7 +76,7 @@ public:
     static constexpr int kVoices = 16;
     ~SampleVoices() { for (auto& x : v) end(x); } // an engine that goes away (an export) must not leave samples marked as playing
     void prepare(double deviceRate);
-    void trigger(const SampleData* d, int pitch, int velocity, bool gate);
+    void trigger(const SampleData* d, int pitch, int velocity, bool gate, const NoteEvent* note = nullptr);
     void release(int pitch);
     void cut();
     bool anyActive() const { return active > 0; }
@@ -93,6 +94,10 @@ private:
         int pitch = 60;
         bool gate = false;
         bool fading = false;
+        int64_t elapsed = 0;       // frames played since the note started (fades are timed against it)
+        int64_t fadeInFrames = 0;
+        int64_t fadeOutStart = 0;
+        int64_t fadeOutFrames = 0;
     };
     Voice v[kVoices];
     int active = 0;

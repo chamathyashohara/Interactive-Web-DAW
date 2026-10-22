@@ -60,7 +60,10 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
     }
     wasPlaying = true;
 
-    const double loop = static_cast<double>(m->loopTicks);
+    const double songLoop = static_cast<double>(m->loopTicks);
+    const bool region = useRegion.load(std::memory_order_acquire) && m->loopEndTick > m->loopStartTick && m->loopEndTick <= m->loopTicks;
+    const double rStart = static_cast<double>(m->loopStartTick), rEnd = static_cast<double>(m->loopEndTick);
+    const bool clickOn = click.load(std::memory_order_acquire);
     int done = 0;
 
     while (done < numSamples)
@@ -69,8 +72,12 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
         if (tps <= 0.0)
             break;
 
-        while (pos >= loop)
-            pos -= loop;
+        while (pos >= songLoop)
+            pos -= songLoop;
+        // Where this pass ends: the region's end while the playhead is before it, otherwise the song's end.
+        const bool inRegion = region && pos < rEnd;
+        const double loop = inRegion ? rEnd : songLoop;
+        const double loopStart = inRegion ? rStart : 0.0;
 
         auto samplesToEnd = snapCeil((loop - pos) / tps);
         if (samplesToEnd < 1)
@@ -82,7 +89,7 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
         // Events are partitioned between consecutive blocks with the same tolerance on both sides ([from, to) with
         // to_prev == from_next), so each is played exactly once even when it falls on a block boundary.
         const double eps = 1e-6 * tps;
-        const double eventFrom = justWrapped ? 0.0 : blockStart - eps; // after a wrap, include ticks the overshoot skipped over
+        const double eventFrom = justWrapped ? wrapFrom : blockStart - eps; // after a wrap, include ticks the overshoot skipped over
         justWrapped = false;
 
         auto offsetFor = [&](double tick) {
@@ -124,11 +131,18 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
                     sink.noteOff(slot, off, it->pitch); // retrigger
                     --activeCount[slot];
                 }
-                sink.noteOn(slot, tr.instrument, off, it->pitch, it->velocity);
+                sink.noteOnEx(slot, tr.instrument, off, *it);
                 a.on = true;
                 a.endTick = static_cast<double>(it->endTick);
                 ++activeCount[slot];
             }
+        }
+
+        if (clickOn)
+        {
+            const double q = static_cast<double>(m->ppq);
+            for (int64_t k = std::max<int64_t>(0, static_cast<int64_t>(std::ceil(eventFrom / q - 1e-9))); static_cast<double>(k) * q < eventTo; ++k)
+                sink.beat(offsetFor(static_cast<double>(k) * q), (k % 4) == 0);
         }
 
         pos = blockEnd;
@@ -138,7 +152,8 @@ void Sequencer::process(int numSamples, SequencerSink& sink)
         {
             // All notes end at or before the loop boundary (the model clips them).
             releaseAll(std::min(done, numSamples - 1), sink);
-            pos = std::max(0.0, pos - loop);
+            pos = loopStart + std::max(0.0, pos - loop);
+            wrapFrom = loopStart;
             justWrapped = true;
         }
     }

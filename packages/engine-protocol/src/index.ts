@@ -12,6 +12,15 @@ export interface EngineNote {
   startTick: number;
   durationTicks: number;
   velocity: number;
+  /** Sample tracks only (all optional; absent = as recorded). */
+  /** Linear gain of the clip. */
+  gain?: number;
+  /** Seconds into the (already tempo-fitted) sound where playback starts. */
+  offsetSec?: number;
+  fadeInSec?: number;
+  fadeOutSec?: number;
+  /** The sound is cut at the note's end. */
+  cut?: boolean;
 }
 
 export type EngineInstrument = "synth" | "drums" | "sample";
@@ -31,6 +40,8 @@ export interface EngineTrack {
   gate?: boolean;
   /** instrument "sample": speed factor for time-stretching without changing pitch (project tempo / the sound's own tempo). Omitted = play as recorded. */
   stretchRatio?: number;
+  /** Automation curves as [tick, value 0..1] pairs in time order (see Track.automation in the shared package). */
+  automation?: { volume?: [number, number][]; filter?: [number, number][] };
 }
 
 /** Flattened, playable view of the project. Sent in full on (re)start and after each project change. */
@@ -38,6 +49,9 @@ export interface EngineProjectSnapshot {
   ppq: number;
   tempo: number;
   loopTicks: number;
+  /** Playback repeats between these ticks (live playback only; export ignores it). Omitted or end <= start = the whole song. */
+  loopStartTick?: number;
+  loopEndTick?: number;
   masterGain: number;
   tracks: EngineTrack[];
 }
@@ -49,6 +63,8 @@ export type EngineCommand =
   | { t: "stop" }
   | { t: "seek"; tick: number }
   | { t: "setTempo"; bpm: number }
+  /** Click on every quarter note while playing (louder on the first beat of a bar). Not part of the project; never in the export. */
+  | { t: "setMetronome"; on: boolean }
   | { t: "preview"; slot: number; pitch: number; velocity: number; on: boolean }
   /** Offline-render the current project to a 24-bit stereo 48 kHz WAV (song length + tail). Runs beside live playback. */
   | { t: "exportWav"; id: string; path: string; tailSeconds: number }

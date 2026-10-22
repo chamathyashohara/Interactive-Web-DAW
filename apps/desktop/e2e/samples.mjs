@@ -417,6 +417,244 @@ try {
   await setTempo(120);
 
   // =====================================================================
+  //  TRIM, FADES AND GAIN ON A SOUND CLIP
+  // =====================================================================
+  // Everything is judged on the audio the engine renders (WAV export), not on the screen.
+  const rmsBetween = ({ rate, mono }, from, to) => { let e = 0, n = 0; for (let i = Math.floor(from * rate); i < Math.min(mono.length, Math.floor(to * rate)); i++, n++) e += mono[i] ** 2; return Math.sqrt(e / Math.max(1, n)); };
+  const loopT = await lt(); // the Boom Bap loop: 2 bars at 120 BPM = 4 s, stretched to fit
+  await setTempo(120);
+  const clipId = Object.values(loopT.clips)[0].id;
+  const clipSel = `[data-testid=clip][data-track-id="${loopT.id}"]`;
+  const clipData = async () => Object.values((await lt()).clips)[0];
+  const typeInto = (testId, value) => c.evalJs(`(() => { const i = document.querySelector('[data-testid=${testId}]'); i.focus(); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ${JSON.stringify(String(value))}); i.dispatchEvent(new Event('input', { bubbles: true })); i.blur(); })()`);
+  await c.evalJs(`window.daw.dispatch({ type: 'updateTrack', trackId: ${JSON.stringify((await trackNamed("Punch Kick")).id)}, changes: { mute: true } })`);
+  await c.clickEl(clipSel);
+  await sleep(300);
+  check("A1. selecting a sound clip shows its Gain and Fade fields", (await q("[data-testid=clip-audio]")) === 1 && (await q("[data-testid=fade-in-handle]")) === 1 && (await q("[data-testid=fade-out-handle]")) === 1);
+
+  const ca_base = await exportSong();
+  const baseRms = (a, b) => rmsBetween(ca_base, a, b);
+  check("A2. reference render of the untouched loop has sound in every beat of its 4 s", baseRms(0, 1) > 0.02 && baseRms(1, 2) > 0.02 && baseRms(2, 3) > 0.02 && baseRms(3, 4) > 0.02, [0, 1, 2, 3].map((s) => baseRms(s, s + 1).toFixed(3)).join(" "));
+
+  // ---- trim the start with the mouse: drag the left edge one bar to the right
+  const ca_r0 = await c.rectOf(clipSel);
+  await c.drag(ca_r0.x + 3, ca_r0.cy, ca_r0.x + 3 + 90, ca_r0.cy, 8);
+  await sleep(500);
+  const ca_trimmed = await clipData();
+  const ca_expectSec = 3840 * (60 / (120 * 960)) * (120 / 90);
+  check("A3. dragging the clip's left edge one bar trims its start: the clip is now bars 2 only, starting 2.67 s into the sound", ca_trimmed.startTick === 3840 && ca_trimmed.lengthTicks === 3840 && Math.abs((ca_trimmed.audio?.startSec ?? 0) - ca_expectSec) < 0.01, JSON.stringify({ s: ca_trimmed.startTick, l: ca_trimmed.lengthTicks, a: ca_trimmed.audio }));
+  const trimmedWav = await exportSong();
+  const ca_sil = rmsBetween(trimmedWav, 0.1, 1.9);
+  const ca_corr2 = (() => { const rate = ca_base.rate, from = Math.floor(2.05 * rate), to = Math.floor(3.95 * rate); let sab = 0, saa = 0, sbb = 0; for (let i = from; i < to; i++) { sab += ca_base.mono[i] * trimmedWav.mono[i]; saa += ca_base.mono[i] ** 2; sbb += trimmedWav.mono[i] ** 2; } return sab / Math.sqrt(saa * sbb || 1); })();
+  check("A4. after the trim, bar 1 is silent and bar 2 is exactly the same sound as before (it still lines up)", ca_sil < 0.002 && ca_corr2 > 0.95, `bar 1 level ${ca_sil.toFixed(4)}, bar 2 match ${ca_corr2.toFixed(3)}`);
+  await c.evalJs(`window.daw.undo()`);
+  await sleep(400);
+  const ca_untrimmed = await clipData();
+  check("A5. undo puts the start back", ca_untrimmed.startTick === 0 && ca_untrimmed.lengthTicks === 7680 && !ca_untrimmed.audio?.startSec, JSON.stringify(ca_untrimmed.audio));
+
+  // ---- gain
+  await c.clickEl(clipSel);
+  await typeInto("clip-gain", -6);
+  await sleep(500);
+  check("A6. typing -6 in Gain stores -6 dB on the clip", (await clipData()).audio?.gainDb === -6);
+  const g6 = await exportSong();
+  const ratio = rmsBetween(g6, 0, 4) / rmsBetween(ca_base, 0, 4);
+  check("A7. the rendered loop is 6 dB quieter (half the level)", Math.abs(ratio - 0.501) < 0.03, `level ratio ${ratio.toFixed(3)}`);
+  await typeInto("clip-gain", 0);
+  await sleep(400);
+  check("A8. gain 0 removes the setting", (await clipData()).audio === undefined);
+
+  // ---- fade in: 4 beats = 2 s
+  await typeInto("clip-fade-in", 4);
+  await sleep(500);
+  const ca_fi = await clipData();
+  check("A9. Fade in of 4 beats is stored (3840 ticks) and drawn as a shape on the clip", ca_fi.audio?.fadeInTicks === 3840 && (await c.evalJs(`document.querySelector('[data-testid=fade-shape]')?.getAttribute('data-fade-in')`)) === "3840");
+  const fadedIn = await exportSong();
+  const ca_early = rmsBetween(fadedIn, 0.05, 0.5) / rmsBetween(ca_base, 0.05, 0.5);
+  const ca_late = rmsBetween(fadedIn, 1.5, 2.0) / rmsBetween(ca_base, 1.5, 2.0);
+  const ca_after = rmsBetween(fadedIn, 2.5, 3.5) / rmsBetween(ca_base, 2.5, 3.5);
+  check("A10. the fade in ramps the sound up over 2 s (quiet at the start, nearly full at 2 s, untouched after)", ca_early < 0.3 && ca_late > 0.55 && ca_late < 1.0 && ca_after > 0.9 && ca_after < 1.1, `start ${ca_early.toFixed(2)}, near end of fade ${ca_late.toFixed(2)}, ca_after ${ca_after.toFixed(2)}`);
+
+  // ---- fade out: 2 beats = 1 s, and it ends where the clip ends
+  await typeInto("clip-fade-in", 0);
+  await typeInto("clip-fade-out", 2);
+  await sleep(500);
+  const ca_fo = await clipData();
+  check("A11. Fade out of 2 beats is stored and makes the clip cut its sound at its end", ca_fo.audio?.fadeOutTicks === 1920 && ca_fo.audio?.cut === true);
+  const fadedOut = await exportSong();
+  const startRatio = rmsBetween(fadedOut, 1.0, 2.5) / rmsBetween(ca_base, 1.0, 2.5);
+  const endRatio = rmsBetween(fadedOut, 3.85, 3.98) / Math.max(1e-6, rmsBetween(ca_base, 3.85, 3.98));
+  check("A12. the sound is untouched before the fade and fades to silence at the clip end", startRatio > 0.95 && startRatio < 1.05 && endRatio < 0.12, `before ${startRatio.toFixed(2)}, last 0.1 s ${endRatio.toFixed(3)}`);
+  await c.evalJs(`window.daw.dispatch({ type: 'updateClip', trackId: ${JSON.stringify(loopT.id)}, clipId: ${JSON.stringify(clipId)}, changes: { audio: null } })`); // back to a clean clip
+  await sleep(300);
+
+  // ---- fade handle with the mouse (1/4 grid: the handle snaps to beats)
+  await setGrid(960);
+  const ca_r1 = await c.rectOf(clipSel);
+  const ca_h = await c.rectOf("[data-testid=fade-in-handle]");
+  await c.drag(ca_h.cx, ca_h.cy, ca_h.cx + 45, ca_h.cy, 6);
+  await sleep(500);
+  const ca_dragged = await clipData();
+  check("A13. dragging the fade-in handle half a bar right sets a fade in of exactly 2 beats (snapped to the grid)", ca_dragged.audio?.fadeInTicks === 1920, JSON.stringify(ca_dragged.audio));
+  await c.evalJs(`window.daw.dispatch({ type: 'updateClip', trackId: ${JSON.stringify(loopT.id)}, clipId: ${JSON.stringify(clipId)}, changes: { audio: null } })`);
+  await setGrid(3840);
+  await sleep(300);
+
+  // ---- shorten from the right: the loop is cut
+  await c.clickEl(clipSel);
+  const ca_r2 = await c.rectOf(clipSel);
+  await c.drag(ca_r2.x + ca_r2.w - 3, ca_r2.cy, ca_r2.x + ca_r2.w - 3 - 90, ca_r2.cy, 8);
+  await sleep(500);
+  const ca_shorter = await clipData();
+  check("A14. shortening the clip by a bar leaves 1 bar and marks it as cutting its sound", ca_shorter.lengthTicks === 3840 && ca_shorter.audio?.cut === true, JSON.stringify({ l: ca_shorter.lengthTicks, a: ca_shorter.audio }));
+  const cutWav = await exportSong();
+  check("A15. the rendered loop ends at the clip end: sound before 2 s, silence after", rmsBetween(cutWav, 0.2, 1.9) > 0.02 && rmsBetween(cutWav, 2.1, 4.0) < 0.002, `before ${rmsBetween(cutWav, 0.2, 1.9).toFixed(3)}, ca_after ${rmsBetween(cutWav, 2.1, 4.0).toFixed(4)}`);
+  await c.evalJs(`window.daw.undo()`);
+  await sleep(400);
+  const ca_longer = await clipData();
+  check("A16. undo brings back the full 2-bar loop and its sound", ca_longer.lengthTicks === 7680 && rmsBetween(await exportSong(), 2.1, 3.9) > 0.02);
+
+  // ---- split keeps the sound continuous
+  await c.evalJs(`window.daw.dispatch({ type: 'updateTrack', trackId: ${JSON.stringify(loopT.id)}, changes: { mute: false } })`);
+  await c.evalJs(`window.daw.seek(3840)`); // 2.0 s = bar 2
+  await sleep(300);
+  await c.clickEl(clipSel);
+  await c.evalJs(`document.querySelector('[data-testid=arr-split]').click()`);
+  await sleep(500);
+  const ca_parts = Object.values((await lt()).clips).sort((a, b) => a.startTick - b.startTick);
+  const splitWav = await exportSong();
+  const ca_sc = (() => { const rate = ca_base.rate, from = Math.floor(0.2 * rate), to = Math.floor(3.9 * rate); let sab = 0, saa = 0, sbb = 0; for (let i = from; i < to; i++) { sab += ca_base.mono[i] * splitWav.mono[i]; saa += ca_base.mono[i] ** 2; sbb += splitWav.mono[i] ** 2; } return sab / Math.sqrt(saa * sbb || 1); })();
+  check("A17. splitting the loop at bar 2 makes two clips; the right one continues the sound, so the render is unchanged", ca_parts.length === 2 && ca_parts[1].audio?.startSec > 2 && ca_sc > 0.97, `${ca_parts.length} clips, right start ${ca_parts[1]?.audio?.startSec?.toFixed(2)} s, match ${ca_sc.toFixed(3)}`);
+  await c.evalJs(`window.daw.undo()`);
+  await sleep(400);
+
+  // ---- lesson gating
+  await c.evalJs(`window.daw.setProgressMode('beginner')`);
+  await c.evalJs(`window.daw.completeLesson('M8.2')`); // clip editing itself is unlocked; fades and gain are a later lesson
+  await sleep(400);
+  await c.clickEl(clipSel);
+  await sleep(300);
+  const ca_gated = await c.evalJs(`({ gainDisabled: document.querySelector('[data-testid=clip-gain]')?.disabled, title: document.querySelector('[data-testid=clip-audio]')?.title, handles: document.querySelectorAll('[data-testid=fade-in-handle]').length, edge: document.querySelectorAll('[data-testid=trim-start-edge]').length })`);
+  check("A18. before lesson M13.3 the fields are disabled (naming the lesson) and the fade handles and trim edge are not offered", ca_gated.gainDisabled === true && /M13\.3/.test(ca_gated.title ?? "") && ca_gated.handles === 0 && ca_gated.edge === 0, JSON.stringify(ca_gated));
+  await c.evalJs(`window.daw.completeLesson('M13.3')`);
+  await sleep(400);
+  check("A19. after lesson M13.3 they are available", (await c.evalJs(`document.querySelector('[data-testid=clip-gain]').disabled`)) === false && (await q("[data-testid=fade-in-handle]")) === 1);
+  await c.evalJs(`window.daw.setProgressMode('all')`);
+  await sleep(300);
+  await c.evalJs(`window.daw.resetProgress()`);
+  await c.evalJs(`window.daw.completeLesson('M6.2')`); // the sound browser stays available for the rest of the script
+  await c.evalJs(`window.daw.setProgressMode('all')`);
+  if ((await q("[data-testid=samples-panel]")) === 0) await c.clickEl("[data-testid=samples-toggle]");
+  await sleep(200);
+
+  // =====================================================================
+  //  AUTOMATION: VOLUME AND FILTER CURVES
+  // =====================================================================
+  const autoToggle = `[data-testid=auto-toggle-${loopT.id}]`;
+  const autoPts = async (param) => (await lt()).automation?.[param];
+  const laneRect = () => c.rectOf(`[data-testid=auto-lane][data-track-id="${loopT.id}"]`);
+  // first-difference level = the energy in the highs (a low-pass filter removes it)
+  const highsRms = ({ rate, mono }, from, to) => { let e = 0, n = 0; for (let i = Math.floor(from * rate) + 1; i < Math.min(mono.length, Math.floor(to * rate)); i++, n++) e += (mono[i] - mono[i - 1]) ** 2; return Math.sqrt(e / Math.max(1, n)); };
+  await c.evalJs(`window.daw.dispatch({ type: 'updateTrack', trackId: ${JSON.stringify(loopT.id)}, changes: { mute: false } })`);
+  await c.clickEl(autoToggle);
+  await sleep(400);
+  check("AU1. the track's automation button opens a lane under it (volume first)", (await q("[data-testid=auto-lane]")) === 1 && (await c.evalJs(`document.querySelector('[data-testid=auto-lane]').dataset.param`)) === "volume");
+
+  // volume swell drawn with the mouse: bottom-left to top at bar 2 (1-bar grid)
+  let lr = await laneRect();
+  const yOfValue = (v) => lr.y + 8 + (1 - v) * (lr.h - 16);
+  await c.click(lr.x + 2, yOfValue(0));
+  await sleep(250);
+  lr = await laneRect();
+  await c.click(lr.x + 90 + 2, yOfValue(1)); // 90 px = 1 bar at the default zoom
+  await sleep(500);
+  const vol = await autoPts("volume");
+  check("AU2. two clicks make a two-point volume curve: silent at the start, full at bar 2", vol?.length === 2 && vol[0].tick === 0 && vol[0].value < 0.05 && vol[1].tick === 3840 && vol[1].value > 0.95, JSON.stringify(vol));
+  const swell = await exportSong();
+  const sEarly = rmsBetween(swell, 0.2, 0.5) / rmsBetween(ca_base, 0.2, 0.5);
+  const sLate = rmsBetween(swell, 2.5, 3.5) / rmsBetween(ca_base, 2.5, 3.5);
+  const sMid = rmsBetween(swell, 0.9, 1.1) / rmsBetween(ca_base, 0.9, 1.1);
+  check("AU3. the rendered loop swells: nearly silent at first, a quarter level halfway up (value squared), full level after", sEarly < 0.08 && Math.abs(sMid - 0.25) < 0.08 && sLate > 0.93 && sLate < 1.07, `start ${sEarly.toFixed(3)}, halfway ${sMid.toFixed(2)}, end ${sLate.toFixed(2)}`);
+  check("AU4. the curve is drawn on the lane", (await q("[data-testid=auto-point]")) === 2);
+
+  await c.evalJs(`window.daw.undo()`);
+  await sleep(300);
+  await c.evalJs(`window.daw.undo()`);
+  await sleep(300);
+  check("AU5. undo removes the points one step at a time", (await autoPts("volume")) === undefined);
+
+  // drag a point
+  lr = await laneRect();
+  await c.click(lr.x + 2, yOfValue(0.5));
+  await sleep(300);
+  lr = await laneRect();
+  await c.drag(lr.x + 2, yOfValue(0.5), lr.x + 2 + 90, yOfValue(0.9), 6);
+  await sleep(400);
+  const moved = await autoPts("volume");
+  check("AU6. dragging a point moves it (to bar 2, higher up)", moved?.length === 1 && moved[0].tick === 3840 && moved[0].value > 0.85 && moved[0].value < 0.95, JSON.stringify(moved));
+
+  // delete by double-click
+  lr = await laneRect();
+  await c.dblclick(lr.x + 90 + 2, yOfValue(0.9));
+  await sleep(400);
+  check("AU7. double-clicking a point removes it (and the last point removes the curve)", (await autoPts("volume")) === undefined);
+
+  // filter curve: a closed filter takes the highs away
+  await c.evalJs(`(() => { const s = document.querySelector('[data-testid=auto-param]'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, 'filter'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(300);
+  lr = await laneRect();
+  await c.click(lr.x + 2, yOfValue(0.3)); // cutoff about 160 Hz from the start
+  await sleep(500);
+  const fl = await autoPts("filter");
+  check("AU8. the Filter curve is its own curve: one point at value 0.3", fl?.length === 1 && Math.abs(fl[0].value - 0.3) < 0.03 && (await autoPts("volume")) === undefined, JSON.stringify(fl));
+  const filtered = await exportSong();
+  const hiRatio = highsRms(filtered, 0.2, 3.8) / highsRms(ca_base, 0.2, 3.8);
+  check("AU9. a closed filter removes the highs from the render (the sharp part of the sound is more than 10 times quieter)", hiRatio < 0.1 && rmsBetween(filtered, 0.2, 3.8) > 0.002, `highs ratio ${hiRatio.toFixed(3)}, level ${rmsBetween(filtered, 0.2, 3.8).toFixed(4)}`);
+  check("AU10. the lane header reads the value in Hz for the filter", (await c.evalJs(`document.querySelector('[data-testid=auto-row]').innerText`)).includes("Filter"));
+
+  // open the filter again by dragging the point to the top
+  lr = await laneRect();
+  await c.drag(lr.x + 2, yOfValue(0.3), lr.x + 2, yOfValue(1), 6);
+  await sleep(500);
+  const reopened = await exportSong();
+  const hiOpen = highsRms(reopened, 0.2, 3.8) / highsRms(ca_base, 0.2, 3.8);
+  check("AU11. dragging the point to the top opens the filter again: the render is back to the original", hiOpen > 0.97 && hiOpen < 1.03, `highs ratio ${hiOpen.toFixed(3)}`);
+
+  // a sweep: closed at bar 1 to open at bar 2
+  await c.evalJs(`window.daw.dispatch({ type: 'setAutomation', trackId: ${JSON.stringify(loopT.id)}, param: 'filter', points: [{ tick: 0, value: 0.25 }, { tick: 3840, value: 1 }] })`);
+  await sleep(500);
+  const sw = await exportSong();
+  const swFirst = highsRms(sw, 0.1, 0.6) / highsRms(ca_base, 0.1, 0.6);
+  const swLast = highsRms(sw, 2.5, 3.8) / highsRms(ca_base, 2.5, 3.8);
+  check("AU12. a filter sweep opens up over the first bar: muffled at the start, normal after", swFirst < 0.15 && swLast > 0.95, `start ${swFirst.toFixed(3)}, end ${swLast.toFixed(3)}`);
+
+  // live playback with a sweep running: no overruns
+  await c.evalJs(`window.daw.stop()`);
+  await resetRec();
+  await c.evalJs(`window.daw.play()`);
+  await sleep(2500);
+  check("AU13. playing with a filter sweep and a volume curve never overruns the audio thread", (await rec()).overruns === 0 && (await level(loopT.id)) > 0.02, `overruns ${(await rec()).overruns}, level ${(await level(loopT.id)).toFixed(3)}`);
+  await c.evalJs(`window.daw.stop()`);
+
+  // lock until the lesson
+  await c.evalJs(`window.daw.setProgressMode('beginner')`);
+  await c.evalJs(`window.daw.completeLesson('M8.2')`);
+  await sleep(400);
+  const lockedAuto = await c.evalJs(`({ disabled: document.querySelector(${JSON.stringify(autoToggle)}).disabled, title: document.querySelector(${JSON.stringify(autoToggle)}).title })`);
+  check("AU14. before lesson M13.3 the automation button is locked and names the lesson", lockedAuto.disabled && /M13\.3/.test(lockedAuto.title), lockedAuto.title);
+  await c.evalJs(`window.daw.setProgressMode('all')`);
+  await c.evalJs(`window.daw.resetProgress()`);
+  await c.evalJs(`window.daw.completeLesson('M6.2')`); // the sound browser stays available for the rest of the script
+  await c.evalJs(`window.daw.setProgressMode('all')`);
+  if ((await q("[data-testid=samples-panel]")) === 0) await c.clickEl("[data-testid=samples-toggle]");
+  await sleep(300);
+
+  // leave a volume curve behind: the restart further down must bring it back, and the project stays valid
+  await c.evalJs(`window.daw.dispatch({ type: 'setAutomation', trackId: ${JSON.stringify(loopT.id)}, param: 'volume', points: [{ tick: 0, value: 0.4 }, { tick: 7680, value: 1 }] })`);
+  await c.evalJs(`window.daw.dispatch({ type: 'setAutomation', trackId: ${JSON.stringify(loopT.id)}, param: 'filter', points: null })`);
+  await sleep(300);
+
+  // =====================================================================
   //  IMPORT
   // =====================================================================
   if (!haveZip) check("I0. (skipped) this machine cannot create zip files", true, "no system tar");
@@ -470,6 +708,8 @@ try {
     const reloaded = await c.evalJs(`window.daw.getInitial().then(x => x.project)`);
     const kt3 = Object.values(reloaded.tracks).find((t) => t.name === "Punch Kick");
     check("D19. sample tracks are saved in the project and come back after a restart", !!kt3 && kt3.sample.id === "starter/kick/punch-kick");
+    const loopBack = Object.values(reloaded.tracks).find((t) => t.name === "Boom Bap 90 Drums");
+    check("AU15. automation curves are saved in the project and come back after a restart", JSON.stringify(loopBack?.automation?.volume) === JSON.stringify([{ tick: 0, value: 0.4 }, { tick: 7680, value: 1 }]), JSON.stringify(loopBack?.automation));
     await c.evalJs(`window.daw.dispatch({ type: 'updateTrack', trackId: ${JSON.stringify(kt3.id)}, changes: { mute: false } })`);
     await c.evalJs(`window.daw.dispatch({ type: 'updateTrack', trackId: ${JSON.stringify(Object.values(reloaded.tracks).find((t) => t.name === "Boom Bap 90 Drums").id)}, changes: { mute: true } })`);
     await sleep(300);

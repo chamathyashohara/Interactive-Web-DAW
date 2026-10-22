@@ -31,12 +31,18 @@ export const FEATURES = [
   { id: "edit.quantize", label: "Quantize", group: "Piano roll", unlockedBy: "M6.4" },
   { id: "tool.mute", label: "Mute-note tool", group: "Piano roll", unlockedBy: "M7.4" },
   { id: "tool.slice", label: "Slice tool", group: "Piano roll", unlockedBy: "M8.4" },
+  { id: "velocity.ramp", label: "Velocity ramp (fade notes in or out)", group: "Piano roll", unlockedBy: "M7.4" },
   // tracks
   { id: "tracks.multiple", label: "More than one track", group: "Tracks", unlockedBy: "M4.6" },
   { id: "tracks.drums", label: "Drum tracks", group: "Tracks", unlockedBy: "M6.2" },
+  { id: "seq.steps", label: "Drum step sequencer", group: "Tracks", unlockedBy: "M6.2" },
   { id: "browser.samples", label: "Sample browser (Starter sounds, your own packs)", group: "Tracks", unlockedBy: "M6.2" },
   // arrangement
   { id: "arrangement.clips", label: "Edit clips and song length", group: "Arrangement", unlockedBy: "M8.2" },
+  { id: "arrangement.loop", label: "Loop region", group: "Arrangement", unlockedBy: "M8.2" },
+  { id: "arrangement.markers", label: "Section markers", group: "Arrangement", unlockedBy: "M13.1" },
+  { id: "automation.lanes", label: "Automation: volume and filter curves", group: "Mixing", unlockedBy: "M13.3" },
+  { id: "clips.audio", label: "Trim, fade and set the level of sound clips", group: "Arrangement", unlockedBy: "M13.3" },
   // mixing
   { id: "mixer.panel", label: "Mixer, volume and pan", group: "Mixing", unlockedBy: "M9.2" },
   { id: "mixer.muteSolo", label: "Mute and solo tracks", group: "Mixing", unlockedBy: "M9.4" },
@@ -63,6 +69,8 @@ export const LESSON_TITLES: Record<string, string> = {
   "M9.2": "Volume faders",
   "M9.4": "Mute and solo to hear one part",
   "M10.3": "Export a WAV",
+  "M13.1": "Energy curve: how a song moves",
+  "M13.3": "Buildup tension tools",
 };
 
 export type ProgressMode = "beginner" | "all";

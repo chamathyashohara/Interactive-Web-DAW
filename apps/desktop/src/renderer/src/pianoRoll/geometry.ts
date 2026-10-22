@@ -6,6 +6,8 @@ export const DEFAULT_ROW_H = 18;
 export const MIN_ROW_H = 12;
 export const MAX_ROW_H = 32;
 export const KEYS_W = 76;
+export const MIN_PX_PER_BEAT = 40;
+export const MAX_PX_PER_BEAT = 400;
 
 export const GRID_OPTIONS = [
   { label: "1 bar", ticks: PPQ * 4 },

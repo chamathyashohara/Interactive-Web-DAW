@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { defaultProgress, type Progress, type Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
+import type { TelemetryState } from "../../main/telemetry/telemetryStore";
 import type { EngineState, ExportStatus, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
@@ -38,6 +39,8 @@ export const statusStore = createStore<StatusPayload | null>(null);
 export const exportStore = createStore<ExportStatus | null>(null);
 /** Learner progress: which lessons are done and whether features are gated. */
 export const progressStore = createStore<Progress>(defaultProgress());
+/** Whether the participant has agreed to the study recording (and under which code). */
+export const telemetryStore = createStore<TelemetryState>({ consented: false, participantCode: null, events: 0, session: "" });
 /** True in development builds: shows the developer tools (mark a lesson complete) in the Features panel. */
 export const devStore = createStore<boolean>(false);
 
@@ -80,4 +83,6 @@ export async function initStores() {
   progressStore.set(await window.daw.getProgress());
   devStore.set(await window.daw.isDev());
   window.daw.onProgress((p) => progressStore.set(p));
+  telemetryStore.set(await window.daw.telemetry.getState());
+  window.daw.telemetry.onState((s) => telemetryStore.set(s));
 }

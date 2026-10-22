@@ -170,7 +170,7 @@ export function SamplesPanel({ onClose }: { onClose: () => void }) {
 
   const present = CATEGORY_ORDER.filter((c) => counts.has(c));
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col border-r border-white/10 bg-[#0f121a]" data-testid="samples-panel" aria-label="Sample browser">
+    <aside className="hw-panel-deep flex w-[300px] shrink-0 flex-col border-r border-black" data-testid="samples-panel" aria-label="Sample browser">
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
         <span className="text-xs font-semibold text-slate-200">Sounds</span>
         <span className="text-[10px] text-slate-500" data-testid="sample-count">{filtered.length} of {lib.entries.length}</span>
@@ -191,28 +191,29 @@ export function SamplesPanel({ onClose }: { onClose: () => void }) {
             } else if (e.key === "Enter" && filtered[0] && !selected) play(filtered[0].id);
           }}
           placeholder="Search: kick, trap, 120 bpm…"
-          className="w-full rounded-md bg-white/5 px-2 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:ring-1 focus:ring-cyan-400/50"
+          className="hw-field w-full px-2 py-1.5 text-xs placeholder:text-amber-900"
           aria-label="Search sounds"
           data-testid="sample-search"
         />
         <div className="flex flex-wrap gap-1" role="toolbar" aria-label="Sound categories">
-          <button className={`rounded px-1.5 py-0.5 text-[10px] ${category === "All" ? "bg-cyan-400/20 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"}`} onClick={() => setCategory("All")} data-testid="cat-All">
+          <button className="hw-btn hw-teal px-1.5 py-0.5 text-[10px]" aria-pressed={category === "All"} onClick={() => setCategory("All")} data-testid="cat-All">
             All
           </button>
           {present.map((c) => (
             <button
               key={c}
-              className={`rounded px-1.5 py-0.5 text-[10px] ${category === c ? "bg-cyan-400/20 text-cyan-200" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
+              className="hw-btn hw-teal px-1.5 py-0.5 text-[10px]"
+              aria-pressed={category === c}
               onClick={() => setCategory(category === c ? "All" : c)}
               data-testid={`cat-${c}`}
             >
               <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle" style={{ background: CATEGORY_COLORS[c] }} />
-              {c} <span className="text-slate-500">{counts.get(c)}</span>
+              {c} <span className="opacity-60">{counts.get(c)}</span>
             </button>
           ))}
         </div>
         <div className="flex gap-1">
-          <select value={pack} onChange={(e) => setPack(e.target.value)} className="min-w-0 flex-1 rounded-md bg-white/5 px-1.5 py-1 text-[11px] text-slate-200 outline-none" aria-label="Pack" data-testid="pack-select">
+          <select value={pack} onChange={(e) => setPack(e.target.value)} className="hw-lcd min-w-0 flex-1 px-1.5 py-1 text-[11px] outline-none" aria-label="Pack" data-testid="pack-select">
             <option value="All" className="bg-[#12151c]">All packs</option>
             {lib.packs.map((p) => (
               <option key={p.name} value={p.name} className="bg-[#12151c]">
@@ -222,10 +223,10 @@ export function SamplesPanel({ onClose }: { onClose: () => void }) {
           </select>
         </div>
         <div className="flex gap-1">
-          <button className="flex-1 rounded-md bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10 disabled:opacity-40" disabled={importing || lib.status.state !== "ready"} onClick={() => void doImport("zip")} title="Add a sample pack from a .zip file" data-testid="import-zip">
+          <button className="hw-btn flex-1 px-2 py-1 text-[11px]" disabled={importing || lib.status.state !== "ready"} onClick={() => void doImport("zip")} title="Add a sample pack from a .zip file" data-testid="import-zip">
             + Import zip…
           </button>
-          <button className="flex-1 rounded-md bg-white/5 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/10 disabled:opacity-40" disabled={importing || lib.status.state !== "ready"} onClick={() => void doImport("folder")} title="Add a folder of samples" data-testid="import-folder">
+          <button className="hw-btn flex-1 px-2 py-1 text-[11px]" disabled={importing || lib.status.state !== "ready"} onClick={() => void doImport("folder")} title="Add a folder of samples" data-testid="import-folder">
             + Import folder…
           </button>
         </div>

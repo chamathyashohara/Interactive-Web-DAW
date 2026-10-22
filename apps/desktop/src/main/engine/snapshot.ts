@@ -1,5 +1,5 @@
 import { ENGINE_MAX_SLOTS, type EngineProjectSnapshot, type EngineTrack } from "@daw/engine-protocol";
-import { songTicks, type Project } from "@daw/shared";
+import { PPQ, songTicks, type Project } from "@daw/shared";
 
 /** Fader curve: 0..100 -> linear gain. Squared so the lower half of the fader is usable. */
 export const volumeToGain = (volume: number) => (volume / 100) ** 2;
@@ -56,10 +56,21 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
     const track = project.tracks[trackId];
     if (!track) continue;
     const notes: EngineTrack["notes"] = [];
+    const secPerTick = 60 / (project.tempo * PPQ);
+    const stretch = track.instrument === "sample" && track.sample ? stretchRatioFor(project.tempo, track.sample) ?? 1 : 1;
     for (const clip of Object.values(track.clips)) {
+      const a = track.instrument === "sample" ? clip.audio : undefined;
       for (const n of Object.values(clip.notes)) {
         if (n.muted) continue; // muted notes stay in the project but are not played
-        notes.push({ pitch: n.pitch, startTick: clip.startTick + n.startTick, durationTicks: n.durationTicks, velocity: n.velocity });
+        const note: EngineTrack["notes"][number] = { pitch: n.pitch, startTick: clip.startTick + n.startTick, durationTicks: n.durationTicks, velocity: n.velocity };
+        if (a) {
+          if (a.gainDb) note.gain = 10 ** (a.gainDb / 20);
+          if (a.startSec) note.offsetSec = a.startSec / stretch; // the sound was stretched by `stretch`, so its parts moved by the same factor
+          if (a.fadeInTicks) note.fadeInSec = a.fadeInTicks * secPerTick;
+          if (a.fadeOutTicks) note.fadeOutSec = a.fadeOutTicks * secPerTick;
+          if (a.cut || a.fadeOutTicks) note.cut = true;
+        }
+        notes.push(note);
       }
     }
     const et: EngineTrack = {
@@ -76,7 +87,12 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
       const ratio = stretchRatioFor(project.tempo, track.sample);
       if (ratio !== null) et.stretchRatio = ratio;
     }
+    const auto: NonNullable<EngineTrack["automation"]> = {};
+    if (track.automation?.volume?.length) auto.volume = track.automation.volume.map((p) => [p.tick, p.value]);
+    if (track.automation?.filter?.length) auto.filter = track.automation.filter.map((p) => [p.tick, p.value]);
+    if (auto.volume || auto.filter) et.automation = auto;
     tracks.push(et);
   }
-  return { ppq: project.ppq, tempo: project.tempo, loopTicks, masterGain: volumeToGain(project.masterVolume), tracks };
+  const region = project.loop && project.loop.endTick > project.loop.startTick && project.loop.endTick <= loopTicks ? project.loop : null;
+  return { ppq: project.ppq, tempo: project.tempo, loopTicks, ...(region ? { loopStartTick: region.startTick, loopEndTick: region.endTick } : {}), masterGain: volumeToGain(project.masterVolume), tracks };
 }
