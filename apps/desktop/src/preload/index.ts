@@ -55,14 +55,40 @@ export interface ProjectListPayload {
   activeId: string;
 }
 export type { ProjectMeta };
+export interface CollabUser {
+  id: string;
+  name: string;
+  color: string;
+}
+export type CollabState =
+  | { active: false }
+  | { active: true; hosting: boolean; status: string; code: string; address: string; users: CollabUser[]; me: string };
 export interface InitialPayload extends ProjectPayload {
   projects: ProjectListPayload;
+  collab: CollabState;
   engine: EngineState;
   status: StatusPayload | null;
 }
 
 const api = {
   getInitial: (): Promise<InitialPayload> => ipcRenderer.invoke("project:get"),
+  // ---- real-time collaboration (host / join a live session) ----
+  collab: {
+    getState: (): Promise<CollabState> => ipcRenderer.invoke("collab:state"),
+    host: (name?: string): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name),
+    join: (address: string, code: string, name?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("collab:join", address, code, name),
+    leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:leave"),
+    onState: (cb: (s: CollabState) => void) => {
+      const l = (_e: unknown, s: CollabState) => cb(s);
+      ipcRenderer.on("collab:state", l);
+      return () => ipcRenderer.removeListener("collab:state", l);
+    },
+    onNote: (cb: (n: { kind: string; count?: number }) => void) => {
+      const l = (_e: unknown, n: { kind: string; count?: number }) => cb(n);
+      ipcRenderer.on("collab:note", l);
+      return () => ipcRenderer.removeListener("collab:note", l);
+    },
+  },
   // ---- projects (new / open / save as / rename / delete) ----
   projects: {
     list: (): Promise<ProjectListPayload> => ipcRenderer.invoke("project:list"),

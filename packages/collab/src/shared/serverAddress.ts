@@ -20,7 +20,7 @@ export function parseServerAddress(input: string): ServerAddress {
   let secure: boolean
   const scheme = s.match(/^(https?|wss?):\/\//i)
   if (scheme) {
-    secure = /^(https|wss)$/i.test(scheme[1])
+    secure = /^(https|wss)$/i.test(scheme[1]!)
     s = s.slice(scheme[0].length)
   } else {
     const isIp = /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/.test(s) || /^localhost(:\d+)?$/i.test(s)

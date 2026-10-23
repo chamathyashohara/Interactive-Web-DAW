@@ -154,13 +154,13 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
     }
 
     const m = url.match(/^\/sessions\/(\d{6})$/)
-    if (m && req.method === 'GET') return json(res, sessions.has(m[1]) ? 200 : 404, { exists: sessions.has(m[1]) })
+    if (m && req.method === 'GET') return json(res, sessions.has(m[1]!) ? 200 : 404, { exists: sessions.has(m[1]!) })
     if (m && req.method === 'DELETE') {
-      const s = sessions.get(m[1])
+      const s = sessions.get(m[1]!)
       if (!s) return json(res, 404, { error: 'no such session' })
       const given = String(req.headers['x-host-key'] ?? '')
       if (!s.hostKey || !safeEqual(given, s.hostKey)) return json(res, 403, { error: 'forbidden' })
-      endSession(m[1])
+      endSession(m[1]!)
       return json(res, 200, { ended: true })
     }
 
@@ -255,15 +255,15 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
       return
     }
     // Behind a proxy (Caddy, Cloudflare, ...) the real client IP is in a header.
-    const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
+    const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]!.trim()
     const ip = fwd || req.socket.remoteAddress || 'unknown'
     const m = req.url?.match(/^\/ops\/(\d{6})$/)
-    if (isBlocked(ip) || !m || !sessions.has(m[1])) {
+    if (isBlocked(ip) || !m || !sessions.has(m[1]!)) {
       if (!isBlocked(ip)) recordFailure(ip)
       socket.destroy()
       return
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, m[1]))
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, m[1]!))
   })
 
   return new Promise((resolve, reject) => {

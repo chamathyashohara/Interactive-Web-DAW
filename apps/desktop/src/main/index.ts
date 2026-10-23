@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
@@ -15,6 +16,8 @@ import { Workspace } from "./project/workspace";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
+import { CollabClient, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { WebSocket as NodeWebSocket } from "ws";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
 interface EngineState {
@@ -148,37 +151,100 @@ app.whenReady().then(() => {
     sendToRenderer("engine:status", lastStatus);
   });
 
+  // ---- real-time collaboration session (Component 3) ----
+  interface CollabState { client: CollabClient; server: SessionServer | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  let collab: CollabState | null = null;
+  const lanIp = () => {
+    for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
+    return "127.0.0.1";
+  };
+  const cleanName = (name: unknown) => (typeof name === "string" && name.trim() ? name.trim().slice(0, 24) : os.userInfo().username || "Producer");
+  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, users: collab.users, me: collab.client.clientId } : { active: false });
+  const publishCollab = () => sendToRenderer("collab:state", collabStateMsg());
+  const pushToUi = (project: Project, canUndo: boolean, canRedo: boolean) => {
+    pushProjectToEngine(project);
+    sendToRenderer("project:update", { project, canUndo, canRedo });
+  };
+  const wireClient = (client: CollabClient) => {
+    client.on("change", (project) => {
+      if (!collab) return;
+      collab.project = project;
+      try {
+        pushToUi(project, false, false); // option A: no local undo during a session (the session has a shared restore)
+      } catch (err) {
+        console.error("collab change push failed:", err); // never let a sync update crash the app
+      }
+    });
+    client.on("status", () => publishCollab());
+    client.on("users", (users) => { if (collab) collab.users = users; publishCollab(); });
+    client.on("dropped", (dropped) => { if (dropped.length) sendToRenderer("collab:note", { kind: "dropped", count: dropped.length }); });
+    client.on("ended", ({ reason }) => { void leaveCollab(reason); });
+  };
+  const leaveCollab = async (reason?: string) => {
+    if (!collab) return;
+    const c = collab;
+    const finalProject = c.project;
+    collab = null;
+    c.client.close();
+    if (c.server) {
+      c.server.endSession(c.code); // tell the others it ended (closes their sockets with the SESSION_ENDED code) before shutting the server
+      await new Promise((r) => setTimeout(r, 200)); // let the close frames flush so joiners see "host ended" rather than a dropped link
+      await c.server.close();
+    }
+    if (finalProject) service.adopt(finalProject); // keep the result of the session in the local project
+    else pushToUi(service.current, service.canUndo, service.canRedo);
+    publishCollab();
+    if (reason === "host-ended") sendToRenderer("collab:note", { kind: "host-ended" });
+    if (reason === "cannot-join") sendToRenderer("collab:note", { kind: "cannot-join" });
+  };
+
   service.subscribe((project, meta) => {
+    if (collab) return; // during a session the shared project drives the UI and engine
     pushProjectToEngine(project);
     sendToRenderer("project:update", { project, ...meta });
   });
 
   ipcMain.handle("project:get", () => ({
-    project: service.current,
+    project: collab ? (collab.project ?? service.current) : service.current,
     projects: projectList(),
+    collab: collabStateMsg(),
     canUndo: service.canUndo,
     canRedo: service.canRedo,
     engine: engineState,
     status: lastStatus,
   }));
   ipcMain.handle("op:dispatch", (_e, body: OpBody, group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatch(body);
+      if (result.ok && before) telemetry.recordOps(before, [body]);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatch(body, group);
     if (result.ok) telemetry.recordOps(before, [body]);
     return result;
   });
   ipcMain.handle("op:batch", (_e, bodies: OpBody[], group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatchBatch(bodies);
+      if (result.ok && before) telemetry.recordOps(before, bodies);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatchBatch(bodies, group);
     if (result.ok) telemetry.recordOps(before, bodies);
     return result;
   });
   ipcMain.handle("history:undo", () => {
+    if (collab) return false; // local undo is off during a session; use the shared restore instead
     const ok = service.undo();
     if (ok) telemetry.record("history", { kind: "undo" });
     return ok;
   });
   ipcMain.handle("history:redo", () => {
+    if (collab) return false;
     const ok = service.redo();
     if (ok) telemetry.record("history", { kind: "redo" });
     return ok;
@@ -461,6 +527,41 @@ app.whenReady().then(() => {
     publishProjects();
     return { ok: true, id: meta.id, tracks: trackCount };
   });
+  // ---- collaboration: host / join / leave ----
+  ipcMain.handle("collab:state", () => collabStateMsg());
+  ipcMain.handle("collab:host", async (_e, name?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    try {
+      const server = await startSessionServer(0);
+      const code = server.createSession(service.current);
+      const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+      collab = { client, server, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      wireClient(client);
+      client.connect();
+      telemetry.record("ui.collab", { action: "host" });
+      publishCollab();
+      return { ok: true, code, address: collab.address };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+  });
+  ipcMain.handle("collab:join", (_e, address: unknown, code: unknown, name?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
+    const baseUrl = /^wss?:\/\//.test(address) ? address.replace(/\/+/, "") : `ws://${address.trim()}`;
+    const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+    collab = { client, server: null, hosting: false, users: [], project: null, code, address: address.trim() };
+    wireClient(client);
+    client.connect();
+    telemetry.record("ui.collab", { action: "join" });
+    publishCollab();
+    return { ok: true };
+  });
+  ipcMain.handle("collab:leave", async () => {
+    await leaveCollab();
+    telemetry.record("ui.collab", { action: "leave" });
+    return { ok: true };
+  });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
@@ -469,6 +570,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on("before-quit", () => {
+    if (collab) { collab.client.close(); void collab.server?.close(); }
     telemetry.recordSummary(service.current);
     engine.stop();
     service.close();

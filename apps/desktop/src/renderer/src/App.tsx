@@ -4,6 +4,7 @@ import { Arrangement } from "./components/Arrangement";
 import { Mixer } from "./components/Mixer";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { ExportDialog } from "./components/ExportDialog";
+import { CollabPanel } from "./components/CollabPanel";
 import { BarBeatReadout, TapTempoButton } from "./components/TransportExtras";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
@@ -278,6 +279,7 @@ export function App() {
           Collab<span className="text-slate-200">DAW</span>
         </div>
         <ProjectMenu onExport={() => setExportOpen(true)} />
+        <CollabPanel />
         <span className="mx-1 h-5 w-px bg-white/10" />
 
         <div className="flex gap-1">

@@ -22,13 +22,34 @@ was written** (loop region, section markers, automation), which now sync because
   starting on port 0 gave an unusable `0`). Needed for hosting on an ephemeral port from the app.
 - The package's `tsconfig` turns off `noUncheckedIndexedAccess` to match the module's original strictness (its logic is unchanged).
 
-## Phase 2 — host / join from the DAW (next)
+## Phase 2 — host / join from the DAW (done)
 
-- A `CollabSession` in the DAW's main process owns a `CollabClient`. While a session is active, the renderer's edits are routed to
-  the client (not just the local `ProjectService`), and the client's `change` events (the user's own and everyone else's) are pushed
-  to the engine and the renderer, so the shared project is what plays and shows.
-- UI: **Host a session** (start a server, show a 6-digit code) and **Join** (enter a code), plus who-is-here presence.
-- The session's seed is the current project — the project system gives it a stable identity to share.
+The DAW's main process holds a live session (a `CollabClient`, and a `SessionServer` when hosting). While a session is active:
+
+- The renderer's edits (`op:dispatch` / `op:batch`) are routed to the collaboration client instead of the local `ProjectService`,
+  and the client's `change` events (the user's own and everyone else's) are pushed to the engine and the renderer through the same
+  `project:update` channel — so the shared project is what plays and shows, with no change needed in the rest of the UI.
+- **Undo is off (option A):** `history:undo/redo` do nothing during a session and the buttons are disabled (the shared history/restore
+  takes their place). This avoids two people's undos fighting.
+- On leaving (or the host ending it), the final shared project is **adopted into the local project** so the result is kept, and solo
+  editing (with local undo) resumes.
+
+**UI:** a **Collaborate** button in the header opens a popover to *Host a new session* (shows the 6-digit code and the host
+`address:port` to share) or *Join with a code* (enter the host address and code). While in a session the button shows a green **Live ·
+N** with the people in the room. `CollabPanel.tsx`, main handlers `collab:host` / `collab:join` / `collab:leave` / `collab:state`.
+
+Proven by `apps/desktop/e2e/collab.mjs` (12 checks): it launches **two app windows**, one hosts and the other joins by code, and
+checks the joiner receives the host's project, edits sync **both ways**, both see two people, local undo is a no-op during the session,
+and ending it returns both to solo editing with the result kept.
+
+### Two integration bugs found and fixed (for the Component 3 author)
+
+- **The client must be given the `ws` WebSocket in the Electron main process.** With `globalThis.WebSocket` the host's own client
+  never connected to its in-process server (it sat in `connecting` forever, so the host never joined its own room). Passing
+  `WebSocketImpl: NodeWebSocket` (the `ws` package) fixes it; `@daw/collab` now lists `ws` and the DAW imports it for this.
+- **Ending a session must close clients with the `SESSION_ENDED` code.** `SessionServer.close()` `terminate()`s sockets abruptly, so
+  a joiner saw a dropped link and tried to **reconnect** instead of leaving. The host now calls `server.endSession(code)` (which closes
+  with code 4001) and waits briefly for the frames to flush before `close()`, so joiners get a clean "the host ended the session".
 
 ## Phase 3 — later
 
