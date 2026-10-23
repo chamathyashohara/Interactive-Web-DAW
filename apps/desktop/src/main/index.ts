@@ -192,7 +192,7 @@ app.whenReady().then(() => {
     const slot = slots.slotFor(p.trackId);
     if (slot !== undefined) engine.send({ t: "preview", slot, pitch: p.pitch, velocity: p.velocity, on: p.on });
   });
-  ipcMain.handle("export:wav", async (_e, explicitPath?: string) => {
+  ipcMain.handle("export:wav", async (_e, explicitPath?: string, options?: { tailSeconds?: number }) => {
     if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
     let target: string | undefined;
     if (explicitPath && process.env.DAW_E2E === "1") target = explicitPath; // test hook: skip the dialog (never enabled in normal use)
@@ -207,7 +207,8 @@ app.whenReady().then(() => {
     }
     const id = randomUUID();
     pushProjectToEngine(service.current); // make sure the engine renders exactly the saved state
-    engine.send({ t: "exportWav", id, path: target, tailSeconds: 2 });
+    const tailSeconds = typeof options?.tailSeconds === "number" ? Math.max(0, Math.min(10, options.tailSeconds)) : 2;
+    engine.send({ t: "exportWav", id, path: target, tailSeconds });
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
   });

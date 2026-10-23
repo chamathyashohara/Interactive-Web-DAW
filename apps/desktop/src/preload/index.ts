@@ -90,7 +90,7 @@ const api = {
   seek: (tick: number) => ipcRenderer.send("transport:seek", tick),
   setMetronome: (on: boolean) => ipcRenderer.send("transport:metronome", on),
   preview: (trackId: string, pitch: number, velocity: number, on: boolean) => ipcRenderer.send("engine:preview", { trackId, pitch, velocity, on }),
-  exportWav: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath),
+  exportWav: (explicitPath?: string, options?: { tailSeconds?: number }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath, options),
   showInFolder: (filePath: string) => ipcRenderer.send("shell:show", filePath),
   // ---- evaluation data: nothing is recorded until the participant agrees ----
   telemetry: {
