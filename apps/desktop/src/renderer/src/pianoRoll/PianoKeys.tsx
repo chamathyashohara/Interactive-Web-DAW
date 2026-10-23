@@ -17,6 +17,8 @@ interface Props {
   rowH: number;
   /** When set, keys in the key get a coloured edge (brighter on the root) so beginners see where the safe notes are. */
   musicKey?: ProjectKey | null;
+  /** Keys lit up by a lesson while a demonstration plays them. */
+  activeKeys?: number[];
 }
 
 /**
@@ -24,7 +26,7 @@ interface Props {
  * black keys as short bars over their left side, and the octave label ("C4") on each C. Drum tracks list the drum
  * names instead. Pressing a key previews that pitch on the track's instrument.
  */
-export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, musicKey = null }: Props) {
+export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, musicKey = null, activeKeys }: Props) {
   const [pressed, setPressed] = useState<number | null>(null);
 
   const down = (e: React.PointerEvent<HTMLDivElement>, p: number) => {
@@ -40,7 +42,9 @@ export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, music
   return (
     <>
       {PITCHES.map((p) => {
-        const isPressed = pressed === p;
+        const lit = activeKeys?.includes(p) ?? false;
+        const isPressed = pressed === p || lit;
+        const active = lit ? { "data-active": "true" } : {};
         const handlers = { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => down(e, p), onPointerUp: () => up(p), onPointerCancel: () => up(p) };
 
         if (isDrums) {
@@ -49,6 +53,7 @@ export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, music
             <div
               key={p}
               data-key={p}
+              {...active}
               {...handlers}
               className={`flex items-center justify-end overflow-hidden border-b pr-1 text-[9px] whitespace-nowrap ${
                 isBlackKey(p) ? "border-black/50 bg-[#1d212b] text-slate-500 hover:bg-[#2a3040]" : "border-slate-300/40 bg-[#e8ecf2] text-slate-700 hover:bg-white"
@@ -66,7 +71,7 @@ export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, music
         ) : null;
         if (isBlackKey(p)) {
           return (
-            <div key={p} data-key={p} data-black-key="true" {...handlers} className="relative cursor-pointer" style={{ height: rowH, background: isPressed ? WHITE_PRESSED : WHITE }}>
+            <div key={p} data-key={p} data-black-key="true" {...active} {...handlers} className="relative cursor-pointer" style={{ height: rowH, background: isPressed ? WHITE_PRESSED : WHITE }}>
               <div className="pointer-events-none absolute" style={{ left: 0, top: 1, bottom: 1, width: BLACK_WIDTH, background: isPressed ? BLACK_PRESSED : BLACK, borderRadius: "0 3px 3px 0", boxShadow: "inset 0 -1px 0 rgba(0,0,0,.55), 1px 0 2px rgba(0,0,0,.35)" }} />
               {/* the white keys on either side of this black key meet in the middle of its row */}
               <div className="pointer-events-none absolute right-0" style={{ left: BLACK_WIDTH, top: "50%", borderTop: `1px solid ${EDGE}` }} />
@@ -78,7 +83,7 @@ export const PianoKeys = memo(function PianoKeys({ trackId, isDrums, rowH, music
         // White key. C and F have no black key below them, so a full line separates them from the key beneath (B, E).
         const fullEdge = pc === 0 || pc === 5;
         return (
-          <div key={p} data-key={p} {...handlers} className="relative cursor-pointer hover:brightness-95" style={{ height: rowH, background: isPressed ? WHITE_PRESSED : WHITE, borderBottom: fullEdge ? `1px solid ${EDGE}` : "none" }}>
+          <div key={p} data-key={p} {...active} {...handlers} className="relative cursor-pointer hover:brightness-95" style={{ height: rowH, background: isPressed ? WHITE_PRESSED : WHITE, borderBottom: fullEdge ? `1px solid ${EDGE}` : "none" }}>
             {edge}
             {pc === 0 && <span className="pointer-events-none absolute text-[9px] font-medium text-slate-600" style={{ right: 8, bottom: 1, lineHeight: 1 }}>{pitchLabel(p)}</span>}
           </div>

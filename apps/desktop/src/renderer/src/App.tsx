@@ -7,6 +7,7 @@ import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
 import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_PX_PER_BEAT, MAX_ROW_H, MIN_PX_PER_BEAT, MIN_ROW_H } from "./pianoRoll/geometry";
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
+import { LearnView } from "./features/lessons/LearnView";
 import { SamplesPanel } from "./samples/SamplesPanel";
 import { WindowButtons } from "./pianoRoll/WindowButtons";
 import { engineStateStore, exportStore, projectStore, statusStore, telemetryStore, useStore } from "./store";
@@ -156,6 +157,7 @@ export function App() {
   const [pxPerBeat, setPxPerBeat] = useState(120);
   const [rowH, setRowH] = useState(DEFAULT_ROW_H);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [lessonsOpen, setLessonsOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [focus, setFocus] = useState<"arrangement" | "pianoroll">("pianoroll");
@@ -257,6 +259,8 @@ export function App() {
     const r = await window.daw.exportWav();
     if (!r.ok && !r.canceled) exportStore.set({ state: "error", id: "-", message: r.reason ?? "unknown error" });
   };
+  // The lessons take over the whole window; the studio stays mounted-state-wise (selection, zoom) in App.
+  if (lessonsOpen) return <LearnView project={project} onOpenClip={selectTrackClip} onExit={() => setLessonsOpen(false)} />;
 
   return (
     <div className="flex h-full flex-col">
@@ -379,6 +383,9 @@ export function App() {
             data-testid="export-wav"
           >
             ⤓ Export WAV {!unlock.can("export.wav") && <LockIcon />}
+          </button>
+          <button className={`${btn} ${idle}`} onClick={() => setLessonsOpen(true)} title="Open the lessons" data-testid="lessons-toggle">
+            Lessons
           </button>
           <button
             className={`${btn} hw-teal ${samplesLocked ? "cursor-not-allowed opacity-50" : ""}`}
