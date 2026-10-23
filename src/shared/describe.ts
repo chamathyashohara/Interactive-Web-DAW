@@ -1,7 +1,16 @@
-import type { Op, Project } from '../daw-shared'
+import { PPQ, type Op } from '../daw-shared'
+
+/** Anything that can say what a track is called (a Project does). */
+export interface NameSource {
+  tracks: Record<string, { name: string }>;
+}
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const pitchName = (p: number) => `${NOTE_NAMES[p % 12]}${Math.floor(p / 12) - 1}`;
+const beat = (tick: number) => Math.round((tick / PPQ + 1) * 100) / 100;
 
 /** Short plain-English description of an op, for the activity list. `project` is used only to look up names. */
-export function describeOp(op: Op, project?: Project): string {
+export function describeOp(op: Op, project?: NameSource): string {
   const trackName = (id: string) => project?.tracks[id]?.name ?? 'a track';
   switch (op.type) {
     case 'addNote':
@@ -25,5 +34,34 @@ export function describeOp(op: Op, project?: Project): string {
       const keys = Object.keys(op.changes);
       return `changed ${keys.join(', ')} on ${trackName(op.trackId)}`;
     }
+  }
+}
+
+/** The values an op sets, e.g. "pitch 64, velocity 50". Null when there is nothing more to say. */
+export function describeDetail(op: Op): string | null {
+  switch (op.type) {
+    case 'addNote':
+      return `${pitchName(op.note.pitch)} at beat ${beat(op.note.startTick)}`;
+    case 'updateNote': {
+      const parts: string[] = [];
+      const c = op.changes;
+      if (c.pitch !== undefined) parts.push(`pitch ${pitchName(c.pitch)}`);
+      if (c.startTick !== undefined) parts.push(`beat ${beat(c.startTick)}`);
+      if (c.durationTicks !== undefined) parts.push(`length ${Math.round((c.durationTicks / PPQ) * 100) / 100} beats`);
+      if (c.velocity !== undefined) parts.push(`velocity ${c.velocity}`);
+      if (c.muted !== undefined) parts.push(c.muted ? 'muted' : 'unmuted');
+      return parts.join(', ') || null;
+    }
+    case 'setTempo':
+      return `${op.bpm} bpm`;
+    case 'setMasterVolume':
+      return `volume ${op.volume}`;
+    case 'updateTrack':
+      return Object.entries(op.changes).map(([k, v]) => `${k} ${String(v)}`).join(', ') || null;
+    case 'addTrack':
+      return `${op.track.instrument}`;
+    case 'deleteNote':
+    case 'deleteTrack':
+      return null;
   }
 }

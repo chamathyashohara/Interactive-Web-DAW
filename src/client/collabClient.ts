@@ -17,8 +17,12 @@ interface Events {
   change: Project;
   status: ClientStatus;
   users: UserInfo[];
-  /** Accepted ops, in the server's order, for an activity list. */
+  /** Accepted ops, in the server's order, as they happen. */
   entries: LogEntry[];
+  /** Actions that happened before this app joined, sent once on joining. */
+  history: LogEntry[];
+  /** A request such as a restore was refused by the server. */
+  refused: { reason: string };
   /** Edits of this user that did not survive (rejected by the server, or overridden by someone else's). */
   dropped: Dropped[];
   presence: { id: string; state: Record<string, unknown> | null };
@@ -179,6 +183,11 @@ export class CollabClient {
     this.send({ t: 'presence', state });
   }
 
+  /** Asks the server to put the project back to how it was just after step `toSeq` (0 = the original). */
+  restore(toSeq: number) {
+    this.send({ t: 'restore', toSeq });
+  }
+
   sendProbe(seq: number, at: number) {
     this.send({ t: 'probe', seq, at });
   }
@@ -221,6 +230,7 @@ export class CollabClient {
         if (dropped.length) this.emit('dropped', dropped);
         if (this.replica) {
           this.emit('change', this.replica.view);
+          if (msg.history?.length) this.emit('history', msg.history);
           // Anything not confirmed before the connection dropped is sent again; the server skips repeats.
           for (const ops of this.replica.pendingBatches) this.send({ t: 'ops', ops });
         }
@@ -246,6 +256,8 @@ export class CollabClient {
         if (dropped.length && msg.reason !== 'duplicate') this.emit('dropped', dropped);
         return;
       }
+      case 'refused':
+        return this.emit('refused', { reason: msg.reason });
       case 'users':
         this.users = msg.users;
         return this.emit('users', msg.users);

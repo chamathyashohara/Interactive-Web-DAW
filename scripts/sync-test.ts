@@ -6,7 +6,9 @@ import { Room } from '../src/server/room'
 import { Replica } from '../src/client/replica'
 import { CollabClient, newId } from '../src/client/collabClient'
 import { buildSeedProject } from '../src/shared/seed'
-import { describeOp } from '../src/shared/describe'
+import { diffProjects } from '../src/shared/restore'
+import { describeOp, describeDetail } from '../src/shared/describe'
+import { USER_COLORS } from '../src/shared/palette'
 import { summarize, quality } from '../src/shared/stats'
 import { parseServerAddress } from '../src/shared/serverAddress'
 import {
@@ -69,6 +71,7 @@ const noteOf = (p: Project | null) => p?.tracks['track-1']?.clips['clip-1']?.not
   }
   check('room: malformed ops do not throw', !threw)
 
+  check('room: recent() returns the last ops, oldest first', room.recent(2).length === 2 && room.recent(2)[1]!.seq === room.seq && room.recent(2)[0]!.seq === room.seq - 1)
   check('room: catch-up returns only the ops after lastSeq', room.entriesSince(1)?.length === room.seq - 1)
   check('room: a client ahead of the server must take a snapshot', room.entriesSince(999) === null)
 }
@@ -101,6 +104,95 @@ const noteOf = (p: Project | null) => p?.tracks['track-1']?.clips['clip-1']?.not
 
   check('replica: a missing op is detected as a gap', new Replica(baseProject(), 0).receive({ seq: 5, op: mine, at: 0 }).status === 'gap')
   check('replica: an old op is ignored', a.receive({ seq: 1, op: mine, at: 0 }).status === 'stale')
+}
+
+// ---------------------------------------------------------------- Restore (click a history segment)
+{
+  const track2 = createTrack('track-2', 'Drums', 'drums', '#ff4d8d', 'clip-2')
+  const room = new Room(baseProject())
+  const A = 'client-A'
+  const B = 'client-B'
+  const step = (who: string, body: OpBody) => { const r = room.submit(who, [op(body, who)]); if (!r.ok) throw new Error('setup failed: ' + r.reason) }
+
+  const hashes: string[] = [projectHash(room.project)] // hashes[n] = project after step n
+  const record = () => hashes.push(projectHash(room.project))
+  step(A, { type: 'addNote', trackId: 'track-1', clipId: 'clip-1', note: note('a1', 62, PPQ) }); record() // 1
+  step(B, { type: 'setTempo', bpm: 150 }); record()                                                        // 2
+  step(A, updateN1({ pitch: 70, velocity: 40 })); record()                                                 // 3
+  step(B, { type: 'addTrack', track: track2 }); record()                                                   // 4
+  step(B, { type: 'addNote', trackId: 'track-2', clipId: 'clip-2', note: note('d1', 36) }); record()       // 5
+  step(A, { type: 'deleteNote', trackId: 'track-1', clipId: 'clip-1', noteId: 'n1' }); record()            // 6
+  step(A, { type: 'updateTrack', trackId: 'track-1', changes: { volume: 20, mute: true } }); record()      // 7
+  step(B, { type: 'deleteTrack', trackId: 'track-2' }); record()                                           // 8
+  const before = room.seq
+  check('restore: setup recorded 8 steps', before === 8 && room.stateAt(8) !== null)
+
+  check('restore: stateAt rebuilds every earlier step exactly', hashes.every((h, n) => projectHash(room.stateAt(n)!) === h))
+
+  // Restore to each earlier step in turn (always from the latest state), checking the project matches that step.
+  let allMatch = true
+  for (let n = 0; n < before; n++) {
+    const latestBefore = room.seq
+    const restoreFrom = projectHash(room.project)
+    const r = room.restoreTo(B, n)
+    if (!r.ok) { allMatch = false; console.log('  restore to', n, 'refused:', r.reason); continue }
+    if (projectHash(room.project) !== hashes[n]) { allMatch = false; console.log('  restore to', n, 'gave the wrong project') }
+    if (!r.entries.every((e) => e.restore === n && e.op.clientId === B && e.seq > latestBefore)) allMatch = false
+    // Undo the restore by restoring to the step just before it.
+    const back = room.restoreTo(A, latestBefore)
+    if (!back.ok || projectHash(room.project) !== restoreFrom) { allMatch = false; console.log('  restoring forward after', n, 'failed') }
+  }
+  check('restore: going back to every earlier step gives exactly that project, and restoring forward undoes it', allMatch)
+  check('restore: the log only grew; no step was erased', room.seq > before && room.stateAt(5) !== null && projectHash(room.stateAt(5)!) === hashes[5])
+
+  const seqNow = room.seq
+  const again = room.restoreTo(A, seqNow)
+  check('restore: restoring to the current step is refused as nothing to do', !again.ok)
+  check('restore: a step that does not exist is refused', !room.restoreTo(A, 99999).ok && !room.restoreTo(A, -1).ok && !room.restoreTo(A, 1.5).ok)
+
+  const toStart = room.restoreTo(A, 0)
+  check('restore: back to the original project works', toStart.ok && projectHash(room.project) === hashes[0])
+  check('restore: all restored ops carry the same time and person, so they show as one segment', toStart.ok && new Set(toStart.entries.map((e) => e.at)).size === 1 && toStart.entries.every((e) => e.op.clientId === A))
+}
+
+// diffProjects directly
+{
+  const p0 = baseProject()
+  const withNotes = baseProject()
+  withNotes.tracks['track-1']!.clips['clip-1']!.notes['n2'] = note('n2', 65, PPQ * 4)
+  withNotes.tempo = 90
+  const d = diffProjects(p0, withNotes)
+  check('diff: tempo and a new note are found', !!d && d.some((o) => o.type === 'setTempo') && d.some((o) => o.type === 'addNote'))
+  check('diff: equal projects need no ops', diffProjects(p0, baseProject())?.length === 0)
+
+  // All 16 tracks replaced by 16 different ones: needs delete/add in a rule-respecting order.
+  const many = (prefix: string) => {
+    const p = createProject('p', 'many')
+    p.trackOrder = []
+    p.tracks = {}
+    for (let i = 0; i < 16; i++) {
+      const t = createTrack(`${prefix}${i}`, `${prefix}${i}`, 'synth', '#ffffff', `c-${prefix}${i}`)
+      p.tracks[t.id] = t
+      p.trackOrder.push(t.id)
+    }
+    return p
+  }
+  const swap = diffProjects(many('a'), many('b'))
+  let ok = false
+  if (swap) {
+    let sim = many('a')
+    ok = swap.every((body, i) => { const r = applyOp(sim, stamp(body, `s${i}`, 'x')); if (r.ok) sim = r.project; return r.ok }) && projectHash(sim) === projectHash(many('b'))
+  }
+  check('diff: swapping 16 tracks for 16 different ones respects the 1 to 16 track rule', !!swap && ok)
+
+  // Same track id but different clips: cannot be edited by ops, so the track is replaced.
+  const replaced = baseProject()
+  replaced.tracks['track-1']!.clips = { 'clip-9': { id: 'clip-9', startTick: 0, lengthTicks: 4 * 3840, notes: {} } }
+  const base2 = baseProject()
+  base2.tracks['track-2'] = createTrack('track-2', 'T2', 'synth', '#ffffff', 'c2')
+  base2.trackOrder.push('track-2')
+  const rep = base2 && diffProjects(base2, { ...replaced, tracks: { ...replaced.tracks, 'track-2': base2.tracks['track-2']! }, trackOrder: ['track-1', 'track-2'] })
+  check('diff: a track whose clips changed is replaced, not edited', !!rep && rep.some((o) => o.type === 'deleteTrack') && rep.some((o) => o.type === 'addTrack'))
 }
 
 // ---------------------------------------------------------------- Seed projects
@@ -146,6 +238,9 @@ const settled = (cs: CollabClient[], code: string) => {
   const [a, b] = [await join(code, 'Ana'), await join(code, 'Ben')]
   check('join: both apps receive the host project', !!noteOf(a.project) && !!noteOf(b.project))
   check('join: both see two people in the session', await until(() => a.users.length === 2 && b.users.length === 2))
+  const colours = a.users.map((u) => u.color)
+  check('colours: the server gives each person a different colour', new Set(colours).size === 2 && colours.every((c) => USER_COLORS.includes(c)))
+  check('colours: both apps see the same colour for the same person', JSON.stringify([...a.users].sort((x, y) => x.id.localeCompare(y.id))) === JSON.stringify([...b.users].sort((x, y) => x.id.localeCompare(y.id))))
 
   // 1. Same field at the same time.
   a.dispatch(updateN1({ pitch: 65 }))
@@ -173,9 +268,20 @@ const settled = (cs: CollabClient[], code: string) => {
   const stale = b.dispatch({ type: 'deleteNote', trackId: 'track-1', clipId: 'clip-1', noteId: 'n1' })
   check('deleting a note that is already gone is refused locally', !stale.ok)
 
+  // 4b. Someone who joins late is shown what was already done, and gets a colour of their own.
+  const late = new CollabClient({ baseUrl: base, code, name: 'Late', color: '#ffffff' })
+  const lateSeen: number[] = []
+  late.on('history', (es) => lateSeen.push(...es.map((e) => e.seq)))
+  late.connect()
+  await until(() => late.status === 'connected' && lateSeen.length > 0)
+  const room = server.roomFor(code)!
+  check('history: a late joiner receives the earlier actions', lateSeen.length > 0 && lateSeen.length === room.seq && lateSeen[0] === 1)
+  check('colours: three people have three different colours', await until(() => new Set(late.users.map((u) => u.color)).size === 3))
+  late.close()
+
   // 5. Presence and probes relay to the others only.
   let seen: unknown = null
-  b.on('presence', (p) => (seen = p.state))
+  b.on('presence', (p) => { if (p.id === a.clientId) seen = p.state })
   a.setPresence({ pointer: { x: 12, y: 34 } })
   check('presence: the other user receives the pointer', await until(() => JSON.stringify(seen) === JSON.stringify({ pointer: { x: 12, y: 34 } })))
 
@@ -193,6 +299,38 @@ const settled = (cs: CollabClient[], code: string) => {
   check('forged client id is rejected by the server', rawRefused === 'op is stamped with another client id')
   check('forged op changed nothing', server.roomFor(code)!.project.tempo === 120)
 
+  a.close()
+  b.close()
+}
+
+// 6b. Restore over sockets: one person puts the project back, everyone follows, it shows as the person's action.
+{
+  const code = server.createSession(baseProject())
+  const [a, b] = [await join(code, 'Ana'), await join(code, 'Ben')]
+  a.dispatch({ type: 'addNote', trackId: 'track-1', clipId: 'clip-1', note: note('x1', 61, PPQ) })    // step 1
+  await settled([a, b], code)
+  b.dispatch({ type: 'setTempo', bpm: 160 })                                                          // step 2
+  await settled([a, b], code)
+  a.dispatch({ type: 'addNote', trackId: 'track-1', clipId: 'clip-1', note: note('x2', 63, PPQ * 2) }) // step 3
+  await settled([a, b], code)
+
+  const seenOnA: { seq: number; restore?: number; by: string }[] = []
+  a.on('entries', (es) => seenOnA.push(...es.map((e) => ({ seq: e.seq, restore: e.restore, by: e.op.clientId }))))
+  b.restore(1) // Ben puts everything back to just after step 1
+  await until(() => a.project!.tempo === 120 && b.project!.tempo === 120)
+  check('restore over sockets: everyone ends identical', await settled([a, b], code))
+  check('restore over sockets: tempo and the later note are undone, the earlier note stays', a.project!.tempo === 120 && b.project!.tempo === 120 && !a.project!.tracks['track-1']!.clips['clip-1']!.notes['x2'] && !!a.project!.tracks['track-1']!.clips['clip-1']!.notes['x1'])
+  check('restore over sockets: the other person sees it as Ben\'s restore of step 1', seenOnA.length > 0 && seenOnA.every((e) => e.restore === 1 && e.by === b.clientId))
+
+  a.restore(3) // Ana restores forward to step 3: this undoes Ben's restore
+  await until(() => a.project!.tempo === 160 && b.project!.tempo === 160)
+  await settled([a, b], code)
+  check('restore over sockets: restoring forward brings everything back', b.project!.tempo === 160 && !!b.project!.tracks['track-1']!.clips['clip-1']!.notes['x2'])
+
+  let refusal = ''
+  a.on('refused', (r) => (refusal = r.reason))
+  a.restore(9999)
+  check('restore over sockets: a nonsense step is refused with a reason', await until(() => refusal.length > 0))
   a.close()
   b.close()
 }
@@ -217,6 +355,7 @@ const settled = (cs: CollabClient[], code: string) => {
 {
   const code = server.createSession(baseProject())
   const [a, c] = [await join(code, 'Ana'), await join(code, 'Cleo')]
+  const colourBefore = c.users.find((u) => u.id === c.clientId)?.color
   ;(c as unknown as { ws: WebSocket }).ws.close() // simulate the connection dropping
   await until(() => c.status === 'disconnected')
   a.dispatch({ type: 'setTempo', bpm: 133 })
@@ -226,6 +365,7 @@ const settled = (cs: CollabClient[], code: string) => {
   check('reconnect: it catches up and everyone is identical', await settled([a, c], code))
   check('reconnect: missed edits and its own offline edit are both there', c.project!.tempo === 133 && c.project!.masterVolume === 40 && !!c.project!.tracks['track-1']!.clips['clip-1']!.notes['n2'])
   check('reconnect: counted once', c.reconnects === 1)
+  check('reconnect: the person keeps the same colour', c.users.find((u) => u.id === c.clientId)?.color === colourBefore && !!colourBefore)
   a.close()
   c.close()
 }
@@ -311,6 +451,9 @@ const settled = (cs: CollabClient[], code: string) => {
   check('describe: ops read as plain English', describeOp(op(updateN1({ pitch: 1 }), 'A'), p) === 'moved a note on Synth' && describeOp(op({ type: 'setTempo', bpm: 90 }, 'A')) === 'set the tempo to 90')
   const r = applyOp(p, op(updateN1({ pitch: 61 }), 'A'))
   check('vendored shared model works as in Component 1', r.ok)
+  check('detail: a new note says which note and where', describeDetail(op({ type: 'addNote', trackId: 'track-1', clipId: 'clip-1', note: note('z', 64, PPQ * 2) }, 'A')) === 'E4 at beat 3')
+  check('detail: an edit lists the values it set', describeDetail(op(updateN1({ pitch: 65, velocity: 50 }), 'A')) === 'pitch F4, velocity 50')
+  check('detail: tempo and deletes', describeDetail(op({ type: 'setTempo', bpm: 90 }, 'A')) === '90 bpm' && describeDetail(op({ type: 'deleteTrack', trackId: 't' }, 'A')) === null)
 }
 
 await server.close()

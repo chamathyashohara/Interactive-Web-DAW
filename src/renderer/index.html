@@ -12,10 +12,10 @@
   #info { padding: 8px 14px; background: #2d2d35; display: none; gap: 14px; align-items: center; }
   #status { margin-left: auto; font-size: 13px; opacity: .8; }
   #notice { padding: 6px 14px; font-size: 12px; background: #4a3a1c; display: none; }
-  #workspace { display: none; gap: 16px; padding: 14px; align-items: flex-start; position: relative; }
+  #workspace { display: none; flex-direction: column; gap: 14px; padding: 14px; position: relative; }
+  #cols { display: flex; gap: 16px; align-items: flex-start; }
   #left { width: 330px; flex: none; }
   #center { flex: 1; min-width: 0; }
-  #right { width: 250px; flex: none; }
   h3 { margin: 0 0 6px; font-size: 13px; opacity: .8; font-weight: 600; }
   .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   .track { display: flex; align-items: center; gap: 6px; padding: 6px; margin-bottom: 4px; border-radius: 4px;
@@ -30,9 +30,37 @@
   .cell.beat { background: #32323a; }
   .cell.on { outline: 1px solid #fff3; }
   .plabel { font-size: 10px; opacity: .5; text-align: right; padding-right: 4px; line-height: 20px; }
-  #activity div { font-size: 12px; padding: 3px 6px; margin-bottom: 3px; border-radius: 3px; border-left: 4px solid #888; background: #25252b; }
-  #activity small { opacity: .5; }
-  #users span { display: inline-block; padding: 2px 8px; margin: 0 4px 4px 0; border-radius: 10px; font-size: 12px; color: #111; }
+  #history { background: #22222a; border-radius: 6px; padding: 8px 10px; }
+  #historyHead { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+  #historyHead .count { opacity: .55; }
+  #historyBar { display: flex; gap: 2px; height: 28px; border-radius: 4px; overflow: hidden; background: #1a1a20; align-items: stretch; }
+  #historyBar .empty { font-size: 11px; opacity: .45; padding: 7px 8px; }
+  .seg { flex: 1 1 0; min-width: 5px; max-width: 36px; border-radius: 2px; cursor: pointer; opacity: .88; transition: transform 80ms, opacity 80ms; }
+  .seg.start { flex: none; width: 14px; min-width: 14px; background: #5b5b66; }
+  .seg.restore { background-image: repeating-linear-gradient(45deg, #0000 0 4px, #000a 4px 8px); }
+  .seg.current { box-shadow: inset 0 -3px 0 #fff; }
+  .seg:hover { opacity: 1; transform: scaleY(1.12); outline: 2px solid #fff; z-index: 1; }
+  .seg.fresh { animation: pop .7s ease-out; }
+  @keyframes pop { from { transform: scaleY(1.7); filter: brightness(1.8); } to { transform: none; filter: none; } }
+  #tip { position: fixed; z-index: 30; pointer-events: none; display: none; background: #111; border: 1px solid #555; border-radius: 6px;
+    padding: 7px 10px; font-size: 12px; max-width: 300px; line-height: 1.45; box-shadow: 0 4px 14px #0008; }
+  #tip .who { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  #tip .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  #tip .when { opacity: .55; font-weight: 400; margin-left: auto; padding-left: 12px; }
+  #tip .detail { opacity: .65; }
+  #tip .hint { margin-top: 4px; opacity: .5; font-size: 11px; }
+  #confirm { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; background: rgba(0, 0, 0, .6); }
+  #confirm .dialog { width: min(440px, calc(100vw - 32px)); background: #26262c; border: 1px solid #555; border-radius: 10px; padding: 18px 20px 16px; box-shadow: 0 12px 40px #000a; }
+  #confirm h3 { margin: 0 0 10px; font-size: 16px; opacity: 1; font-weight: 600; }
+  #confirm #confirmWho { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 12px; background: #1d1d23; border-radius: 6px; font-size: 13px; }
+  #confirm #confirmWho .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  #confirm p { margin: 0 0 8px; font-size: 13px; line-height: 1.5; }
+  #confirm p.note { opacity: .6; font-size: 12px; }
+  #confirm .buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+  #confirm .buttons button { padding: 7px 16px; font-size: 13px; }
+  #confirm button.primary { background: #b3361f; border-color: #d0482d; font-weight: 600; }
+  #users { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  #users span { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; color: #111; }
   #cursors { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
   .cursor { position: absolute; left: 0; top: 0; transition: transform 60ms linear; }
   .cursor svg { display: block; }
@@ -64,6 +92,11 @@
 <div id="info"><div id="infoText"></div><button id="copyCode" title="Copy the 6-digit session code">Copy code</button></div>
 <div id="notice"></div>
 <div id="workspace">
+  <div id="history">
+    <div id="historyHead"><b>History</b><span class="count" id="historyCount"></span><div id="users"></div></div>
+    <div id="historyBar"></div>
+  </div>
+  <div id="cols">
   <div id="left">
     <h3>Project</h3>
     <div class="row">Tempo <input id="tempo" type="number" min="20" max="300" style="width:70px" />
@@ -77,11 +110,16 @@
     <div id="grid"></div>
     <p style="font-size:11px;opacity:.5">Click a cell to add or remove a note. Open the app twice and click the same cell to see how conflicts are handled.</p>
   </div>
-  <div id="right">
-    <h3>People in this session</h3>
-    <div id="users"></div>
-    <h3>Activity</h3>
-    <div id="activity"></div>
+  </div>
+</div>
+<div id="tip"></div>
+<div id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="dialog">
+    <h3 id="confirmTitle"></h3>
+    <div id="confirmWho"></div>
+    <p id="confirmText"></p>
+    <p class="note">Nothing is erased from the history. To go forward again, click a later segment.</p>
+    <div class="buttons"><button id="confirmNo">Cancel</button><button id="confirmYes" class="primary">Restore</button></div>
   </div>
 </div>
 <div id="cursors"></div>
