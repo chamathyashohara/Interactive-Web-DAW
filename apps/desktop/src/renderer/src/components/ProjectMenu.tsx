@@ -74,7 +74,7 @@ export function ProjectMenu({ onExport }: { onExport: () => void }) {
             <span className="text-slate-400">💾</span> Save as…{key("Ctrl+Shift+S")}
           </button>
           <div className="my-1 border-t border-white/10" />
-          <button className={`${item} cursor-not-allowed opacity-40`} disabled title="Import a MIDI file as notes (coming in the next update)" data-testid="project-import-midi">
+          <button className={item} onClick={() => void window.daw.projects.importMidi().then((r) => { if (r.ok) toast(`Imported ${r.tracks} track${r.tracks === 1 ? "" : "s"}`); else if (!r.canceled) toast(r.reason ?? "Could not import."); close(); })} data-testid="project-import-midi" title="Import a MIDI file as a new project">
             <span className="text-slate-400">↧</span> Import MIDI…
           </button>
           <button className={item} onClick={() => (close(), onExport())} data-testid="project-export">

@@ -75,6 +75,7 @@ const api = {
     save: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFile", explicitPath),
     saveAsFile: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFileAs", explicitPath),
     openFile: (explicitPath?: string): Promise<{ ok: boolean; id?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:openFile", explicitPath),
+    importMidi: (explicitPath?: string): Promise<{ ok: boolean; id?: string; tracks?: number; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:importMidi", explicitPath),
     onList: (cb: (p: ProjectListPayload) => void) => {
       const l = (_e: unknown, p: ProjectListPayload) => cb(p);
       ipcRenderer.on("project:list", l);

@@ -12,6 +12,8 @@ import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
 import { Workspace } from "./project/workspace";
+import { parseMidi } from "./midi/parseMidi";
+import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
@@ -427,6 +429,37 @@ app.whenReady().then(() => {
     telemetry.record("ui.project", { action: "openFile" });
     publishProjects();
     return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:importMidi", async (_e, explicitPath?: unknown) => {
+    let filePath = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!filePath) {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: "Import MIDI",
+        properties: ["openFile"],
+        filters: [{ name: "MIDI file", extensions: ["mid", "midi"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      filePath = picked.filePaths[0];
+    }
+    let project: Project;
+    let trackCount = 0;
+    try {
+      const parsed = parseMidi(new Uint8Array(fs.readFileSync(filePath)));
+      const base = path.basename(filePath, path.extname(filePath));
+      project = midiToProject(parsed, randomUUID(), base);
+      trackCount = project.trackOrder.length;
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "That MIDI file could not be read." };
+    }
+    const name = path.basename(filePath, path.extname(filePath));
+    const meta = workspace.importProject(name, project);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "importMidi", tracks: trackCount });
+    publishProjects();
+    return { ok: true, id: meta.id, tracks: trackCount };
   });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
