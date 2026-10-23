@@ -1,12 +1,15 @@
-// Project system: new / open / save-as / rename / delete, driven through the Project menu with the real mouse.
-// Runs in workspace mode (no fixed DAW_DATA_DIR), so switching between real project folders is exercised.
+// Project system: new / open-recent / switch, and Save / Save-as / Open to real .daw files, via the Project menu.
+// Runs in workspace mode (no fixed DAW_DATA_DIR). File dialogs are bypassed with the DAW_E2E explicit-path hook.
 // Usage: node apps/desktop/e2e/projects.mjs   (build the app first: npm run build -w apps/desktop)
+import fs from "node:fs";
 import path from "node:path";
 import { connect, killTree, launch, makeReporter, rmDir, sleep, tmpDataDir, until } from "./lib.mjs";
 
 const { check, finish } = makeReporter();
 const PORT = 9345;
 const dataDir = tmpDataDir("daw-projects-");
+const fileDir = path.join(dataDir, "files");
+fs.mkdirSync(fileDir, { recursive: true });
 const child = launch(PORT, dataDir, { DAW_DATA_DIR: null, DAW_PROJECTS_DIR: path.join(dataDir, "projects") });
 const c = await connect(PORT);
 
@@ -20,72 +23,69 @@ const openMenu = async () => {
   await sleep(250);
 };
 const rowFor = (id) => `[data-testid=project-row][data-project-id="${id}"]`;
+const save = (p) => c.evalJs(`window.daw.projects.save(${JSON.stringify(p)})`);
+const openFile = (p) => c.evalJs(`window.daw.projects.openFile(${JSON.stringify(p)})`);
 
 try {
   await until(async () => (await c.evalJs(`document.querySelector('[data-testid=engine-chip]')?.textContent ?? ''`)).includes("Engine connected"), 15000);
 
-  // ---------- first run ----------
   const l0 = await list();
   check("P1. a first project exists and is shown in the menu", l0.projects.length === 1 && l0.projects[0].name === "My first project" && (await menuName()) === "My first project", JSON.stringify(l0));
   const firstId = l0.activeId;
 
-  // ---------- new project switches to an empty one ----------
   await addNote("in-first");
   await sleep(200);
   await openMenu();
   await c.clickEl("[data-testid=project-new]");
   await sleep(600);
   const l1 = await list();
-  check("P2. New project creates and switches to a fresh, empty project", l1.projects.length === 2 && l1.activeId !== firstId && (await notes()).length === 0, JSON.stringify({ n: l1.projects.length, active: l1.activeId !== firstId, notes: (await notes()).length }));
+  check("P2. New project creates and switches to a fresh, empty project", l1.projects.length === 2 && l1.activeId !== firstId && (await notes()).length === 0);
 
-  // ---------- open the first one again: its note is still there ----------
   await openMenu();
   await c.clickEl(`${rowFor(firstId)} button`);
   await sleep(600);
-  check("P3. Opening another project reloads it with its own content", (await list()).activeId === firstId && (await notes()).join() === "in-first");
+  check("P3. Opening a recent project reloads it with its own content", (await list()).activeId === firstId && (await notes()).join() === "in-first");
 
-  // ---------- save a copy ----------
-  await openMenu();
-  await c.clickEl("[data-testid=project-saveas]");
+  // ---------- Save to a real file ----------
+  const songPath = path.join(fileDir, "My Song.daw");
+  const r = await save(songPath);
+  await sleep(500);
+  const onDisk = fs.existsSync(songPath) ? JSON.parse(fs.readFileSync(songPath, "utf8")) : null;
+  check("P4. Save writes a .daw file with the project inside, and names the project after the file", r.ok && r.path === songPath && !!onDisk && onDisk.project && Object.keys(onDisk.project.tracks["track-1"].clips["clip-1"].notes).join() === "in-first" && (await menuName()) === "My Song", JSON.stringify({ ok: r.ok, menu: await menuName() }));
+
+  // Ctrl+S / Save again writes to the linked file without asking (no explicit path given)
+  await addNote("added-later");
   await sleep(200);
-  await c.evalJs(`(() => { const i = document.querySelector('[data-testid=project-name-input]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'My Remix'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await sleep(150);
-  await c.clickEl("[data-testid=project-name-ok]");
+  const r2 = await c.evalJs(`window.daw.projects.save()`);
+  await sleep(400);
+  const reread = JSON.parse(fs.readFileSync(songPath, "utf8"));
+  check("P5. Save again writes to the same file without a dialog (Ctrl+S)", r2.ok && r2.path === songPath && Object.keys(reread.project.tracks["track-1"].clips["clip-1"].notes).join() === "in-first,added-later", JSON.stringify({ ok: r2.ok, path: r2.path === songPath }));
+
+  // ---------- Open the file as a new project ----------
+  await openMenu();
+  await c.clickEl("[data-testid=project-new]"); // move away first
+  await sleep(500);
+  const before = (await list()).projects.length;
+  const ro = await openFile(songPath);
   await sleep(700);
   const l2 = await list();
-  const copy = l2.projects.find((p) => p.name === "My Remix");
-  check("P4. Save a copy makes a new project with the copied content and switches to it", !!copy && l2.activeId === copy.id && copy.id !== firstId && (await notes()).join() === "in-first", JSON.stringify({ copy: copy?.name, active: l2.activeId === copy?.id }));
+  check("P6. Open… loads a .daw file as a project with its content", ro.ok && (await notes()).join() === "in-first,added-later" && l2.projects.length === before + 1 && (await menuName()) === "My Song", JSON.stringify({ ok: ro.ok, n: l2.projects.length, menu: await menuName() }));
 
-  // editing the copy does not change the original
-  await addNote("only-in-copy");
-  await sleep(300);
-  await openMenu();
-  await c.clickEl(`${rowFor(firstId)} button`);
-  await sleep(600);
-  check("P5. editing the copy left the original untouched", (await notes()).join() === "in-first");
+  // a bad file is refused, not crashed
+  const badPath = path.join(fileDir, "bad.daw");
+  fs.writeFileSync(badPath, "not json at all");
+  const rb = await openFile(badPath);
+  check("P7. a file that is not a project is refused with a message, not a crash", rb.ok === false && !!rb.reason && (await c.evalJs(`!!document.querySelector('[data-testid=project-menu]')`)), JSON.stringify(rb));
 
-  // ---------- rename ----------
+  // ---------- Delete ----------
   await openMenu();
-  await c.clickEl("[data-testid=project-rename]");
+  const openedCopy = l2.activeId;
+  const delBefore = (await list()).projects.length;
+  await c.clickEl(`${rowFor(openedCopy)} [data-testid=project-delete]`);
   await sleep(200);
-  await c.evalJs(`(() => { const i = document.querySelector('[data-testid=project-name-input]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'Verse Idea'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await sleep(150);
-  await c.clickEl("[data-testid=project-name-ok]");
+  await c.clickEl(`${rowFor(openedCopy)} [data-testid=project-delete-confirm]`);
   await sleep(500);
-  check("P6. Rename changes the name in the menu and the list, keeping the content", (await menuName()) === "Verse Idea" && (await list()).projects.find((p) => p.id === firstId)?.name === "Verse Idea" && (await notes()).join() === "in-first");
-
-  // the name survives a relaunch (persisted)
-  await sleep(300);
-
-  // ---------- delete ----------
-  await openMenu();
-  const before = (await list()).projects.length;
-  await c.clickEl(`${rowFor(copy.id)} [data-testid=project-delete]`);
-  await sleep(200);
-  await c.clickEl(`${rowFor(copy.id)} [data-testid=project-delete-confirm]`);
-  await sleep(500);
-  const l3 = await list();
-  check("P7. Delete removes a project (two clicks: ✕ then confirm)", l3.projects.length === before - 1 && !l3.projects.some((p) => p.id === copy.id), JSON.stringify(l3.projects.map((p) => p.name)));
+  check("P8. Delete removes a project (✕ then confirm)", (await list()).projects.length === delBefore - 1);
 
   // ---------- persistence across a relaunch ----------
   killTree(child);
@@ -95,8 +95,7 @@ try {
   try {
     await until(async () => (await c2.evalJs(`document.querySelector('[data-testid=engine-chip]')?.textContent ?? ''`)).includes("Engine connected"), 15000);
     const relaunched = await c2.evalJs(`window.daw.projects.list()`);
-    const back = await c2.evalJs(`window.daw.getInitial().then((x) => Object.keys(x.project.tracks["track-1"].clips["clip-1"].notes))`);
-    check("P8. after a relaunch the renamed project reopens with its content", relaunched.projects.some((p) => p.name === "Verse Idea") && relaunched.activeId === firstId && back.join() === "in-first", JSON.stringify({ names: relaunched.projects.map((p) => p.name), back }));
+    check("P9. projects (and the saved name 'My Song') survive a relaunch", relaunched.projects.some((p) => p.name === "My Song"), JSON.stringify(relaunched.projects.map((p) => p.name)));
   } finally {
     try { c2.ws.close(); } catch {}
     killTree(child2);

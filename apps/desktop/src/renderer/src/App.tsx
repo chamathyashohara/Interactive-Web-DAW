@@ -216,7 +216,17 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (e.shiftKey) void window.daw.projects.saveAsFile();
+        else void window.daw.projects.save();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && !typing) {
+        e.preventDefault();
+        void window.daw.projects.openFile();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e" && !typing) {
+        e.preventDefault();
+        void exportWav();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) void window.daw.redo();
         else void window.daw.undo();
@@ -265,7 +275,7 @@ export function App() {
         <div className="mr-1 text-sm font-semibold text-amber-300">
           Collab<span className="text-slate-200">DAW</span>
         </div>
-        <ProjectMenu />
+        <ProjectMenu onExport={() => void exportWav()} />
         <span className="mx-1 h-5 w-px bg-white/10" />
 
         <div className="flex gap-1">

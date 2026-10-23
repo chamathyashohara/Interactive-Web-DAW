@@ -13,7 +13,7 @@ import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
 import { Workspace } from "./project/workspace";
 import { TelemetryStore } from "./telemetry/telemetryStore";
-import { eventsToCsv, metricsToCsv } from "@daw/shared";
+import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
 interface EngineState {
   connected: boolean;
@@ -352,16 +352,80 @@ app.whenReady().then(() => {
   });
   ipcMain.handle("project:delete", (_e, id: unknown) => {
     if (typeof id !== "string") return { ok: false, reason: "bad arguments" };
-    workspace.delete(id);
     if (id === activeProjectId) {
-      const next = workspace.ensureAtLeastOne();
-      service.load(workspace.storeFor(next.id));
-      activeProjectId = next.id;
-      workspace.touch(next.id);
+      // Switch to another project first so this one's journal file is closed before its folder is removed.
+      const other = workspace.list().find((p) => p.id !== id);
+      const nextId = other ? other.id : workspace.create("My first project").id;
+      service.load(workspace.storeFor(nextId));
+      activeProjectId = nextId;
+      workspace.touch(nextId);
       engine.send({ t: "stop" });
     }
+    workspace.delete(id);
     publishProjects();
     return { ok: true };
+  });
+  // ---- project files (Save / Save as / Open to a real file the user picks) ----
+  const PROJECT_EXT = "daw";
+  const writeProjectFile = (filePath: string, project: Project) => fs.writeFileSync(filePath, JSON.stringify({ format: "collab-daw-project", version: 1, project }, null, 2));
+  const doSave = async (forceDialog: boolean, explicitPath?: string) => {
+    const linked = workspace.meta(activeProjectId)?.filePath;
+    let target = explicitPath && process.env.DAW_E2E === "1" ? explicitPath : forceDialog ? undefined : linked;
+    if (!target) {
+      const picked = await dialog.showSaveDialog(win!, {
+        title: forceDialog ? "Save project as" : "Save project",
+        defaultPath: path.join(app.getPath("documents"), `${service.current.name}.${PROJECT_EXT}`),
+        filters: [{ name: "DAW project", extensions: [PROJECT_EXT] }],
+      });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    try {
+      writeProjectFile(target, service.current);
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+    const base = path.basename(target, path.extname(target));
+    if (workspace.exists(activeProjectId)) {
+      workspace.setFilePath(activeProjectId, target);
+      workspace.renameIndexOnly(activeProjectId, base);
+    }
+    service.setName(base); // the project takes the file's name
+    telemetry.record("ui.project", { action: forceDialog ? "saveAs" : "save" });
+    publishProjects();
+    return { ok: true, path: target };
+  };
+  ipcMain.handle("project:saveFile", (_e, explicitPath?: unknown) => doSave(false, typeof explicitPath === "string" ? explicitPath : undefined));
+  ipcMain.handle("project:saveFileAs", (_e, explicitPath?: unknown) => doSave(true, typeof explicitPath === "string" ? explicitPath : undefined));
+  ipcMain.handle("project:openFile", async (_e, explicitPath?: unknown) => {
+    let filePath = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!filePath) {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: "Open project",
+        properties: ["openFile"],
+        filters: [{ name: "DAW project", extensions: [PROJECT_EXT] }, { name: "All files", extensions: ["*"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      filePath = picked.filePaths[0];
+    }
+    let project: Project;
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as { project?: Project } & Partial<Project>;
+      const body = (raw.project ?? raw) as Project;
+      if (!body || typeof body !== "object" || typeof body.tracks !== "object") throw new Error("not a project file");
+      project = migrateProject(body);
+    } catch {
+      return { ok: false, reason: "That file is not a valid project." };
+    }
+    const name = path.basename(filePath, path.extname(filePath));
+    const meta = workspace.importProject(name, project, filePath);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "openFile" });
+    publishProjects();
+    return { ok: true, id: meta.id };
   });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));

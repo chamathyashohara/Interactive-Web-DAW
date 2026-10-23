@@ -9,6 +9,8 @@ export interface ProjectMeta {
   name: string;
   createdAt: number;
   modifiedAt: number;
+  /** The project file the user last saved this to (Save writes here without asking again). Absent = never saved to a file. */
+  filePath?: string;
 }
 
 interface WorkspaceIndex {
@@ -176,6 +178,26 @@ export class Workspace {
     }
     this.persist();
     return m;
+  }
+
+  /** Records the file this project was saved to (so Save writes there next time). */
+  setFilePath(id: string, filePath: string): ProjectMeta | null {
+    const m = this.index.projects[id];
+    if (!m) return null;
+    m.filePath = filePath;
+    m.modifiedAt = this.now();
+    this.persist();
+    return m;
+  }
+
+  /** Imports a project's content (from an opened file) as a new workspace project and returns it. */
+  importProject(name: string, project: Project, filePath?: string): ProjectMeta {
+    const meta = this.create(name);
+    if (filePath) meta.filePath = filePath;
+    const snap = path.join(this.dirFor(meta.id), SNAPSHOT);
+    fs.writeFileSync(snap, JSON.stringify({ seq: 0, project: migrateProject({ ...project, id: meta.id, name: meta.name }) }));
+    this.persist();
+    return meta;
   }
 
   /** Updates only the index name/time (used when the project is open and the editor owns its snapshot). */

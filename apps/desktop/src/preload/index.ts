@@ -71,6 +71,10 @@ const api = {
     saveAs: (name?: string): Promise<{ ok: boolean; id?: string; reason?: string }> => ipcRenderer.invoke("project:saveAs", name),
     rename: (id: string, name: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:rename", id, name),
     delete: (id: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:delete", id),
+    /** Save the current project to its linked file (prompting the first time). */
+    save: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFile", explicitPath),
+    saveAsFile: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFileAs", explicitPath),
+    openFile: (explicitPath?: string): Promise<{ ok: boolean; id?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:openFile", explicitPath),
     onList: (cb: (p: ProjectListPayload) => void) => {
       const l = (_e: unknown, p: ProjectListPayload) => cb(p);
       ipcRenderer.on("project:list", l);
