@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { defaultProgress, type Progress, type Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../../main/telemetry/telemetryStore";
-import type { EngineState, ExportStatus, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
+import type { EngineState, ExportStatus, ProjectListPayload, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
   let state = initial;
@@ -37,6 +37,8 @@ export const engineStateStore = createStore<EngineState>({ connected: false, inf
 export const statusStore = createStore<StatusPayload | null>(null);
 
 export const exportStore = createStore<ExportStatus | null>(null);
+/** The list of projects and which one is open (for the Project menu). */
+export const projectsStore = createStore<ProjectListPayload>({ projects: [], activeId: "" });
 /** Learner progress: which lessons are done and whether features are gated. */
 export const progressStore = createStore<Progress>(defaultProgress());
 /** Whether the participant has agreed to the study recording (and under which code). */
@@ -59,6 +61,8 @@ export const previewIdStore = createStore<string | null>(null);
 export async function initStores() {
   const initial = await window.daw.getInitial();
   projectStore.set({ project: initial.project, canUndo: initial.canUndo, canRedo: initial.canRedo });
+  projectsStore.set(initial.projects);
+  window.daw.projects.onList((p) => projectsStore.set(p));
   engineStateStore.set(initial.engine);
   statusStore.set(initial.status);
   window.daw.onProject((p) => projectStore.set(p));

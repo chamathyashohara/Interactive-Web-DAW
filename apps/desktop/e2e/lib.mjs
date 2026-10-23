@@ -48,10 +48,11 @@ export const rmDir = (d) => {
 /** The generated Starter packs are the same every run, so all test launches share one copy (made on first use, about 6 s). */
 export const starterCache = path.join(os.tmpdir(), "daw-e2e-starter");
 
-export function launch(port, dataDir) {
+export function launch(port, dataDir, extraEnv = {}) {
   // ELECTRON_RUN_AS_NODE (set by some hosts) would make Electron run as plain Node and break the app.
-  const env = { ...process.env, DAW_DATA_DIR: dataDir, DAW_PROGRESS_DIR: dataDir, DAW_LIBRARY_DIR: path.join(dataDir, "library"), DAW_STARTER_DIR: starterCache, DAW_USER_DATA: path.join(dataDir, "user"), DAW_E2E: "1" };
+  const env = { ...process.env, DAW_DATA_DIR: dataDir, DAW_PROGRESS_DIR: dataDir, DAW_LIBRARY_DIR: path.join(dataDir, "library"), DAW_STARTER_DIR: starterCache, DAW_USER_DATA: path.join(dataDir, "user"), DAW_E2E: "1", ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
+  for (const [k, v] of Object.entries(extraEnv)) if (v === null) delete env[k]; // allow a test to unset a default (e.g. DAW_DATA_DIR for workspace mode)
   return spawn(electronExe, [appDir, `--remote-debugging-port=${port}`], {
     env,
     stdio: ["ignore", "ignore", "inherit"],
