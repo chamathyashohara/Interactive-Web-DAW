@@ -11,6 +11,7 @@ import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
+import { Workspace } from "./project/workspace";
 import { TelemetryStore } from "./telemetry/telemetryStore";
 import { eventsToCsv, metricsToCsv } from "@daw/shared";
 
@@ -57,9 +58,28 @@ function createWindow() {
 if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
 
 app.whenReady().then(() => {
-  const dataDir = process.env.DAW_DATA_DIR ?? path.join(app.getPath("userData"), "projects", "default");
-  fs.mkdirSync(dataDir, { recursive: true });
-  const service = new ProjectService(new LocalStore(dataDir));
+  // Projects live under <userData>/projects, each in its own folder, managed by the Workspace.
+  const workspace = new Workspace(process.env.DAW_PROJECTS_DIR ?? path.join(app.getPath("userData"), "projects"));
+  let activeProjectId: string;
+  let service: ProjectService;
+  if (process.env.DAW_DATA_DIR) {
+    // A fixed single-project directory (end-to-end tests, or an explicit override): unchanged behaviour.
+    fs.mkdirSync(process.env.DAW_DATA_DIR, { recursive: true });
+    service = new ProjectService(new LocalStore(process.env.DAW_DATA_DIR));
+    activeProjectId = path.basename(process.env.DAW_DATA_DIR);
+  } else {
+    const first = workspace.ensureAtLeastOne();
+    service = new ProjectService(workspace.storeFor(first.id));
+    activeProjectId = first.id;
+    workspace.touch(first.id);
+  }
+  // The project list for the UI; the active project is always present even when it is a fixed dir outside the workspace (tests).
+  const projectList = () => {
+    const projects = workspace.list();
+    if (!projects.some((p) => p.id === activeProjectId)) projects.unshift({ id: activeProjectId, name: service.current.name, createdAt: 0, modifiedAt: 0 });
+    return { projects, activeId: activeProjectId };
+  };
+  const publishProjects = () => sendToRenderer("project:list", projectList());
 
   // Learner progress (which lessons are done, whether features are gated). Per user, never part of a project.
   const progressDir = process.env.DAW_PROGRESS_DIR ?? app.getPath("userData");
@@ -133,6 +153,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("project:get", () => ({
     project: service.current,
+    projects: projectList(),
     canUndo: service.canUndo,
     canRedo: service.canRedo,
     engine: engineState,
@@ -282,6 +303,65 @@ app.whenReady().then(() => {
     } catch (err) {
       return { ok: false, reason: String(err) };
     }
+  });
+  // ---- projects (new / open / save as / rename / delete) ----
+  ipcMain.handle("project:list", () => projectList());
+  ipcMain.handle("project:new", (_e, name?: unknown) => {
+    const meta = workspace.create(typeof name === "string" ? name : undefined);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "new" });
+    publishProjects();
+    return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:open", (_e, id: unknown) => {
+    if (typeof id !== "string" || !workspace.exists(id)) return { ok: false, reason: "unknown project" };
+    service.load(workspace.storeFor(id));
+    activeProjectId = id;
+    workspace.touch(id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "open" });
+    publishProjects();
+    return { ok: true };
+  });
+  ipcMain.handle("project:saveAs", (_e, name?: unknown) => {
+    if (!workspace.exists(activeProjectId)) return { ok: false, reason: "the current project cannot be copied here" };
+    service.flush(); // make sure the copy includes the latest edits
+    const meta = workspace.duplicate(activeProjectId, typeof name === "string" ? name : undefined);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    telemetry.record("ui.project", { action: "saveAs" });
+    publishProjects();
+    return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:rename", (_e, id: unknown, name: unknown) => {
+    if (typeof id !== "string" || typeof name !== "string") return { ok: false, reason: "bad arguments" };
+    if (!workspace.exists(id)) {
+      if (id === activeProjectId) service.setName(name.slice(0, 80).trim() || service.current.name);
+    } else if (id === activeProjectId) {
+      service.setName(name.slice(0, 80).trim() || service.current.name);
+      workspace.renameIndexOnly(id, name);
+    } else {
+      workspace.rename(id, name);
+    }
+    publishProjects();
+    return { ok: true };
+  });
+  ipcMain.handle("project:delete", (_e, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, reason: "bad arguments" };
+    workspace.delete(id);
+    if (id === activeProjectId) {
+      const next = workspace.ensureAtLeastOne();
+      service.load(workspace.storeFor(next.id));
+      activeProjectId = next.id;
+      workspace.touch(next.id);
+      engine.send({ t: "stop" });
+    }
+    publishProjects();
+    return { ok: true };
   });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));

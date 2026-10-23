@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
 import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
+import type { ProjectMeta } from "../main/project/workspace";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../main/telemetry/telemetryStore";
 export type { TelemetryState };
@@ -49,13 +50,33 @@ export interface ImportResult {
   brandRemoved: string | null;
 }
 export type StatusPayload = EngineStatus & { levels: Record<string, number> };
+export interface ProjectListPayload {
+  projects: ProjectMeta[];
+  activeId: string;
+}
+export type { ProjectMeta };
 export interface InitialPayload extends ProjectPayload {
+  projects: ProjectListPayload;
   engine: EngineState;
   status: StatusPayload | null;
 }
 
 const api = {
   getInitial: (): Promise<InitialPayload> => ipcRenderer.invoke("project:get"),
+  // ---- projects (new / open / save as / rename / delete) ----
+  projects: {
+    list: (): Promise<ProjectListPayload> => ipcRenderer.invoke("project:list"),
+    new: (name?: string): Promise<{ ok: boolean; id?: string }> => ipcRenderer.invoke("project:new", name),
+    open: (id: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:open", id),
+    saveAs: (name?: string): Promise<{ ok: boolean; id?: string; reason?: string }> => ipcRenderer.invoke("project:saveAs", name),
+    rename: (id: string, name: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:rename", id, name),
+    delete: (id: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:delete", id),
+    onList: (cb: (p: ProjectListPayload) => void) => {
+      const l = (_e: unknown, p: ProjectListPayload) => cb(p);
+      ipcRenderer.on("project:list", l);
+      return () => ipcRenderer.removeListener("project:list", l);
+    },
+  },
   dispatch: (body: OpBody, group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:dispatch", body, group),
   dispatchBatch: (bodies: OpBody[], group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:batch", bodies, group),
   undo: (): Promise<boolean> => ipcRenderer.invoke("history:undo"),
