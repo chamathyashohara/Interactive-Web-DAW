@@ -1,0 +1,211 @@
+import {
+  INSTRUMENTS,
+  MAX_BPM,
+  MAX_PITCH,
+  MAX_TRACKS,
+  MIN_BPM,
+  MIN_PITCH,
+  RECENT_OPS_LIMIT,
+  type Clip,
+  type Note,
+  type Project,
+  type Track,
+} from "./model";
+import type { Op, OpBody, TrackFields } from "./ops";
+
+export type ApplyResult =
+  | { ok: true; project: Project; applied: boolean }
+  | { ok: false; reason: string };
+
+const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function validateNote(clip: Clip, n: Note): string | null {
+  if (!isInt(n.pitch) || n.pitch < MIN_PITCH || n.pitch > MAX_PITCH) return "pitch out of range";
+  if (!isInt(n.velocity) || n.velocity < 1 || n.velocity > 127) return "velocity out of range";
+  if (!isInt(n.startTick) || n.startTick < 0) return "startTick must be a non-negative integer";
+  if (!isInt(n.durationTicks) || n.durationTicks < 1) return "durationTicks must be a positive integer";
+  if (n.startTick + n.durationTicks > clip.lengthTicks) return "note exceeds clip length";
+  if (n.muted !== undefined && typeof n.muted !== "boolean") return "muted must be boolean";
+  return null;
+}
+
+function validateTrackFields(t: Partial<TrackFields>): string | null {
+  if (t.name !== undefined && (typeof t.name !== "string" || t.name.trim().length < 1 || t.name.length > 40)) return "track name must be 1-40 characters";
+  if (t.color !== undefined && (typeof t.color !== "string" || !COLOR_RE.test(t.color))) return "color must be #rrggbb";
+  if (t.volume !== undefined && (!isInt(t.volume) || t.volume < 0 || t.volume > 100)) return "volume must be an integer 0-100";
+  if (t.pan !== undefined && (!isInt(t.pan) || t.pan < -100 || t.pan > 100)) return "pan must be an integer -100..100";
+  if (t.mute !== undefined && typeof t.mute !== "boolean") return "mute must be boolean";
+  if (t.solo !== undefined && typeof t.solo !== "boolean") return "solo must be boolean";
+  return null;
+}
+
+function validateTrack(t: Track): string | null {
+  if (!t.id || typeof t.id !== "string") return "track id required";
+  if (!INSTRUMENTS.includes(t.instrument)) return "unknown instrument";
+  const fieldErr = validateTrackFields(t);
+  if (fieldErr) return fieldErr;
+  if (t.name === undefined || t.color === undefined || t.volume === undefined || t.pan === undefined || t.mute === undefined || t.solo === undefined) {
+    return "track is missing fields";
+  }
+  for (const clip of Object.values(t.clips ?? {})) {
+    if (!isInt(clip.startTick) || clip.startTick < 0 || !isInt(clip.lengthTicks) || clip.lengthTicks < 1) return "invalid clip";
+    for (const n of Object.values(clip.notes)) {
+      const err = validateNote(clip, n);
+      if (err) return err;
+    }
+  }
+  return null;
+}
+
+function withClip(project: Project, trackId: string, clipId: string, clip: Clip): Project {
+  const track = project.tracks[trackId]!;
+  return { ...project, tracks: { ...project.tracks, [trackId]: { ...track, clips: { ...track.clips, [clipId]: clip } } } };
+}
+
+function remember(project: Project, opId: string): Project {
+  const recentOps = [...project.recentOps, opId];
+  if (recentOps.length > RECENT_OPS_LIMIT) recentOps.splice(0, recentOps.length - RECENT_OPS_LIMIT);
+  return { ...project, recentOps };
+}
+
+const done = (project: Project, opId: string): ApplyResult => ({ ok: true, applied: true, project: remember(project, opId) });
+
+/**
+ * Pure, deterministic reducer shared by the desktop client and (later) the collaboration server.
+ * Re-applying an already applied opId is a no-op (`applied: false`).
+ */
+export function applyOp(project: Project, op: Op): ApplyResult {
+  if (!op.opId || !op.clientId) return { ok: false, reason: "missing opId/clientId" };
+  if (project.recentOps.includes(op.opId)) return { ok: true, project, applied: false };
+
+  switch (op.type) {
+    case "setTempo": {
+      if (typeof op.bpm !== "number" || !Number.isFinite(op.bpm) || op.bpm < MIN_BPM || op.bpm > MAX_BPM) {
+        return { ok: false, reason: "tempo out of range" };
+      }
+      return done({ ...project, tempo: op.bpm }, op.opId);
+    }
+    case "setMasterVolume": {
+      if (!isInt(op.volume) || op.volume < 0 || op.volume > 100) return { ok: false, reason: "volume must be an integer 0-100" };
+      return done({ ...project, masterVolume: op.volume }, op.opId);
+    }
+    case "addTrack": {
+      if (project.tracks[op.track.id]) return { ok: false, reason: "track id already exists" };
+      if (project.trackOrder.length >= MAX_TRACKS) return { ok: false, reason: `at most ${MAX_TRACKS} tracks` };
+      const err = validateTrack(op.track);
+      if (err) return { ok: false, reason: err };
+      const order = [...project.trackOrder];
+      const index = op.index === undefined ? order.length : Math.max(0, Math.min(order.length, op.index));
+      order.splice(index, 0, op.track.id);
+      return done({ ...project, tracks: { ...project.tracks, [op.track.id]: clone(op.track) }, trackOrder: order }, op.opId);
+    }
+    case "deleteTrack": {
+      if (!project.tracks[op.trackId]) return { ok: false, reason: "unknown track" };
+      if (project.trackOrder.length <= 1) return { ok: false, reason: "cannot delete the last track" };
+      const { [op.trackId]: _removed, ...rest } = project.tracks;
+      return done({ ...project, tracks: rest, trackOrder: project.trackOrder.filter((id) => id !== op.trackId) }, op.opId);
+    }
+    case "updateTrack": {
+      const track = project.tracks[op.trackId];
+      if (!track) return { ok: false, reason: "unknown track" };
+      const err = validateTrackFields(op.changes);
+      if (err) return { ok: false, reason: err };
+      return done({ ...project, tracks: { ...project.tracks, [op.trackId]: { ...track, ...op.changes } } }, op.opId);
+    }
+    case "addNote":
+    case "deleteNote":
+    case "updateNote": {
+      const clip = project.tracks[op.trackId]?.clips[op.clipId];
+      if (!clip) return { ok: false, reason: "unknown track or clip" };
+
+      if (op.type === "addNote") {
+        if (clip.notes[op.note.id]) return { ok: false, reason: "note id already exists" };
+        const err = validateNote(clip, op.note);
+        if (err) return { ok: false, reason: err };
+        const added: Note = { ...op.note };
+        if (added.muted === false) delete added.muted; // canonical form: absent means not muted
+        const next = { ...clip, notes: { ...clip.notes, [op.note.id]: added } };
+        return done(withClip(project, op.trackId, op.clipId, next), op.opId);
+      }
+
+      const existing = clip.notes[op.noteId];
+      if (!existing) return { ok: false, reason: "unknown note" };
+
+      if (op.type === "deleteNote") {
+        const { [op.noteId]: _removed, ...rest } = clip.notes;
+        return done(withClip(project, op.trackId, op.clipId, { ...clip, notes: rest }), op.opId);
+      }
+
+      const updated: Note = { ...existing, ...op.changes };
+      if (updated.muted === false) delete updated.muted;
+      const err = validateNote(clip, updated);
+      if (err) return { ok: false, reason: err };
+      const next = { ...clip, notes: { ...clip.notes, [op.noteId]: updated } };
+      return done(withClip(project, op.trackId, op.clipId, next), op.opId);
+    }
+  }
+}
+
+export function stamp(body: OpBody, opId: string, clientId: string): Op {
+  return { ...body, opId, clientId } as Op;
+}
+
+/**
+ * Builds the op that undoes `op`, given the project state *before* `op` was applied.
+ * Returns null if the op has no effect to undo.
+ */
+export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
+  const base = { opId: newOpId, clientId: op.clientId };
+  switch (op.type) {
+    case "setTempo":
+      return { ...base, type: "setTempo", bpm: before.tempo };
+    case "setMasterVolume":
+      return { ...base, type: "setMasterVolume", volume: before.masterVolume };
+    case "addTrack":
+      return { ...base, type: "deleteTrack", trackId: op.track.id };
+    case "deleteTrack": {
+      const track = before.tracks[op.trackId];
+      return track ? { ...base, type: "addTrack", track: clone(track), index: before.trackOrder.indexOf(op.trackId) } : null;
+    }
+    case "updateTrack": {
+      const track = before.tracks[op.trackId];
+      if (!track) return null;
+      const changes: Record<string, unknown> = {};
+      for (const key of Object.keys(op.changes) as (keyof TrackFields)[]) changes[key] = track[key];
+      return { ...base, type: "updateTrack", trackId: op.trackId, changes: changes as Partial<TrackFields> };
+    }
+    case "addNote":
+      return { ...base, type: "deleteNote", trackId: op.trackId, clipId: op.clipId, noteId: op.note.id };
+    case "deleteNote": {
+      const note = before.tracks[op.trackId]?.clips[op.clipId]?.notes[op.noteId];
+      return note ? { ...base, type: "addNote", trackId: op.trackId, clipId: op.clipId, note: { ...note } } : null;
+    }
+    case "updateNote": {
+      const note = before.tracks[op.trackId]?.clips[op.clipId]?.notes[op.noteId];
+      if (!note) return null;
+      const changes: Record<string, unknown> = {};
+      for (const key of Object.keys(op.changes) as (keyof Note)[]) changes[key] = key === "muted" ? (note.muted ?? false) : note[key];
+      return { ...base, type: "updateNote", trackId: op.trackId, clipId: op.clipId, noteId: op.noteId, changes: changes as UpdateNoteChanges };
+    }
+  }
+}
+type UpdateNoteChanges = Extract<Op, { type: "updateNote" }>["changes"];
+
+/** Stable hash of the project content (ignores recentOps) for divergence checks in later phases. */
+export function projectHash(project: Project): string {
+  const canonical = JSON.stringify(project, (key, value) => {
+    if (key === "recentOps") return undefined;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1)));
+    }
+    return value;
+  });
+  let h = 0x811c9dc5;
+  for (let i = 0; i < canonical.length; i++) {
+    h ^= canonical.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}

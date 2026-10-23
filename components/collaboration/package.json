@@ -1,0 +1,50 @@
+{
+  "name": "component03-collaboration",
+  "version": "1.0.0",
+  "description": "Real-time collaborative production module (Component 3)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && node run-electron.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild scripts/sync-test.ts --bundle --platform=node --format=esm --outfile=dist/sync-test.mjs --packages=external --log-level=error && node dist/sync-test.mjs && esbuild scripts/netstats-test.ts --bundle --platform=node --format=esm --outfile=dist/netstats-test.mjs --packages=external --log-level=error && node dist/netstats-test.mjs",
+    "dist": "node build.mjs && electron-builder --win nsis portable",
+    "server": "esbuild src/server/cloud.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external --log-level=error && node dist/server.mjs",
+    "test:ui": "node build.mjs && node scripts/e2e-ui.mjs"
+  },
+  "keywords": [],
+  "author": "B W C L Withanage",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "ws": "^8.22.0"
+  },
+  "build": {
+    "appId": "lk.sliit.comp3.collab",
+    "productName": "Comp3 Collab DAW",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
