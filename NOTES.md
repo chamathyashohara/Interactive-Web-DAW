@@ -55,3 +55,23 @@ Supersedes every earlier note about Yjs, y-websocket, awareness and the 3-clip s
 - `npm run test:ui` (scripts/e2e-ui.mjs) drives two real app windows and checks the full flow plus that each window equals its launch state after end/leave, and that the same window can host again. Close other copies of the app first (they hold port 4000).
 - Info bar has a Copy code button (copies the 6-digit code, shows "Copied!" for 1.5 s). Covered by npm run test:ui.
 - Copy code is done by the main process (IPC copy-text -> Electron clipboard) because the page's own clipboard access is refused when the window is not focused. UI test reads the real Windows clipboard.
+
+## History bar (2026-10-23)
+- The right-hand activity list is replaced by a History bar at the top of the workspace: one segment per action (ops accepted together in one batch = one segment), coloured per person; hover shows who, time, what, and the values set (e.g. "Ana, 10:04:49, #5: set the tempo to 132 (132 bpm)"). Newest segment pulses. Legend chips (people + colours) sit at the right of the bar header. Keeps the last 150 segments; the counter shows the total.
+- Colours are now chosen by the server (`src/shared/palette.ts`, first unused in join order, remembered per person so reconnecting keeps it), so two people never share a colour. The colour in `hello` is ignored.
+- A person who joins late receives the last 100 actions with the snapshot (`welcome.history`), so the bar is not empty for them. People who left keep their colour on old segments.
+- `describeDetail()` in `src/shared/describe.ts` writes the values an action set. `describeOp()` now accepts any object that lists track names.
+- Not built yet (planned): clicking a segment to revert it with a conflict check ("Lee changed this after you. Revert anyway?"), preview of the project at an earlier step, undo.
+- Tests: `npm test` 77 checks; `npm run test:ui` 23 checks (includes hover tooltip text and per-person colours).
+
+## Click a segment to put the project back (2026-10-23)
+- Clicking a history segment asks for confirmation, then puts the whole project back to just after that action, undoing everyone's later work. The grey marker at the left end of the bar restores the original project.
+- It is a NEW action, not an erasure: the server computes the ops that turn the current project into the project at that step (`diffProjects` in `src/shared/restore.ts`, always verified by replay), records them in the log marked `restore: <step>`, and broadcasts them. History stays complete, so clicking a later segment (the one just before the restore) undoes the restore.
+- Server: `Room.stateAt(seq)` rebuilds any step by replaying the log from `initial`; `Room.restoreTo(clientId, toSeq)`; message `{t:'restore', toSeq}`; refusals come back as `{t:'refused', reason}` (no such step, already like that, too old if the log was trimmed after 50,000 ops, cannot be restored exactly).
+- Screen: restore segments are striped in the restorer's colour; the current state has a white underline; other people get a notice "<name> put the project back to just after step #N"; tooltips say "restored the project to step #N (M changes applied)" and hint "Click to put the project back to this point".
+- Rules kept: track count stays 1..16 during a restore (deletes/adds are ordered to respect it); tracks whose clips differ are replaced.
+- Anyone in the session can restore (with confirmation). A host-only option is an easy change if wanted.
+- Edits other people had not yet confirmed when a restore lands are replayed on top; those that no longer apply are dropped and the person is told.
+- Not integrated with Component 1's own undo stack yet (that needs hooks in ProjectService).
+- Tests: `npm test` 94 checks (restore to every step, forward again, tracks added/deleted, 16-track swap, over sockets); `npm run test:ui` 39 checks (click, confirm, both windows change, forward again, start marker).
+- Restore confirmation is now a centred popup (dimmed background) instead of a bar: title "Go back to step #N?" (or "...the original project?"), a line naming the person and action at that step, how many later changes it undoes, Cancel (default focus) and Restore. Escape, Cancel, or a click on the dimmed background closes it. The count updates if more actions arrive while it is open. `npm run test:ui` is now 39 checks.

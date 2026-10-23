@@ -56,7 +56,7 @@ const FP = `(() => {
   const ids = ['host','hostOnline','join','end','leave','info','workspace'];  // the Network panel's open/closed state is the user's choice, so it is not compared
   const disp = Object.fromEntries(ids.map(i => [i, getComputedStyle(document.getElementById(i)).display]));
   const vals = Object.fromEntries(['addr','token','code','tempo','master'].map(i => [i, document.getElementById(i).value]));
-  const kids = Object.fromEntries(['tracks','grid','users','activity','cursors','infoText'].map(i => [i, document.getElementById(i).children.length]));
+  const kids = Object.fromEntries(['tracks','grid','users','historyBar','cursors','infoText'].map(i => [i, document.getElementById(i).children.length]));
   const text = Object.fromEntries(['status','gridTitle','netQuality','netPing','netSync','netRate'].map(i => [i, document.getElementById(i).textContent.trim()]));
   return JSON.stringify({disp, vals, kids, text});
 })()`
@@ -89,12 +89,64 @@ try {
   await B.ev(`[...document.querySelectorAll('.cell')].find(c => !c.classList.contains('on')).click()`)
   await wait(700)
   check('a note added by the guest appears for the host', (await A.ev(`document.querySelectorAll('.cell.on').length`)) === 5)
-  check('host activity list shows who did it', (await A.ev(`document.getElementById('activity').innerText`)).includes('added a note'))
+  // The history bar: one segment, in the guest's colour; hovering shows what was done and by whom.
+  check('host history bar has one segment for the guest note', (await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start)').length`)) === 1)
+  await A.ev(`document.querySelector('#historyBar .seg:not(.start)').dispatchEvent(new MouseEvent('mouseenter'))`)
+  const tip = await A.ev(`document.getElementById('tip').innerText`)
+  check(`hovering the segment shows who and what ("${tip.replace(/\n/g, ' | ')}")`, /Guest/.test(tip) && /added a note/.test(tip) && /at beat/.test(tip) && /\d\d:\d\d/.test(tip))
+  const chips = await A.ev(`[...document.querySelectorAll('#users span')].map(s => [s.textContent, getComputedStyle(s).backgroundColor])`)
+  const segColour = await A.ev(`getComputedStyle(document.querySelector('#historyBar .seg:not(.start)')).backgroundColor`)
+  const guestChip = chips.find(([t]) => t.startsWith('Guest'))
+  check('the segment has the guest colour, and the two people have different colours', !!guestChip && guestChip[1] === segColour && new Set(chips.map((c) => c[1])).size === 2)
 
   // Host changes tempo; guest sees it.
   await A.ev(`const t=document.getElementById('tempo'); t.value='150'; t.dispatchEvent(new Event('change'))`)
   await wait(700)
   check('tempo changed by the host shows for the guest', (await B.ev(`document.getElementById('tempo').value`)) === '150')
+  const segColours = await B.ev(`[...document.querySelectorAll('#historyBar .seg:not(.start)')].map(s => getComputedStyle(s).backgroundColor)`)
+  check('guest history bar has two segments in two different colours', segColours.length === 2 && segColours[0] !== segColours[1])
+
+  // Restore: click the guest's note (the first action). The project goes back to just after it, for everyone.
+  const hostChipColour = chips.find(([t]) => t.startsWith('Host'))[1]
+  const tempoOf = (X) => X.ev(`document.getElementById('tempo').value`)
+  const notesOf = (X) => X.ev(`document.querySelectorAll('.cell.on').length`)
+  await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start)')[0].click()`)
+  await wait(300)
+  check('clicking a segment opens a popup that names the step', (await A.ev(`getComputedStyle(document.getElementById('confirm')).display`)) === 'flex' && /step #1/.test(await A.ev(`document.getElementById('confirmTitle').textContent`)))
+  check('the popup covers the whole window and says what it undoes', (await A.ev(`(() => { const r = document.getElementById('confirm').getBoundingClientRect(); const d = document.documentElement; return r.width >= d.clientWidth - 1 && r.height >= d.clientHeight - 1 })()`)) && /undoes \d+ later change/.test(await A.ev(`document.getElementById('confirmText').textContent`)))
+  check('the safe choice (Cancel) has the focus', (await A.ev(`document.activeElement.id`)) === 'confirmNo')
+  await A.ev(`document.getElementById('confirmNo').click()`)
+  check('Cancel closes the popup and changes nothing', (await A.ev(`getComputedStyle(document.getElementById('confirm')).display`)) === 'none' && (await tempoOf(A)) === '150')
+  await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start)')[0].click()`)
+  await A.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  check('Escape closes the popup', (await A.ev(`getComputedStyle(document.getElementById('confirm')).display`)) === 'none')
+  await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start)')[0].click()`)
+  await A.ev(`document.getElementById('confirm').click()`)
+  check('clicking the dimmed background closes it', (await A.ev(`getComputedStyle(document.getElementById('confirm')).display`)) === 'none')
+  await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start)')[0].click()`)
+  check('nothing changes before confirming', (await tempoOf(A)) === '150')
+  await A.ev(`document.getElementById('confirmYes').click()`)
+  await wait(900)
+  check('after restoring to step 1 the tempo is back to 120 in both windows', (await tempoOf(A)) === '120' && (await tempoOf(B)) === '120')
+  check('the guest note from step 1 is kept (5 notes) in both windows', (await notesOf(A)) === 5 && (await notesOf(B)) === 5)
+  check('everyone sees a striped restore segment in the restorer colour', (await B.ev(`document.querySelectorAll('#historyBar .seg.restore').length`)) === 1 && (await B.ev(`getComputedStyle(document.querySelector('#historyBar .seg.restore')).backgroundColor`)) === hostChipColour)
+  check('the other person is told about the restore', /put the project back/.test(await B.ev(`document.getElementById('notice').textContent`)))
+  await B.ev(`document.querySelector('#historyBar .seg.restore').dispatchEvent(new MouseEvent('mouseenter'))`)
+  check('hovering the restore segment says what it did', /restored the project to step #1/.test(await B.ev(`document.getElementById('tip').innerText`)))
+
+  // Go forward again by clicking the tempo action: this undoes the restore.
+  await A.ev(`document.querySelectorAll('#historyBar .seg:not(.start):not(.restore)')[1].click()`)
+  await A.ev(`document.getElementById('confirmYes').click()`)
+  await wait(900)
+  check('clicking the later action brings the tempo (150) back everywhere', (await tempoOf(A)) === '150' && (await tempoOf(B)) === '150')
+
+  // And the original project, by clicking the grey start marker.
+  await B.ev(`document.querySelector('#historyBar .seg.start').click()`)
+  check('the start marker offers to restore the original', /original/.test(await B.ev(`document.getElementById('confirmTitle').textContent`)))
+  await B.ev(`document.getElementById('confirmYes').click()`)
+  await wait(900)
+  check('restoring the original gives the 4 starting notes and tempo 120 in both windows', (await notesOf(A)) === 4 && (await notesOf(B)) === 4 && (await tempoOf(A)) === '120')
+  check('the current state is marked on the bar', (await A.ev(`document.querySelectorAll('#historyBar .seg.current').length`)) === 1)
 
   // Pointers: guest sends a mouse move; host should draw a cursor.
   await B.ev(`document.dispatchEvent(new PointerEvent('pointermove', {clientX: 400, clientY: 300}))`)

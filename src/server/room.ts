@@ -1,8 +1,12 @@
-import { applyOp, type Op, type Project } from '../daw-shared'
+import { randomUUID } from 'node:crypto'
+import { applyOp, stamp, type Op, type Project } from '../daw-shared'
+import { diffProjects } from '../shared/restore'
 import { MAX_OPS_PER_MESSAGE, type LogEntry } from '../shared/protocol'
 
 /** How many accepted ops a room remembers for catching clients up. Older ones force a full snapshot. */
 const MAX_LOG = 50_000
+
+export type RestoreResult = { ok: true; entries: LogEntry[] } | { ok: false; reason: string };
 
 export type SubmitResult =
   | { ok: true; entries: LogEntry[]; duplicates: string[] }
@@ -15,6 +19,8 @@ export type SubmitResult =
  */
 export class Room {
   project: Project;
+  /** The project as the session started, so any earlier step can be rebuilt by replaying the log. */
+  readonly initial: Project;
   /** Number of ops accepted so far; the last entry has this seq. */
   seq = 0;
   private log: LogEntry[] = [];
@@ -26,6 +32,7 @@ export class Room {
     private readonly now: () => number = () => Date.now(),
   ) {
     this.project = project;
+    this.initial = project;
   }
 
   /**
@@ -63,8 +70,13 @@ export class Room {
       }
     }
 
+    return { ok: true, entries: this.commit(accepted, sim), duplicates };
+  }
+
+  /** Records ops that have already been checked, in order, and makes `sim` the current project. */
+  private commit(ops: Op[], sim: Project, restore?: number): LogEntry[] {
     const at = this.now();
-    const entries: LogEntry[] = accepted.map((op) => ({ seq: ++this.seq, op, at }));
+    const entries: LogEntry[] = ops.map((op) => ({ seq: ++this.seq, op, at, ...(restore !== undefined ? { restore } : {}) }));
     this.project = sim;
     this.log.push(...entries);
     if (this.log.length > MAX_LOG) {
@@ -72,7 +84,51 @@ export class Room {
       this.baseSeq += drop;
       this.log.splice(0, drop);
     }
-    return { ok: true, entries, duplicates };
+    return entries;
+  }
+
+  /** The project as it was just after step `seq` (0 = as the session started), or null if that is no longer known. */
+  stateAt(seq: number): Project | null {
+    if (!Number.isInteger(seq) || seq < 0 || seq > this.seq || this.baseSeq > 0) return null;
+    let p = this.initial;
+    for (const entry of this.log) {
+      if (entry.seq > seq) break;
+      const r = applyOp(p, entry.op);
+      if (!r.ok) return null;
+      p = r.project;
+    }
+    return p;
+  }
+
+  /**
+   * Puts the project back to how it was just after step `toSeq`. This is a new action, not an erasure:
+   * the ops that get there are added to the log (marked `restore`), so the history stays complete and
+   * restoring to a later step undoes the restore.
+   */
+  restoreTo(clientId: string, toSeq: number): RestoreResult {
+    if (!Number.isInteger(toSeq) || toSeq < 0 || toSeq > this.seq) return { ok: false, reason: 'there is no such step' };
+    if (this.baseSeq > 0) return { ok: false, reason: 'that part of the history is too old to restore' };
+    const target = this.stateAt(toSeq);
+    if (!target) return { ok: false, reason: 'that step cannot be rebuilt' };
+    const bodies = diffProjects(this.project, target);
+    if (bodies === null) return { ok: false, reason: 'that step cannot be restored exactly' };
+    if (bodies.length === 0) return { ok: false, reason: 'the project is already like that' };
+
+    let sim = this.project;
+    const ops: Op[] = [];
+    for (const body of bodies) {
+      const op = stamp(body, randomUUID(), clientId);
+      const r = applyOp(sim, op);
+      if (!r.ok) return { ok: false, reason: r.reason };
+      sim = r.project;
+      ops.push(op);
+    }
+    return { ok: true, entries: this.commit(ops, sim, toSeq) };
+  }
+
+  /** The last `n` accepted ops, oldest first, so a late joiner can see what was already done. */
+  recent(n = 100): LogEntry[] {
+    return this.log.slice(-n);
   }
 
   /** Ops a client missed after `lastSeq`, or null if the client must take a full snapshot instead. */

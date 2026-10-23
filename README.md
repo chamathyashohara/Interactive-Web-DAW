@@ -7,7 +7,7 @@ and can measure how the connection performs. Standalone Electron app (test scree
 - A session server keeps the real project for each session and puts every edit in one order (a server-ordered
   operation list). Every edit is checked with Component 1's own `applyOp`, so the server enforces the same rules as the DAW.
 - Each app shows its own edits at once and is corrected if the server's order differs. Dropped connections reconnect and catch up.
-- Presence (names, colours, live pointers), an activity list, and a Network panel (ping, jitter, loss, sync delay, CSV export).
+- Presence (names, colours, live pointers), a history bar (one coloured segment per action; hover for who and what; click to put the project back to that point), and a Network panel (ping, jitter, loss, sync delay, CSV export).
 - Hosting on the same network (the app runs the server) or online (`npm run server` behind a tunnel or on a host).
 
 ## Layout
@@ -25,7 +25,7 @@ and can measure how the connection performs. Standalone Electron app (test scree
 npm install
 npm start                 # build and launch the test app (open it twice for two windows)
 npm run server            # standalone session server (env PORT, AUTH_TOKEN)
-npm test                  # 68 headless checks
+npm test                  # 94 headless checks
 npm run test:ui           # drives two real app windows (close other copies of the app first)
 npm run typecheck
 npm run dist              # Windows installer + portable exe in release/

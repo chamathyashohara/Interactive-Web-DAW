@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import { Room } from './room'
 import { buildSeedProject } from '../shared/seed'
 import { SESSION_ENDED } from '../shared/types'
+import { USER_COLORS } from '../shared/palette'
 import type { ClientMsg, ServerMsg, UserInfo } from '../shared/protocol'
 
 export { SESSION_ENDED }
@@ -39,10 +40,11 @@ interface Session {
   /** Secret only the creator over HTTP knows; needed to end the session remotely. Empty for local sessions. */
   hostKey: string
   conns: Set<Conn>
+  /** Colour given to each person (by client id) the first time they join; kept if they reconnect. */
+  colors: Map<string, string>
 }
 
 const MAX_BODY = 1 << 20
-const COLOR_RE = /^#[0-9a-fA-F]{6}$/
 
 const safeEqual = (a: string, b: string) => {
   const x = Buffer.from(a)
@@ -61,7 +63,7 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
     while (sessions.has(code))
     const built = buildSeedProject(seed, randomUUID())
     if (!built.ok) throw new Error(built.reason)
-    sessions.set(code, { room: new Room(built.project), hostKey, conns: new Set() })
+    sessions.set(code, { room: new Room(built.project), hostKey, conns: new Set(), colors: new Map() })
     return code
   }
 
@@ -189,14 +191,16 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
         for (const other of s.conns) if (other !== conn && other.id === msg.clientId) other.ws.terminate()
         conn.id = msg.clientId
         conn.name = String(msg.name ?? 'Guest').trim().slice(0, 24) || 'Guest'
-        conn.color = COLOR_RE.test(String(msg.color)) ? msg.color : conn.color
+        // The server picks the colour so two people never look alike (the colour in `hello` is ignored).
+        if (!s.colors.has(conn.id)) s.colors.set(conn.id, USER_COLORS[s.colors.size % USER_COLORS.length]!)
+        conn.color = s.colors.get(conn.id)!
         conn.joined = true
 
         const entries = s.room.entriesSince(msg.lastSeq)
         send(conn, {
           t: 'welcome',
           seq: s.room.seq,
-          ...(entries ? { entries } : { project: s.room.project }),
+          ...(entries ? { entries } : { project: s.room.project, history: s.room.recent() }),
           users: usersOf(s),
         })
         broadcast(s, { t: 'users', users: usersOf(s) }, conn)
@@ -210,6 +214,10 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
         if (!result.ok) return send(conn, { t: 'reject', opIds: result.opIds, reason: result.reason })
         if (result.duplicates.length) send(conn, { t: 'reject', opIds: result.duplicates, reason: 'duplicate' })
         if (result.entries.length) broadcast(s, { t: 'entries', entries: result.entries })
+      } else if (msg.t === 'restore') {
+        const result = s.room.restoreTo(conn.id, msg.toSeq)
+        if (!result.ok) return send(conn, { t: 'refused', reason: result.reason })
+        broadcast(s, { t: 'entries', entries: result.entries })
       } else if (msg.t === 'presence') {
         if (JSON.stringify(msg.state ?? null).length > 512) return
         broadcast(s, { t: 'presence', id: conn.id, state: msg.state ?? null }, conn)

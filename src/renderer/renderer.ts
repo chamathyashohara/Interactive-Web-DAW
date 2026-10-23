@@ -1,10 +1,11 @@
 import { CollabClient, newId } from '../client/collabClient'
 import { NetStats } from './netstats'
-import { describeOp } from '../shared/describe'
+import { describeDetail, describeOp } from '../shared/describe'
 import { quality, summarize } from '../shared/stats'
 import { parseServerAddress } from '../shared/serverAddress'
 import type { HostInfo } from '../shared/types'
-import type { LogEntry, UserInfo } from '../shared/protocol'
+import type { LogEntry } from '../shared/protocol'
+import type { Op } from '../daw-shared'
 import { createProject, createTrack, MAX_TRACKS, PPQ, TRACK_COLORS, type Project, type Track } from '../daw-shared'
 
 declare global {
@@ -15,7 +16,6 @@ declare global {
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
-const GUEST_COLORS = ['#4cc9f0', '#b5179e', '#80ed99', '#ff6b6b', '#c77dff']
 const PITCHES = [72, 71, 70, 69, 68, 67, 66, 65, 64, 63, 62, 61, 60]
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 const pitchName = (p: number) => `${NOTE_NAMES[p % 12]}${Math.floor(p / 12) - 1}`
@@ -28,10 +28,9 @@ let isHost = false
 // Set only when hosting on a remote (internet) server, so we can end the session there.
 let remoteHost: { http: string; hostKey: string } | null = null
 let selectedTrackId: string | null = null
-let activity: { seq: number; user: UserInfo | null; text: string }[] = []
 let noticeTimer: ReturnType<typeof setTimeout> | null = null
 const presence = new Map<string, { pointer?: { x: number; y: number } | null }>()
-const me = { name: 'Host', color: '#ff4d8d' }
+const me = { name: 'Host' }
 
 /** The host's starting project: Component 1's model with a few notes so there is something to fight over. */
 function demoProject(): Project {
@@ -65,6 +64,9 @@ function render() {
   if (document.activeElement !== tempo) tempo.value = String(project.tempo)
   const master = $<HTMLInputElement>('master')
   if (document.activeElement !== master) master.value = String(project.masterVolume)
+
+  trackNames.clear()
+  for (const t of Object.values(project.tracks)) trackNames.set(t.id, t.name)
 
   const tracksEl = $('tracks')
   tracksEl.innerHTML = ''
@@ -161,17 +163,233 @@ function renderUsers() {
   }
 }
 
-function renderActivity() {
-  const el = $('activity')
-  el.innerHTML = ''
-  for (const a of activity.slice(0, 14)) {
-    const row = document.createElement('div')
-    row.style.borderLeftColor = a.user?.color ?? '#888'
-    row.innerHTML = `<b></b> <span></span> <small>#${a.seq}</small>`
-    row.querySelector('b')!.textContent = a.user?.name ?? 'Someone'
-    row.querySelector('span')!.textContent = a.text
-    el.appendChild(row)
+// --- History bar: one coloured segment per action (a batch counts as one), each person has their own colour ---
+interface Segment {
+  seqFrom: number
+  seqTo: number
+  userId: string
+  at: number
+  ops: Op[]
+  /** Set when this segment is a restore: the step the project was put back to, and how many ops that took. */
+  restoreTo?: number
+  changes: number
+  /** Descriptions are made when the action arrives, so track names are those of that moment. */
+  lines: { text: string; detail: string | null }[]
+}
+
+const MAX_SEGMENTS = 150
+let history: Segment[] = []
+let historyTotal = 0
+let lastHistorySeq = 0
+let freshFrom = Infinity
+const trackNames = new Map<string, string>()
+/** Name and colour of everyone seen in this session, kept after they leave so their old actions stay coloured. */
+const knownUsers = new Map<string, { name: string; color: string }>()
+
+const namesNow = () => ({ tracks: Object.fromEntries([...trackNames].map(([id, name]) => [id, { name }])) })
+
+function addHistory(entries: LogEntry[]) {
+  for (const e of entries) {
+    if (e.seq <= lastHistorySeq) continue // already shown (e.g. history sent again after a reconnect)
+    lastHistorySeq = e.seq
+    const last = history[history.length - 1]
+    const sameBatch = !!last && last.userId === e.op.clientId && last.at === e.at && last.restoreTo === e.restore
+    if (sameBatch && last) {
+      // Ops accepted together (one batch, or one restore) share a time and a person: one segment.
+      last.seqTo = e.seq
+      last.ops.push(e.op)
+      last.changes++
+      if (e.restore === undefined) last.lines.push({ text: describeOp(e.op, namesNow()), detail: describeDetail(e.op) })
+    } else {
+      history.push({
+        seqFrom: e.seq,
+        seqTo: e.seq,
+        userId: e.op.clientId,
+        at: e.at,
+        ops: [e.op],
+        restoreTo: e.restore,
+        changes: 1,
+        lines: [e.restore === undefined
+          ? { text: describeOp(e.op, namesNow()), detail: describeDetail(e.op) }
+          : { text: e.restore === 0 ? 'restored the original project' : `restored the project to step #${e.restore}`, detail: null }],
+      })
+      historyTotal++
+      freshFrom = Math.min(freshFrom, e.seq)
+    }
   }
+  if (history.length > MAX_SEGMENTS) history = history.slice(-MAX_SEGMENTS)
+  renderHistory()
+  fillConfirm()
+}
+
+const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+/** The marker at the left end of the bar: the project as it was before anyone did anything. */
+const START: Segment = {
+  seqFrom: 0, seqTo: 0, userId: '', at: 0, ops: [], changes: 0,
+  lines: [{ text: 'The original project, before any action', detail: null }],
+}
+
+function showTip(seg: Segment, anchor: HTMLElement) {
+  const who = knownUsers.get(seg.userId) ?? { name: 'Someone', color: '#888' }
+  const tip = $('tip')
+  tip.innerHTML = ''
+  const head = document.createElement('div')
+  head.className = 'who'
+  if (seg.userId !== '') {
+    const dot = document.createElement('span')
+    dot.className = 'dot'
+    dot.style.background = who.color
+    const name = document.createElement('span')
+    name.textContent = seg.userId === client?.clientId ? `${who.name} (you)` : who.name
+    const when = document.createElement('span')
+    when.className = 'when'
+    when.textContent = `${clock(seg.at)} · #${seg.seqFrom}${seg.seqTo !== seg.seqFrom ? '-' + seg.seqTo : ''}`
+    head.append(dot, name, when)
+  } else {
+    head.textContent = 'Start'
+  }
+  tip.appendChild(head)
+
+  const shown = seg.lines.slice(0, 5)
+  if (seg.lines.length > 1 && seg.restoreTo === undefined) {
+    const n = document.createElement('div')
+    n.textContent = `${seg.lines.length} changes at once:`
+    tip.appendChild(n)
+  }
+  for (const l of shown) {
+    const row = document.createElement('div')
+    row.textContent = l.text
+    const detail = seg.restoreTo !== undefined ? `${seg.changes} change${seg.changes === 1 ? '' : 's'} applied` : l.detail
+    if (detail) {
+      const d = document.createElement('span')
+      d.className = 'detail'
+      d.textContent = ` (${detail})`
+      row.appendChild(d)
+    }
+    tip.appendChild(row)
+  }
+  if (seg.lines.length > shown.length) {
+    const more = document.createElement('div')
+    more.className = 'detail'
+    more.textContent = `and ${seg.lines.length - shown.length} more`
+    tip.appendChild(more)
+  }
+  const hint = document.createElement('div')
+  hint.className = 'hint'
+  hint.textContent = seg.seqTo >= lastHistorySeq ? 'This is the current state' : 'Click to put the project back to this point'
+  tip.appendChild(hint)
+
+  tip.style.visibility = 'hidden'
+  tip.style.display = 'block'
+  const r = anchor.getBoundingClientRect()
+  const w = tip.offsetWidth
+  tip.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`
+  tip.style.top = `${r.bottom + 8}px`
+  tip.style.visibility = 'visible'
+}
+
+// --- Restoring: clicking a segment puts the project back to just after that action (after a confirmation popup) ---
+let pendingSeg: Segment | null = null
+
+function hideConfirm() {
+  pendingSeg = null
+  $('confirm').style.display = 'none'
+}
+
+/** Fills the popup from the chosen segment. Called again if more actions arrive while it is open, so the count stays right. */
+function fillConfirm() {
+  const seg = pendingSeg
+  if (!seg) return
+  const later = lastHistorySeq - seg.seqTo
+  $('confirmTitle').textContent = seg.seqTo === 0 ? 'Go back to the original project?' : `Go back to step #${seg.seqTo}?`
+
+  const who = $('confirmWho')
+  who.innerHTML = ''
+  if (seg.userId === '') {
+    who.textContent = 'The project as it was before anyone did anything.'
+  } else {
+    const u = knownUsers.get(seg.userId) ?? { name: 'Someone', color: '#888' }
+    const dot = document.createElement('span')
+    dot.className = 'dot'
+    dot.style.background = u.color
+    const text = document.createElement('span')
+    text.textContent = `The project just after ${u.name} ${seg.lines[0]?.text ?? 'acted'}${seg.lines.length > 1 ? ` (and ${seg.lines.length - 1} more)` : ''}.`
+    who.append(dot, text)
+  }
+  $('confirmText').textContent = `This undoes ${later} later change${later === 1 ? '' : 's'}, made by everyone in the session.`
+}
+
+function askRestore(seg: Segment) {
+  if (!client || client.status !== 'connected') return
+  if (seg.seqTo >= lastHistorySeq) {
+    notice('That is already the current state.')
+    return
+  }
+  pendingSeg = seg
+  fillConfirm()
+  $('confirm').style.display = 'flex'
+  $('confirmNo').focus() // the safe choice is the default
+}
+
+$('confirmYes').onclick = () => {
+  if (pendingSeg) client?.restore(pendingSeg.seqTo)
+  hideConfirm()
+}
+$('confirmNo').onclick = hideConfirm
+$('confirm').onclick = (e) => {
+  if (e.target === $('confirm')) hideConfirm() // a click on the dimmed background
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && pendingSeg) hideConfirm()
+})
+
+function renderHistory() {
+  const bar = $('historyBar')
+  bar.innerHTML = ''
+  $('tip').style.display = 'none'
+  $('historyCount').textContent = historyTotal ? `${historyTotal} action${historyTotal === 1 ? '' : 's'}` : ''
+  if (history.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = 'No actions yet. Everything anyone does in this session will appear here.'
+    bar.appendChild(empty)
+    return
+  }
+  const addSeg = (seg: Segment, cls: string, colour: string, user: string) => {
+    const el = document.createElement('div')
+    el.className = 'seg ' + cls
+    el.style.backgroundColor = colour // not `background`, which would wipe the stripes of restore segments
+    el.dataset.user = user
+    el.dataset.seq = String(seg.seqTo)
+    el.onmouseenter = () => showTip(seg, el)
+    el.onmouseleave = () => ($('tip').style.display = 'none')
+    el.onclick = () => askRestore(seg)
+    bar.appendChild(el)
+  }
+  addSeg(START, 'start', '#5b5b66', '')
+  for (const seg of history) {
+    const u = knownUsers.get(seg.userId)
+    addSeg(
+      seg,
+      [seg.seqFrom >= freshFrom ? 'fresh' : '', seg.restoreTo !== undefined ? 'restore' : '', seg.seqTo >= lastHistorySeq ? 'current' : ''].join(' ').trim(),
+      u?.color ?? '#888',
+      u?.name ?? '',
+    )
+  }
+  freshFrom = Infinity
+}
+
+function resetHistory() {
+  history = []
+  historyTotal = 0
+  lastHistorySeq = 0
+  freshFrom = Infinity
+  trackNames.clear()
+  knownUsers.clear()
+  $('tip').style.display = 'none'
+  $('historyCount').textContent = ''
+  hideConfirm()
 }
 
 function renderCursors() {
@@ -244,7 +462,8 @@ $('copyCode').onclick = async () => {
 
 /** Puts every part of the window back to how it looks at launch. Server address and token are kept for convenience. */
 function resetScreen() {
-  for (const id of ['tracks', 'grid', 'users', 'activity', 'cursors', 'infoText']) $(id).innerHTML = ''
+  resetHistory()
+  for (const id of ['tracks', 'grid', 'users', 'historyBar', 'cursors', 'infoText']) $(id).innerHTML = ''
   $('gridTitle').textContent = 'Notes'
   $<HTMLInputElement>('tempo').value = ''
   $<HTMLInputElement>('master').value = '50'
@@ -270,7 +489,6 @@ function disconnect(reason?: string) {
   currentCode = null
   remoteHost = null
   isHost = false
-  activity = []
   presence.clear()
   selectedTrackId = null
   setConnectedUi(false)
@@ -284,14 +502,16 @@ function connect(baseUrl: string, code: string, asHost: boolean) {
   isHost = asHost
   currentCode = code
   setConnectedUi(true)
-  Object.assign(me, asHost
-    ? { name: 'Host', color: '#ff4d8d' }
-    : { name: 'Guest ' + Math.floor(Math.random() * 90 + 10), color: GUEST_COLORS[Math.floor(Math.random() * GUEST_COLORS.length)]! })
+  me.name = asHost ? 'Host' : 'Guest ' + Math.floor(Math.random() * 90 + 10)
+  renderHistory()
 
-  const c = new CollabClient({ baseUrl, code, name: me.name, color: me.color })
+  // The colour is chosen by the server (so no two people match); the one sent here is ignored.
+  const c = new CollabClient({ baseUrl, code, name: me.name, color: '#ffffff' })
   client = c
   c.on('change', render)
-  c.on('users', () => {
+  c.on('users', (users) => {
+    for (const u of users) knownUsers.set(u.id, { name: u.name, color: u.color })
+    renderHistory() // segments may have been waiting for a colour
     renderUsers()
     renderCursors()
   })
@@ -299,13 +519,21 @@ function connect(baseUrl: string, code: string, asHost: boolean) {
     presence.set(id, { pointer: (state as { pointer?: { x: number; y: number } | null } | null)?.pointer ?? null })
     renderCursors()
   })
-  c.on('entries', (entries: LogEntry[]) => {
-    for (const e of entries) {
-      activity.unshift({ seq: e.seq, user: c.users.find((u) => u.id === e.op.clientId) ?? null, text: describeOp(e.op, c.project ?? undefined) })
-    }
-    activity = activity.slice(0, 50)
-    renderActivity()
+  c.on('history', (entries: LogEntry[]) => {
+    for (const u of c.users) knownUsers.set(u.id, { name: u.name, color: u.color })
+    addHistory(entries)
   })
+  c.on('entries', (entries: LogEntry[]) => {
+    for (const u of c.users) knownUsers.set(u.id, { name: u.name, color: u.color })
+    // Tell people when someone else has put the project back, since a lot can change at once.
+    const restore = entries.find((e) => e.restore !== undefined && e.op.clientId !== c.clientId && e.seq > lastHistorySeq)
+    if (restore) {
+      const who = knownUsers.get(restore.op.clientId)?.name ?? 'Someone'
+      notice(restore.restore === 0 ? `${who} put the project back to the original.` : `${who} put the project back to just after step #${restore.restore}.`)
+    }
+    addHistory(entries)
+  })
+  c.on('refused', ({ reason }) => notice(`Could not restore: ${reason}.`))
   c.on('dropped', (dropped) => {
     const first = dropped[0]!
     const why = first.reason === 'unknown note' || first.reason === 'unknown track or clip' ? 'someone changed it first' : first.reason
