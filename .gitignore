@@ -19,3 +19,5 @@ starter-lib/
 *.zip
 *.rar
 engine/build-vst3/
+release/
+apps/desktop/build-resources/

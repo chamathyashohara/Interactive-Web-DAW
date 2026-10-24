@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
+    "server": "esbuild src/server/cloud.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --external:ws --log-level=error && node dist/server.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

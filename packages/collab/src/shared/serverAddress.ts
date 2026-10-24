@@ -6,6 +6,26 @@ export interface ServerAddress {
 }
 
 /**
+ * true when a server address is on the same local network as the person using it: a private or loopback IPv4 address
+ * (10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x) or "localhost". Anything else (a domain, a public address, a tunnel) is "another network".
+ * Takes a URL (ws://192.168.1.5:4000, https://abc.trycloudflare.com) or a bare address with an optional port.
+ */
+export function isLanHost(address: string): boolean {
+  const host = address
+    .trim()
+    .replace(/^[a-z]+:\/\//i, '')
+    .replace(/[/?#].*$/, '')
+    .replace(/:\d+$/, '')
+    .toLowerCase()
+  if (host === 'localhost') return true
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!m) return false
+  const [a, b] = [Number(m[1]), Number(m[2])]
+  if (m.slice(1).some((p) => Number(p) > 255)) return false
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+}
+
+/**
  * Turns what a user types into server URLs.
  *   "192.168.1.5"                  -> ws://192.168.1.5:4000       (LAN, default port)
  *   "192.168.1.5:5000"             -> ws://192.168.1.5:5000

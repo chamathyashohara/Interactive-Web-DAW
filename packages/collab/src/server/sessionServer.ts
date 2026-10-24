@@ -5,7 +5,7 @@ import { Room } from './room'
 import { buildSeedProject } from '../shared/seed'
 import { SESSION_ENDED } from '../shared/types'
 import { USER_COLORS } from '../shared/palette'
-import type { ClientMsg, ServerMsg, UserInfo } from '../shared/protocol'
+import { MAX_SHARE_BYTES, SHARE_TOPIC, type ClientMsg, type ServerMsg, type SharedNote, type UserInfo } from '../shared/protocol'
 
 export { SESSION_ENDED }
 
@@ -42,6 +42,8 @@ interface Session {
   conns: Set<Conn>
   /** Colour given to each person (by client id) the first time they join; kept if they reconnect. */
   colors: Map<string, string>
+  /** Notes people put in the room (topic -> who and what). A note goes when its owner leaves. */
+  shared: Map<string, { owner: string; data: unknown }>
 }
 
 const MAX_BODY = 1 << 20
@@ -63,7 +65,7 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
     while (sessions.has(code))
     const built = buildSeedProject(seed, randomUUID())
     if (!built.ok) throw new Error(built.reason)
-    sessions.set(code, { room: new Room(built.project), hostKey, conns: new Set(), colors: new Map() })
+    sessions.set(code, { room: new Room(built.project), hostKey, conns: new Set(), colors: new Map(), shared: new Map() })
     return code
   }
 
@@ -75,6 +77,8 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
     for (const c of s.conns) if (c.joined && c !== except && c.ws.readyState === c.ws.OPEN) c.ws.send(text)
   }
   const usersOf = (s: Session): UserInfo[] => [...s.conns].filter((c) => c.joined).map(({ id, name, color }) => ({ id, name, color }))
+
+  const sharedOf = (s: Session): SharedNote[] => [...s.shared].map(([topic, note]) => ({ id: note.owner, topic, data: note.data }))
 
   const endSession = (code: string) => {
     const s = sessions.get(code)
@@ -202,6 +206,7 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
           seq: s.room.seq,
           ...(entries ? { entries } : { project: s.room.project, history: s.room.recent() }),
           users: usersOf(s),
+          shared: sharedOf(s),
         })
         broadcast(s, { t: 'users', users: usersOf(s) }, conn)
         return
@@ -221,6 +226,18 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
       } else if (msg.t === 'presence') {
         if (JSON.stringify(msg.state ?? null).length > 512) return
         broadcast(s, { t: 'presence', id: conn.id, state: msg.state ?? null }, conn)
+      } else if (msg.t === 'share') {
+        if (typeof msg.topic !== 'string' || !SHARE_TOPIC.test(msg.topic)) return
+        if (msg.data === null || msg.data === undefined) {
+          // Only the person who put a note there can take it down.
+          if (s.shared.get(msg.topic)?.owner !== conn.id) return
+          s.shared.delete(msg.topic)
+          broadcast(s, { t: 'share', id: conn.id, topic: msg.topic, data: null })
+        } else {
+          if (JSON.stringify(msg.data).length > MAX_SHARE_BYTES) return
+          s.shared.set(msg.topic, { owner: conn.id, data: msg.data })
+          broadcast(s, { t: 'share', id: conn.id, topic: msg.topic, data: msg.data }, conn)
+        }
       } else if (msg.t === 'probe') {
         if (typeof msg.seq !== 'number' || typeof msg.at !== 'number') return
         broadcast(s, { t: 'probe', id: conn.id, seq: msg.seq, at: msg.at }, conn)
@@ -230,6 +247,11 @@ export function startSessionServer(port: number, opts: ServerOptions = {}): Prom
     ws.on('close', () => {
       s.conns.delete(conn)
       if (conn.joined && sessions.get(code) === s) {
+        for (const [topic, note] of [...s.shared]) {
+          if (note.owner !== conn.id) continue;
+          s.shared.delete(topic)
+          broadcast(s, { t: 'share', id: conn.id, topic, data: null })
+        }
         broadcast(s, { t: 'presence', id: conn.id, state: null })
         broadcast(s, { t: 'users', users: usersOf(s) })
       }

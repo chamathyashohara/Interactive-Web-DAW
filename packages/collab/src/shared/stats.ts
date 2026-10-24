@@ -13,13 +13,13 @@ export function summarize(values: number[]): Summary | null {
   const sorted = [...values].sort((a, b) => a - b)
   const sum = values.reduce((a, b) => a + b, 0)
   let jit = 0
-  for (let i = 1; i < values.length; i++) jit += Math.abs(values[i] - values[i - 1])
+  for (let i = 1; i < values.length; i++) jit += Math.abs(values[i]! - values[i - 1]!)
   return {
     n: values.length,
     avg: sum / values.length,
-    min: sorted[0],
-    max: sorted[sorted.length - 1],
-    p95: sorted[Math.min(sorted.length - 1, Math.ceil(0.95 * sorted.length) - 1)],
+    min: sorted[0]!,
+    max: sorted[sorted.length - 1]!,
+    p95: sorted[Math.min(sorted.length - 1, Math.ceil(0.95 * sorted.length) - 1)]!,
     jitter: values.length > 1 ? jit / (values.length - 1) : 0,
   }
 }

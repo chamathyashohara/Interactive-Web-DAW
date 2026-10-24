@@ -20,13 +20,14 @@ See `docs/adr/` for decisions.
   their lesson is completed; Beginner mode), per-user learner progress, and the lesson API `window.daw.completeLesson("M2.6")`.
   See `docs/lessons/INTEGRATION.md` and `docs/m4-results.md`.
 * **Not yet:** the lessons themselves (Component 1), interaction tracking and the guided "make a song" workflow (Component 2), collaboration server (Component 3), plugin hosting (VST3),
-  audio clips / remote recording (Component 4), effects, automation.
+  effects. (Remote recording, Component 4, is now in the DAW: see `docs/recording-integration.md`.)
 
 ## Layout
 
 | Path | Responsibility |
 |---|---|
 | `packages/shared` | Project model (ticks, track→clip→note, mixer fields, song length, key), music theory (`theory.ts`), feature registry and unlock rules (`features.ts`), typed ops, pure `applyOp` (idempotent, validated), `invertOp`, undo `History`, `migrateProject`, pure arrangement edits (`arrangement.ts`: move/resize/split/duplicate). Shared by client and future server. |
+| `packages/recording` | **Remote recording** (Component 4, ported from C++/Qt to TypeScript): control/media/transfer protocols, session logic, master recorder, talkback socket. Pure TS in `src/`, sockets and files in `src/node/`. The UI is `apps/desktop/.../RecordingPanel.tsx`; see `docs/recording-integration.md`. |
 | `packages/engine-protocol` | NDJSON message types between Electron main and the engine. |
 | `engine/` | JUCE C++ engine: multi-track tick sequencer (`Sequencer`), synth + synthesised drum kit, per-track mixer with smoothed gain/pan, master soft-clip, meters (`AudioEngine`), offline render + WAV export (`Export`), stdin/stdout bridge, `--selftest`, `--benchmark`. |
 | `apps/desktop/src/main` | Owns project state: `ProjectService` (ops, batches = one undo step, undo/redo), `LocalStore` (snapshot + journal), `EngineBridge` (spawn/supervise/restart engine), `snapshot.ts` (mute/solo resolution, stable engine slots). |

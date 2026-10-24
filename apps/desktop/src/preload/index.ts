@@ -4,7 +4,8 @@ import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
 import type { ProjectMeta } from "../main/project/workspace";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../main/telemetry/telemetryStore";
-export type { TelemetryState };
+import type { LiveState, NetIface } from "../main/recording/liveRecording";
+export type { TelemetryState, LiveState, NetIface };
 
 export interface EngineState {
   connected: boolean;
@@ -60,9 +61,20 @@ export interface CollabUser {
   name: string;
   color: string;
 }
+export type NetSnapshot = ReturnType<InstanceType<typeof import("@daw/collab").NetStats>["snapshot"]>;
+export interface RecordingTake {
+  file: string;
+  name: string;
+  bytes: number;
+  seenAt: number;
+}
+export interface RecordingState {
+  watchDir: string;
+  takes: RecordingTake[];
+}
 export type CollabState =
   | { active: false }
-  | { active: true; hosting: boolean; status: string; code: string; address: string; users: CollabUser[]; me: string };
+  | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; lan?: boolean; lanIp?: string; users: CollabUser[]; me: string };
 export interface InitialPayload extends ProjectPayload {
   projects: ProjectListPayload;
   collab: CollabState;
@@ -75,7 +87,8 @@ const api = {
   // ---- real-time collaboration (host / join a live session) ----
   collab: {
     getState: (): Promise<CollabState> => ipcRenderer.invoke("collab:state"),
-    host: (name?: string): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name),
+    /** No `online` = host on this computer (same network). With `online` = create the session on a server elsewhere (different network). */
+    host: (name?: string, online?: { server: string; token?: string }): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name, online),
     join: (address: string, code: string, name?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("collab:join", address, code, name),
     leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:leave"),
     onState: (cb: (s: CollabState) => void) => {
@@ -83,10 +96,80 @@ const api = {
       ipcRenderer.on("collab:state", l);
       return () => ipcRenderer.removeListener("collab:state", l);
     },
-    onNote: (cb: (n: { kind: string; count?: number }) => void) => {
-      const l = (_e: unknown, n: { kind: string; count?: number }) => cb(n);
+    /** Puts a small note in the room for everyone (null takes it down); people who join later still get it. */
+    share: (topic: string, data: unknown | null): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:share", topic, data),
+    onShare: (cb: (n: { id: string; topic: string; data: unknown | null }) => void) => {
+      const l = (_e: unknown, n: { id: string; topic: string; data: unknown | null }) => cb(n);
+      ipcRenderer.on("collab:share", l);
+      return () => ipcRenderer.removeListener("collab:share", l);
+    },
+    /** The latest ping / sync delay / traffic numbers for the Network panel (null = not in a session). */
+    net: (): Promise<NetSnapshot | null> => ipcRenderer.invoke("collab:net"),
+    /** Saves the measurements as a CSV file (asks where). */
+    exportNet: (explicitPath?: string): Promise<{ ok: boolean; file?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("collab:netExport", explicitPath),
+    /** Tells the others where this window's pointer is (fractions of the window); null = it left the window. */
+    sendPointer: (pointer: { x: number; y: number } | null): void => ipcRenderer.send("collab:pointer", pointer),
+    onPointer: (cb: (p: { id: string; pointer: { x: number; y: number } | null }) => void) => {
+      const l = (_e: unknown, p: { id: string; pointer: { x: number; y: number } | null }) => cb(p);
+      ipcRenderer.on("collab:pointer", l);
+      return () => ipcRenderer.removeListener("collab:pointer", l);
+    },
+    onNote: (cb: (n: { kind: string; count?: number; name?: string }) => void) => {
+      const l = (_e: unknown, n: { kind: string; count?: number; name?: string }) => cb(n);
       ipcRenderer.on("collab:note", l);
       return () => ipcRenderer.removeListener("collab:note", l);
+    },
+  },
+  // ---- remote recording (Component 4, inside the DAW) ----
+  recording: {
+    getState: (): Promise<RecordingState> => ipcRenderer.invoke("recording:state"),
+    chooseFolder: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean }> => ipcRenderer.invoke("recording:chooseFolder", explicitPath),
+    openFolder: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("recording:openFolder"),
+    /** Copies a recording into the sound library (asks which file when none is given) and returns the new library entry. */
+    addTake: (file?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; entry?: IndexEntry }> => ipcRenderer.invoke("recording:addTake", file),
+    pollNow: (): Promise<boolean> => ipcRenderer.invoke("recording:pollNow"),
+    onState: (cb: (s: RecordingState) => void) => {
+      const l = (_e: unknown, s: RecordingState) => cb(s);
+      ipcRenderer.on("recording:state", l);
+      return () => ipcRenderer.removeListener("recording:state", l);
+    },
+  },
+  /** The live session: who is connected, readiness, takes, transfers. The window only captures and plays audio; the main process decides everything else. */
+  live: {
+    getState: (): Promise<LiveState> => ipcRenderer.invoke("live:state"),
+    onState: (cb: (s: LiveState) => void) => {
+      const l = (_e: unknown, s: LiveState) => cb(s);
+      ipcRenderer.on("live:state", l);
+      return () => ipcRenderer.removeListener("live:state", l);
+    },
+    interfaces: (): Promise<NetIface[]> => ipcRenderer.invoke("live:interfaces"),
+    createSession: (o: { bind: string; port: number; name?: string }): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:create", o),
+    join: (o: { host: string; port: number; code: string; name?: string }): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:join", o),
+    leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:leave"),
+    setConsent: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:consent", on),
+    setDeliveryConsent: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:deliveryConsent", on),
+    record: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:record"),
+    stop: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:stop"),
+    newCode: (): Promise<{ ok: boolean; code: string }> => ipcRenderer.invoke("live:newCode"),
+    setLead: (ms: number, auto: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:lead", ms, auto),
+    setAutoTransfer: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:autoTransfer", on),
+    requestTransfer: (take: number): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:transfer", take),
+    cancelTransfer: (take: number): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:cancelTransfer", take),
+    setTalkback: (send: boolean, hear: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:talkback", send, hear),
+    // -- audio plumbing: microphone blocks and Opus packets go to the main process, which owns the files and sockets --
+    captureState: (s: { open: boolean; deviceName?: string; sampleRate?: number; channels?: number; failed?: string }): void => ipcRenderer.send("live:captureState", s),
+    capture: (frame: number, samples: Float32Array): void => ipcRenderer.send("live:capture", frame, samples),
+    sendAudio: (opus: Uint8Array, mediaIndex: number, muted: boolean): void => ipcRenderer.send("live:send", opus, mediaIndex, muted),
+    incomingStats: (r: Record<string, number>): void => ipcRenderer.send("live:incomingStats", r),
+    onAudio: (cb: (p: { seq: number; mediaIndex: number; payload: Uint8Array; muted: boolean; arrivalMs: number }) => void) => {
+      const l = (_e: unknown, p: { seq: number; mediaIndex: number; payload: Uint8Array; muted: boolean; arrivalMs: number }) => cb(p);
+      ipcRenderer.on("live:audio", l);
+      return () => ipcRenderer.removeListener("live:audio", l);
+    },
+    onEnd: (cb: () => void) => {
+      const l = () => cb();
+      ipcRenderer.on("live:end", l);
+      return () => ipcRenderer.removeListener("live:end", l);
     },
   },
   // ---- projects (new / open / save as / rename / delete) ----

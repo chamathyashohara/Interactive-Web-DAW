@@ -51,10 +51,22 @@ and ending it returns both to solo editing with the result kept.
   a joiner saw a dropped link and tried to **reconnect** instead of leaving. The host now calls `server.endSession(code)` (which closes
   with code 4001) and waits briefly for the frames to flush before `close()`, so joiners get a clean "the host ended the session".
 
-## Phase 3 — later
+## Phase 3 — standalone features brought into the DAW (done, except the history bar)
 
-Presence cursors/selection, the history/restore bar wired to the DAW, the DAW's own undo reconciled with the session (the module's
-notes flag this as needing hooks in `ProjectService`), and hosting choices (same Wi-Fi vs online via a tunnel).
+- **Same network (LAN) or different network.** The Collaborate popover has both. Different network creates the session on a separate
+  server (`npm run server`, with an optional `AUTH_TOKEN`; the address can be a plain IP or an `https://` link such as a Cloudflare
+  tunnel) and ending it removes the session from that server. Join accepts `192.168.1.5`, `192.168.1.5:5000` or a server link
+  (`parseServerAddress`). Proven by `apps/desktop/e2e/collab-online.mjs`.
+- **Seed carries the whole song.** `buildSeedProject` now also replays song length (first), key, loop and markers.
+- **A guest's own project is never overwritten.** When a session ends, the guest sees their own project again and the session is saved
+  as a new project, "`<name>` (session)". The host keeps the result in its own project.
+- **Live pointers** (fractions of the window, in each person's server-assigned colour with their name).
+- **Network panel** (ping, jitter, lost pings, sync delay, traffic, reconnects) with CSV export. `NetStats` lives in `@daw/collab`.
+
+## Phase 4 — later
+
+Selection presence, the history/restore bar wired to the DAW, the DAW's own undo reconciled with the session (the module's
+notes flag this as needing hooks in `ProjectService`), shared playback, accounts, and a hosted server with TLS.
 
 ## Not changed
 
