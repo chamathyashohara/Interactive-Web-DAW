@@ -175,6 +175,11 @@ app.whenReady().then(() => {
         console.error("collab change push failed:", err); // never let a sync update crash the app
       }
     });
+    client.on("presence", ({ id, state }) => {
+      const p = (state as { pointer?: { x?: unknown; y?: unknown } | null } | null)?.pointer;
+      const ok = p && typeof p.x === "number" && typeof p.y === "number" && Number.isFinite(p.x) && Number.isFinite(p.y);
+      sendToRenderer("collab:pointer", { id, pointer: ok ? { x: Math.min(1, Math.max(0, p.x as number)), y: Math.min(1, Math.max(0, p.y as number)) } : null });
+    });
     client.on("status", () => publishCollab());
     client.on("users", (users) => { if (collab) collab.users = users; publishCollab(); });
     client.on("dropped", (dropped) => { if (dropped.length) sendToRenderer("collab:note", { kind: "dropped", count: dropped.length }); });
@@ -596,6 +601,11 @@ app.whenReady().then(() => {
     telemetry.record("ui.collab", { action: "join" });
     publishCollab();
     return { ok: true };
+  });
+  ipcMain.on("collab:pointer", (_e, p: unknown) => {
+    if (!collab || collab.client.status !== "connected") return;
+    const q = p as { x?: unknown; y?: unknown } | null;
+    collab.client.setPresence(q && typeof q.x === "number" && typeof q.y === "number" ? { pointer: { x: q.x, y: q.y } } : { pointer: null });
   });
   ipcMain.handle("collab:leave", async () => {
     await leaveCollab();

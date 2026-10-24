@@ -84,6 +84,13 @@ const api = {
       ipcRenderer.on("collab:state", l);
       return () => ipcRenderer.removeListener("collab:state", l);
     },
+    /** Tells the others where this window's pointer is (fractions of the window); null = it left the window. */
+    sendPointer: (pointer: { x: number; y: number } | null): void => ipcRenderer.send("collab:pointer", pointer),
+    onPointer: (cb: (p: { id: string; pointer: { x: number; y: number } | null }) => void) => {
+      const l = (_e: unknown, p: { id: string; pointer: { x: number; y: number } | null }) => cb(p);
+      ipcRenderer.on("collab:pointer", l);
+      return () => ipcRenderer.removeListener("collab:pointer", l);
+    },
     onNote: (cb: (n: { kind: string; count?: number; name?: string }) => void) => {
       const l = (_e: unknown, n: { kind: string; count?: number; name?: string }) => cb(n);
       ipcRenderer.on("collab:note", l);

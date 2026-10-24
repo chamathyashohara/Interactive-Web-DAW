@@ -5,6 +5,7 @@ import { Mixer } from "./components/Mixer";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { ExportDialog } from "./components/ExportDialog";
 import { CollabPanel } from "./components/CollabPanel";
+import { CollabPointers } from "./components/CollabPointers";
 import { BarBeatReadout, TapTempoButton } from "./components/TransportExtras";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
@@ -278,6 +279,7 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col">
+      <CollabPointers />
       <header className="hw-panel flex flex-wrap items-center gap-2 border-b border-black px-3 py-2">
         <div className="mr-1 text-sm font-semibold text-amber-300">
           Collab<span className="text-slate-200">DAW</span>

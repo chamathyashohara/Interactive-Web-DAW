@@ -47,6 +47,14 @@ try {
   // presence: each sees two people
   check("C8. both see two people in the room", await until(async () => (await collabState(host)).users?.length === 2 && (await collabState(join)).users?.length === 2, 6000));
 
+  // live pointers: the host's pointer shows up in the joiner's window with the host's name, and goes away when it leaves
+  const pointerText = (c) => c.evalJs(`[...document.querySelectorAll('[data-testid^="collab-pointer-"]')].map((e) => e.textContent.trim() + "@" + e.style.transform).join("|")`);
+  await host.evalJs(`window.daw.collab.sendPointer({ x: 0.25, y: 0.5 })`);
+  check("C8b. the host's pointer appears in the joiner's window with the host's name", await until(async () => /Ana@translate\(25vw, 50vh\)/.test(await pointerText(join)), 6000), await pointerText(join));
+  check("C8c. you never see your own pointer drawn", !(await pointerText(host)).includes("Ana"), await pointerText(host));
+  await host.evalJs(`window.daw.collab.sendPointer(null)`);
+  check("C8d. the pointer disappears when it leaves the window", await until(async () => (await pointerText(join)) === "", 6000), await pointerText(join));
+
   // option A: local undo is off during a session
   const beforeUndo = await notesOf(join);
   const undoResult = await join.evalJs(`window.daw.undo()`);

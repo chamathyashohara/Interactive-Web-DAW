@@ -42,6 +42,8 @@ export const exportStore = createStore<ExportStatus | null>(null);
 export const projectsStore = createStore<ProjectListPayload>({ projects: [], activeId: "" });
 /** Live collaboration session state (who is here, the join code). */
 export const collabStore = createStore<CollabState>({ active: false });
+/** Where each other person's pointer is (fractions of their window), by user id. */
+export const collabPointers = createStore<Record<string, { x: number; y: number }>>({});
 /** A short message about the session (it ended, a copy was saved...). null = none showing. */
 export const collabNoteStore = createStore<string | null>(null);
 /** Learner progress: which lessons are done and whether features are gated. */
@@ -70,6 +72,12 @@ export async function initStores() {
   window.daw.projects.onList((p) => projectsStore.set(p));
   collabStore.set(initial.collab);
   window.daw.collab.onState((s) => collabStore.set(s));
+  window.daw.collab.onPointer(({ id, pointer }) => {
+    const next = { ...collabPointers.get() };
+    if (pointer) next[id] = pointer;
+    else delete next[id];
+    collabPointers.set(next);
+  });
   window.daw.collab.onNote((n) => {
     const text =
       n.kind === "saved-copy" ? `The session was saved as a new project, "${n.name ?? "session"}". Your own project is unchanged.`
