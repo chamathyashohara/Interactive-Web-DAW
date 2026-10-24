@@ -69,7 +69,11 @@ export function CollabPanel() {
     if (!r.ok) setMessage(r.reason ?? "Could not join.");
     else setMode("menu");
   };
-  const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(() => {});
+  const [copied, setCopied] = useState("");
+  const copy = (text: string, what: string) => {
+    void navigator.clipboard?.writeText(text).then(() => setCopied(what), () => setCopied(`${what}-failed`));
+    window.setTimeout(() => setCopied(""), 1500);
+  };
 
   const active = state.active;
   const field = "hw-field w-full px-2 py-1.5 text-[12px]";
@@ -107,12 +111,13 @@ export function CollabPanel() {
               <div className="hw-legend mb-1.5 !text-[10px]">{state.hosting ? "YOU ARE HOSTING" : "IN A SESSION"}</div>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-slate-400">Join code</span>
-                <button className="hw-lcd px-2 py-0.5 font-mono text-[14px] tracking-widest text-[#ffbf5a]" onClick={() => copy(state.code)} title="Copy the code" data-testid="collab-code">{state.code}</button>
+                <button className="hw-lcd px-2 py-0.5 font-mono text-[14px] tracking-widest text-[#ffbf5a]" onClick={() => copy(state.code, "code")} title="Copy the code" data-testid="collab-code">{state.code}</button>
+                <span className="w-[52px] text-[11px] text-emerald-300" data-testid="collab-copied">{copied === "code" ? "Copied!" : copied === "code-failed" ? "Copy failed" : ""}</span>
               </div>
               {state.hosting && (
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <span className="text-slate-400">{state.online ? "Server" : "Host address"}</span>
-                  <button className="hw-field max-w-[170px] truncate px-2 py-0.5 font-mono text-[11px]" onClick={() => copy(state.address)} title="Copy the address" data-testid="collab-address">{state.address}</button>
+                  <button className="hw-field max-w-[170px] truncate px-2 py-0.5 font-mono text-[11px]" onClick={() => copy(state.address, "address")} title="Copy the address" data-testid="collab-address">{copied === "address" ? "Copied!" : state.address}</button>
                 </div>
               )}
               <div className="hw-legend mt-3 mb-1 !text-[10px]">IN THE ROOM ({state.users.length})</div>
@@ -125,7 +130,7 @@ export function CollabPanel() {
                 ))}
                 {state.users.length === 0 && <span className="text-slate-500">connecting…</span>}
               </div>
-              <p className="mb-2 text-[11px] text-slate-500">Everyone edits together. Undo is off in a session — use the history to go back.</p>
+              <p className="mb-2 text-[11px] text-slate-500">Everyone edits together. Undo is off while you are in a session.</p>
               <button className="hw-btn mb-1.5 w-full py-1.5 text-xs" onClick={() => collabNetOpen.set(!collabNetOpen.get())} data-testid="collab-network-button">
                 Network…
               </button>
