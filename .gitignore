@@ -1,6 +1,21 @@
 node_modules/
 dist/
+out/
+build/
+engine/build/
+.env
 *.log
-takes/
-release/
+.DS_Store
+soak-result.log
+buffer-matrix.log
+soak-m2.log
+.vscode/
 .claude/
+soak-m3.log
+
+# sample libraries (generated or licensed) never go in git
+sample-library/
+starter-lib/
+*.zip
+*.rar
+engine/build-vst3/

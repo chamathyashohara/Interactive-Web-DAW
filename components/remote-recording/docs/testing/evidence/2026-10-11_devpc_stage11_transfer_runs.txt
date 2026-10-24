@@ -1,0 +1,436 @@
+Stage 11 evidence: verified post-session take transfer, development PC, 11 Oct 2026
+================================================================================================
+PC: Windows 11 Pro 10.0.26300, Realtek audio. The microphone endpoint is MUTED in Windows: the takes are
+digital near-silence (about -160 dBFS), so nothing audible is claimed.
+Build: core-check-gcc (MinGW g++ 16.2), NOT the MSVC product build; Qt GUI not compiled.
+Set-up: TWO PROBE PROCESSES ON ONE PC. Both record the SAME physical input device (WASAPI shared mode);
+the transfer runs over loopback (127.0.0.1, control port + 2). This is NOT the two-PC acceptance test.
+Each run is a fresh session: one take of about 20 s (48 kHz, 2 ch, float32, about 7.8 MB, 239 chunks of 32 KiB),
+then "transfer 1". Fault injection uses the probe's TEST-ONLY options named in each command line.
+Pairing codes are replaced by <redacted>. Transfer tokens are never printed or logged by the apps.
+
+### X1_normal: normal transfer
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:16:58.212  state Stopping -> Finalising (local take complete)
+[producer] 15:16:58.212  take 1: LOCAL take complete (finalised), 976209 frames
+[producer] 15:16:58.243  take 1: performer's take complete, 976208 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:16:58.244  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:16:58.244  transfer listener on 127.0.0.1:52802 (only the joined performer may connect)
+[producer] 15:16:58.244  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:16:58.245  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:16:58.288  take 1 transfer: started: 7809722 bytes in 239 chunks, 'take01_performer_abb0ab88.wav'
+[producer] 15:16:58.305  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:16:58.379  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:16:58.394  take 1 transfer: VERIFIED: takes_p\20261011-151636_abb0ab88\from_performer\take01_performer_abb0ab88.wav (7809722 bytes, SHA-256 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1, 976208 frames = 20.338 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7809722/7809722 bytes, 239/239 chunks of 32768, connections 1, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 0
+[producer]   SHA-256 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976208 frames = 20.338 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+-- performer (selected lines) --
+[performer] 15:16:58.212  state Stopping -> Completed (local take complete)
+[performer] 15:16:58.212  take 1: LOCAL take complete (finalised), 976208 frames
+[performer] 15:16:58.274  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:16:58.281  take 1 send: QUEUED: 7809722 bytes, SHA-256 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1 (original opened read-only)
+[performer] 15:16:58.288  take 1 send: TRANSFERRING
+[performer] 15:16:58.400  take 1 send: VERIFIED: the producer verified the copy: SHA-256 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1 matched; WAV 976208 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after 59111a2510b5dcea65b773eb3d78
+  p.jsonl requested {"take":"1","port":"52802","expected_frames":"976208","token":"<redacted>"}}
+  p.jsonl verified {"take":"1","bytes":"7809722","sha256":"59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1","frames":"976208","connections":"1","resumes":"0","chunk_rejects":"0","hash_failures":"0"}}
+  r.jsonl send_started {"take":"1","port":"52802","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1","original_unchanged":"yes","connections":"1"}}
+
+### X2_perf_drop: the performer cuts the transfer connection after 100 chunks (test hook), then reconnects
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --xfer-drop-after 100 --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:17:23.256  state Stopping -> Finalising (local take complete)
+[producer] 15:17:23.256  take 1: LOCAL take complete (finalised), 976632 frames
+[producer] 15:17:23.287  take 1: performer's take complete, 976633 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:17:23.289  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:17:23.289  transfer listener on 127.0.0.1:52812 (only the joined performer may connect)
+[producer] 15:17:23.289  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:17:23.290  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:17:23.349  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:17:23.358  take 1 transfer: started: 7813122 bytes in 239 chunks, 'take01_performer_5b9e7ce8.wav'
+[producer] 15:17:23.399  take 1 transfer: PAUSED: the other side closed the connection; 100 of 239 chunks kept on disk
+[producer] 15:17:24.418  take 1 transfer: RESUMED from chunk 100 of 239
+[producer] 15:17:24.479  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:17:24.495  take 1 transfer: VERIFIED: takes_p\20261011-151701_5b9e7ce8\from_performer\take01_performer_5b9e7ce8.wav (7813122 bytes, SHA-256 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a, 976633 frames = 20.347 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7813122/7813122 bytes, 239/239 chunks of 32768, connections 2, resumes 1 (last from chunk 100), chunk rejects 0, hash failures 0
+[producer]   SHA-256 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976633 frames = 20.347 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+-- performer (selected lines) --
+[performer] 15:17:23.256  state Stopping -> Completed (local take complete)
+[performer] 15:17:23.257  take 1: LOCAL take complete (finalised), 976633 frames
+[performer] 15:17:23.318  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:17:23.326  take 1 send: QUEUED: 7813122 bytes, SHA-256 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a (original opened read-only)
+[performer] 15:17:23.358  take 1 send: TRANSFERRING
+[performer] 15:17:23.394  take 1 send: TEST: performer drops the connection after 100 chunks (96 acknowledged)
+[performer] 15:17:23.394  take 1 send: PAUSED: test: connection dropped by the performer; retrying in 1000 ms
+[performer] 15:17:24.418  take 1 send: RESUMING from chunk 100
+[performer] 15:17:24.500  take 1 send: VERIFIED: the producer verified the copy: SHA-256 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a matched; WAV 976633 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after 43784f84e9562836b7cad1ea1f4d
+  p.jsonl requested {"take":"1","port":"52812","expected_frames":"976633","token":"<redacted>"}}
+  p.jsonl connection_lost {"take":"1","chunks_kept":"100"}}
+  p.jsonl resumed {"take":"1","bytes":"7813122","chunks":"239","from_chunk":"100","sha256":"43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a"}}
+  p.jsonl verified {"take":"1","bytes":"7813122","sha256":"43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a","frames":"976633","connections":"2","resumes":"1","chunk_rejects":"0","hash_failures":"0"}}
+  r.jsonl send_started {"take":"1","port":"52812","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a","original_unchanged":"yes","connections":"2"}}
+
+### X3_prod_drop: the producer cuts the transfer connection after 80 chunks (test hook)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --xfer-drop-after 80 --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:17:49.345  state Stopping -> Finalising (local take complete)
+[producer] 15:17:49.345  take 1: LOCAL take complete (finalised), 976621 frames
+[producer] 15:17:49.376  take 1: performer's take complete, 976621 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:17:49.378  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:17:49.378  transfer listener on 127.0.0.1:52822 (only the joined performer may connect)
+[producer] 15:17:49.378  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:17:49.379  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:17:49.439  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:17:49.455  take 1 transfer: started: 7813026 bytes in 239 chunks, 'take01_performer_56065f78.wav'
+[producer] 15:17:49.566  take 1 transfer: TEST: producer drops the transfer connection
+[producer] 15:17:49.576  take 1 transfer: PAUSED: test: connection dropped by the producer; 80 of 239 chunks kept on disk
+[producer] 15:17:50.603  take 1 transfer: RESUMED from chunk 80 of 239
+[producer] 15:17:50.665  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:17:50.679  take 1 transfer: VERIFIED: takes_p\20261011-151728_56065f78\from_performer\take01_performer_56065f78.wav (7813026 bytes, SHA-256 fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792, 976621 frames = 20.346 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7813026/7813026 bytes, 239/239 chunks of 32768, connections 2, resumes 1 (last from chunk 80), chunk rejects 0, hash failures 0
+[producer]   SHA-256 fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976621 frames = 20.346 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+-- performer (selected lines) --
+[performer] 15:17:49.344  state Stopping -> Completed (local take complete)
+[performer] 15:17:49.345  take 1: LOCAL take complete (finalised), 976621 frames
+[performer] 15:17:49.408  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:17:49.416  take 1 send: QUEUED: 7813026 bytes, SHA-256 fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792 (original opened read-only)
+[performer] 15:17:49.455  take 1 send: TRANSFERRING
+[performer] 15:17:49.566  take 1 send: PAUSED: send failed: An existing connection was forcibly closed by the remote host (WSA 10054); retrying in 1000 ms
+[performer] 15:17:50.603  take 1 send: RESUMING from chunk 80
+[performer] 15:17:50.685  take 1 send: VERIFIED: the producer verified the copy: SHA-256 fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792 matched; WAV 976621 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after fcc03525ab71cf3119a3cf43d1a1
+  p.jsonl requested {"take":"1","port":"52822","expected_frames":"976621","token":"<redacted>"}}
+  p.jsonl connection_lost {"take":"1","chunks_kept":"80"}}
+  p.jsonl resumed {"take":"1","bytes":"7813026","chunks":"239","from_chunk":"80","sha256":"fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792"}}
+  p.jsonl verified {"take":"1","bytes":"7813026","sha256":"fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792","frames":"976621","connections":"2","resumes":"1","chunk_rejects":"0","hash_failures":"0"}}
+  r.jsonl send_started {"take":"1","port":"52822","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792","original_unchanged":"yes","connections":"2"}}
+
+### X4_duplicate: the same take is requested twice
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:18:15.537  state Stopping -> Finalising (local take complete)
+[producer] 15:18:15.537  take 1: LOCAL take complete (finalised), 976422 frames
+[producer] 15:18:15.584  take 1: performer's take complete, 976421 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:18:15.585  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:18:15.585  transfer listener on 127.0.0.1:52832 (only the joined performer may connect)
+[producer] 15:18:15.585  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:18:15.585  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:18:15.647  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:18:15.655  take 1 transfer: started: 7811426 bytes in 239 chunks, 'take01_performer_10f33a3f.wav'
+[producer] 15:18:15.743  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:18:15.757  take 1 transfer: VERIFIED: takes_p\20261011-151754_10f33a3f\from_performer\take01_performer_10f33a3f.wav (7811426 bytes, SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d, 976421 frames = 20.342 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7811426/7811426 bytes, 239/239 chunks of 32768, connections 1, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 0
+[producer]   SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976421 frames = 20.342 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:18:15.770  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:18:15.770  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:18:15.812  take 1 transfer: duplicate request: identical verified copy already present (SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d)
+[producer] TRANSFER take 1: VERIFIED | 7811426/7811426 bytes, 239/239 chunks of 32768, connections 1, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 0, already verified (nothing rewritten)
+[producer]   SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976421 frames = 20.342 s; frames vs TAKE_FINALISED: match
+[producer]   an identical verified copy already exists; nothing was rewritten
+[producer] 15:18:15.817  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+-- performer (selected lines) --
+[performer] 15:18:15.537  state Stopping -> Completed (local take complete)
+[performer] 15:18:15.538  take 1: LOCAL take complete (finalised), 976421 frames
+[performer] 15:18:15.615  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:18:15.622  take 1 send: QUEUED: 7811426 bytes, SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d (original opened read-only)
+[performer] 15:18:15.655  take 1 send: TRANSFERRING
+[performer] 15:18:15.762  take 1 send: VERIFIED: the producer verified the copy: SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d matched; WAV 976421 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after c6f26e30d3dc4f15119668732aa5
+[performer] 15:18:15.801  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:18:15.806  take 1 send: QUEUED: 7811426 bytes, SHA-256 c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d (original opened read-only)
+[performer] 15:18:15.816  take 1 send: VERIFIED: the producer verified the copy (it already had an identical one): an identical verified copy already exists; nothing was rewritten; original unchanged (SHA-256 after c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290
+  p.jsonl requested {"take":"1","port":"52832","expected_frames":"976421","token":"<redacted>"}}
+  p.jsonl verified {"take":"1","bytes":"7811426","sha256":"c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d","frames":"976421","connections":"1","resumes":"0","chunk_rejects":"0","hash_failures":"0"}}
+  p.jsonl requested {"take":"1","port":"52832","expected_frames":"976421","token":"<redacted>"}}
+  p.jsonl duplicate_verified {"take":"1"}}
+  r.jsonl send_started {"take":"1","port":"52832","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d","original_unchanged":"yes","connections":"1"}}
+  r.jsonl send_started {"take":"1","port":"52832","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d","original_unchanged":"yes","connections":"1"}}
+
+### X5_bad_chunk: chunk 5 is damaged after its SHA-256 was computed (test hook)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --xfer-corrupt-chunk 5 --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:18:40.659  state Stopping -> Finalising (local take complete)
+[producer] 15:18:40.659  take 1: LOCAL take complete (finalised), 976468 frames
+[producer] 15:18:40.706  take 1: performer's take complete, 976476 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:18:40.709  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:18:40.709  transfer listener on 127.0.0.1:52842 (only the joined performer may connect)
+[producer] 15:18:40.709  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:18:40.709  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:18:40.769  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:18:40.762  take 1 transfer: started: 7811866 bytes in 239 chunks, 'take01_performer_c8c04fe3.wav'
+[producer] 15:18:40.766  take 1 transfer: chunk 5 failed its SHA-256 check; asked again
+[producer] 15:18:40.855  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:18:40.870  take 1 transfer: VERIFIED: takes_p\20261011-151819_c8c04fe3\from_performer\take01_performer_c8c04fe3.wav (7811866 bytes, SHA-256 fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2, 976476 frames = 20.343 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7811866/7811866 bytes, 239/239 chunks of 32768, connections 1, resumes 0 (last from chunk 0), chunk rejects 1, hash failures 0
+[producer]   SHA-256 fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976476 frames = 20.343 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+-- performer (selected lines) --
+[performer] 15:18:40.659  state Stopping -> Completed (local take complete)
+[performer] 15:18:40.660  take 1: LOCAL take complete (finalised), 976476 frames
+[performer] 15:18:40.738  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:18:40.744  take 1 send: QUEUED: 7811866 bytes, SHA-256 fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2 (original opened read-only)
+[performer] 15:18:40.762  take 1 send: TRANSFERRING
+[performer] 15:18:40.764  take 1 send: TEST: chunk 5 damaged after hashing
+[performer] 15:18:40.766  take 1 send: producer rejected chunk 5; sending again from there
+[performer] 15:18:40.875  take 1 send: VERIFIED: the producer verified the copy: SHA-256 fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2 matched; WAV 976476 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after fa89d03c7bff37a41d03b121b46f
+  p.jsonl requested {"take":"1","port":"52842","expected_frames":"976476","token":"<redacted>"}}
+  p.jsonl verified {"take":"1","bytes":"7811866","sha256":"fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2","frames":"976476","connections":"1","resumes":"0","chunk_rejects":"1","hash_failures":"0"}}
+  r.jsonl send_started {"take":"1","port":"52842","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2","original_unchanged":"yes","connections":"1"}}
+
+### X6_bad_file: chunk 3 is altered before hashing (chunk check passes; the whole-file hash must catch it), once
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 60 VERIFIED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --xfer-corrupt-whole 3 --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:19:05.723  state Stopping -> Finalising (local take complete)
+[producer] 15:19:05.723  take 1: LOCAL take complete (finalised), 976072 frames
+[producer] 15:19:05.755  take 1: performer's take complete, 976071 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 60 VERIFIED
+[producer] 15:19:05.758  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:19:05.758  transfer listener on 127.0.0.1:52852 (only the joined performer may connect)
+[producer] 15:19:05.758  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:19:05.758  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:19:05.817  take 1 transfer: started: 7808626 bytes in 239 chunks, 'take01_performer_c0053fd1.wav'
+[producer] 15:19:05.834  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:19:05.908  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:19:05.919  take 1 transfer: SHA-256 MISMATCH, rejected copy kept as takes_p\20261011-151844_c0053fd1\from_performer\take01_performer_c0053fd1.wav.xfer.partial.rejected-1; retrying from the start
+[producer] 15:19:05.922  take 1 transfer: started: 7808626 bytes in 239 chunks, 'take01_performer_c0053fd1.wav'
+[producer] 15:19:06.010  take 1 transfer: all 239 chunks received; VERIFYING
+[producer] 15:19:06.025  take 1 transfer: VERIFIED: takes_p\20261011-151844_c0053fd1\from_performer\take01_performer_c0053fd1.wav (7808626 bytes, SHA-256 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c, 976071 frames = 20.335 s, 48000 Hz, 2 ch
+[producer] TRANSFER take 1: VERIFIED | 7808626/7808626 bytes, 239/239 chunks of 32768, connections 2, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 1
+[producer]   SHA-256 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c
+[producer]   checked copy: 48000 Hz, 2 ch, 32-bit float, 976071 frames = 20.335 s; frames vs TAKE_FINALISED: match
+[producer]   SHA-256 and WAV checks passed
+-- performer (selected lines) --
+[performer] 15:19:05.723  state Stopping -> Completed (local take complete)
+[performer] 15:19:05.724  take 1: LOCAL take complete (finalised), 976071 frames
+[performer] 15:19:05.802  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:19:05.809  take 1 send: QUEUED: 7808626 bytes, SHA-256 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c (original opened read-only)
+[performer] 15:19:05.817  take 1 send: TRANSFERRING
+[performer] 15:19:05.819  take 1 send: TEST: chunk 3 altered before hashing
+[performer] 15:19:05.919  take 1 send: producer reported SHA-256 MISMATCH (whole-file SHA-256 mismatch: expected 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c, got ac4c37a3e868920e6ba694c2b7b70fa315a29a0ebbca28314676ec79af473795 (7808626 byt
+[performer] 15:19:05.923  take 1 send: TRANSFERRING
+[performer] 15:19:06.030  take 1 send: VERIFIED: the producer verified the copy: SHA-256 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c matched; WAV 976071 frames, 48000 Hz, 2 ch; original unchanged (SHA-256 after 90418dfbf236e32863cbb30bdc5e
+  p.jsonl requested {"take":"1","port":"52852","expected_frames":"976071","token":"<redacted>"}}
+  p.jsonl hash_mismatch {"take":"1","set_aside":"takes_p\\20261011-151844_c0053fd1\\from_performer\\take01_performer_c0053fd1.wav.xfer.partial.rejected-1"}}
+  p.jsonl verified {"take":"1","bytes":"7808626","sha256":"90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c","frames":"976071","connections":"2","resumes":"0","chunk_rejects":"0","hash_failures":"1"}}
+  r.jsonl send_started {"take":"1","port":"52852","token":"<redacted>"}}
+  r.jsonl send_verified {"take":"1","sha256":"90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c","original_unchanged":"yes","connections":"2"}}
+
+### X7_wrong_sess: the performer sends HELLO with another session id (test hook)
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 75 FAILED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --allow-delivery --xfer-wrong-session --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:19:30.833  state Stopping -> Finalising (local take complete)
+[producer] 15:19:30.833  take 1: LOCAL take complete (finalised), 976204 frames
+[producer] 15:19:30.879  take 1: performer's take complete, 976204 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 75 FAILED
+[producer] 15:19:30.881  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:19:30.881  transfer listener on 127.0.0.1:52862 (only the joined performer may connect)
+[producer] 15:19:30.881  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:19:30.882  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:19:30.942  take 1: performer is sending its take (copy; its original stays on the performer's PC)
+[producer] 15:19:30.942  transfer HELLO for another session (deadbeef) refused; nothing written
+[producer] 15:20:30.903  take 1 transfer: FAILED: the performer did not start sending within 60 s (refused, failed or not reachable) (the performer's original is unchanged)
+[producer] TRANSFER take 1: FAILED | 0/0 bytes, 0/0 chunks of 0, connections 0, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 0
+[producer]   SHA-256 
+[producer]   the performer did not start sending within 60 s (refused, failed or not reachable)
+-- performer (selected lines) --
+[performer] 15:19:30.833  state Stopping -> Completed (local take complete)
+[performer] 15:19:30.834  take 1: LOCAL take complete (finalised), 976204 frames
+[performer] 15:19:30.911  take 1: producer asked for a copy; sending it (the original stays here, opened read-only)
+[performer] 15:19:30.917  take 1 send: QUEUED: 7809690 bytes, SHA-256 36ea33e0b52928f60f930d43942395141a32646b70769cdcfc4f9a9b06ae4a7b (original opened read-only)
+[performer] 15:19:30.948  take 1 send: FAILED: producer: wrong session; original unchanged (SHA-256 after 36ea33e0b52928f60f930d43942395141a32646b70769cdcfc4f9a9b06ae4a7b)
+  p.jsonl requested {"take":"1","port":"52862","expected_frames":"976204","token":"<redacted>"}}
+  p.jsonl hello_refused {"got":"deadbeef","take":"1"}}
+  p.jsonl failed {"take":"1"}}
+  r.jsonl send_started {"take":"1","port":"52862","token":"<redacted>"}}
+  r.jsonl send_failed {"take":"1","sha256":"36ea33e0b52928f60f930d43942395141a32646b70769cdcfc4f9a9b06ae4a7b","original_unchanged":"yes","connections":"1"}}
+
+### X8_no_consent: the performer has not allowed copies of its takes
+producer>  rr_session_probe --producer --port <p> --code-file c.txt --audio --out takes_p --log p.jsonl --script "wait-ready 30; record; wait-state Recording 10; wait 20; stop; wait-state Ready 30; transfer 1; wait-transfer 1 20 FAILED; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port <p> --code-file c.txt --audio --out takes_r --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: producer 0, performer 0 (wait-transfer fails the run unless the expected end state is reached)
+-- producer (selected lines) --
+[producer] 15:20:55.779  state Stopping -> Finalising (local take complete)
+[producer] 15:20:55.779  take 1: LOCAL take complete (finalised), 976488 frames
+[producer] 15:20:55.826  take 1: performer's take complete, 976487 frames
+[producer] > transfer 1
+[producer] > wait-transfer 1 20 FAILED
+[producer] 15:20:55.829  take 1: copy requested from the performer (QUEUED; the original stays on the performer's PC)
+[producer] 15:20:55.829  transfer listener on 127.0.0.1:52872 (only the joined performer may connect)
+[producer] 15:20:55.829  take 1 transfer: QUEUED (requested from the performer)
+[producer] 15:20:55.830  state Ready -> NotReady (not ready: a take transfer is running (Record is available when it ends))
+[producer] 15:20:55.889  take 1: transfer performer refused: E_TRANSFER_REFUSED: the performer has not allowed copies of its takes to be sent
+[producer] 15:20:55.920  take 1 transfer: FAILED: performer refused: E_TRANSFER_REFUSED: the performer has not allowed copies of its takes to be sent (the performer's original is unchanged)
+[producer] TRANSFER take 1: FAILED | 0/0 bytes, 0/0 chunks of 0, connections 0, resumes 0 (last from chunk 0), chunk rejects 0, hash failures 0
+[producer]   SHA-256 
+[producer]   performer refused: E_TRANSFER_REFUSED: the performer has not allowed copies of its takes to be sent
+-- performer (selected lines) --
+[performer] 15:20:55.779  state Stopping -> Completed (local take complete)
+[performer] 15:20:55.780  take 1: LOCAL take complete (finalised), 976487 frames
+[performer] 15:20:55.858  refused TRANSFER_REQUEST: the performer has not allowed copies of its takes to be sent
+  p.jsonl requested {"take":"1","port":"52872","expected_frames":"976487","token":"<redacted>"}}
+  p.jsonl failed {"take":"1"}}
+
+INDEPENDENT CHECKS (scratchpad stage11/verify.py: Python hashlib, tools/audit/verify_take_wav.py, Windows MCI)
+------------------------------------------------------------------------------------------------
+### X1_normal
+performer original: takes_r\20261011-151636_abb0ab88\take01_performer_abb0ab88.wav
+  hashlib SHA-256 after the run: 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1
+  performer app SHA-256 before sending (OFFER, r.jsonl): 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151636_abb0ab88\from_performer\take01_performer_abb0ab88.wav (7809722 bytes)
+  hashlib SHA-256: 59111a2510b5dcea65b773eb3d78ca608c268fafa95ec419416e83b8c17accc1 -> IDENTICAL to the original
+  files in from_performer: take01_performer_abb0ab88.wav, take01_performer_abb0ab88.wav.transfer.json
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X2_perf_drop
+performer original: takes_r\20261011-151701_5b9e7ce8\take01_performer_5b9e7ce8.wav
+  hashlib SHA-256 after the run: 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a
+  performer app SHA-256 before sending (OFFER, r.jsonl): 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151701_5b9e7ce8\from_performer\take01_performer_5b9e7ce8.wav (7813122 bytes)
+  hashlib SHA-256: 43784f84e9562836b7cad1ea1f4ddf83ad78447d4a6c5656a7f03b63ec80333a -> IDENTICAL to the original
+  files in from_performer: take01_performer_5b9e7ce8.wav, take01_performer_5b9e7ce8.wav.transfer.json
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X3_prod_drop
+performer original: takes_r\20261011-151727_56065f78\take01_performer_56065f78.wav
+  hashlib SHA-256 after the run: fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792
+  performer app SHA-256 before sending (OFFER, r.jsonl): fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151728_56065f78\from_performer\take01_performer_56065f78.wav (7813026 bytes)
+  hashlib SHA-256: fcc03525ab71cf3119a3cf43d1a12e102d191357c3158de7b3dd953166d08792 -> IDENTICAL to the original
+  files in from_performer: take01_performer_56065f78.wav, take01_performer_56065f78.wav.transfer.json
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X4_duplicate
+performer original: takes_r\20261011-151754_10f33a3f\take01_performer_10f33a3f.wav
+  hashlib SHA-256 after the run: c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d
+  performer app SHA-256 before sending (OFFER, r.jsonl): c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151754_10f33a3f\from_performer\take01_performer_10f33a3f.wav (7811426 bytes)
+  hashlib SHA-256: c6f26e30d3dc4f15119668732aa5ece2f1f74c817f290bb7d0ba74f0fd2ca55d -> IDENTICAL to the original
+  files in from_performer: take01_performer_10f33a3f.wav, take01_performer_10f33a3f.wav.transfer.json
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X5_bad_chunk
+performer original: takes_r\20261011-151819_c8c04fe3\take01_performer_c8c04fe3.wav
+  hashlib SHA-256 after the run: fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2
+  performer app SHA-256 before sending (OFFER, r.jsonl): fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151819_c8c04fe3\from_performer\take01_performer_c8c04fe3.wav (7811866 bytes)
+  hashlib SHA-256: fa89d03c7bff37a41d03b121b46f1d2662f4247d1477c46b4e2e9f4894a37ca2 -> IDENTICAL to the original
+  files in from_performer: take01_performer_c8c04fe3.wav, take01_performer_c8c04fe3.wav.transfer.json
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X6_bad_file
+performer original: takes_r\20261011-151844_c0053fd1\take01_performer_c0053fd1.wav
+  hashlib SHA-256 after the run: 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c
+  performer app SHA-256 before sending (OFFER, r.jsonl): 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: takes_p\20261011-151844_c0053fd1\from_performer\take01_performer_c0053fd1.wav (7808626 bytes)
+  hashlib SHA-256: 90418dfbf236e32863cbb30bdc5ed6598641eb723b9461926395892e03d5ed6c -> IDENTICAL to the original
+  files in from_performer: take01_performer_c0053fd1.wav, take01_performer_c0053fd1.wav.transfer.json, take01_performer_c0053fd1.wav.xfer.partial.rejected-1
+  set-aside copy take01_performer_c0053fd1.wav.xfer.partial.rejected-1: hashlib SHA-256 ac4c37a3e868920e6ba694c2b7b70fa315a29a0ebbca28314676ec79af473795 (differs from the original, as injected)
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X7_wrong_sess
+performer original: takes_r\20261011-151909_d49b30de\take01_performer_d49b30de.wav
+  hashlib SHA-256 after the run: 36ea33e0b52928f60f930d43942395141a32646b70769cdcfc4f9a9b06ae4a7b
+  performer app SHA-256 before sending (OFFER, r.jsonl): 36ea33e0b52928f60f930d43942395141a32646b70769cdcfc4f9a9b06ae4a7b
+  original unchanged by the transfer (hashlib after == app before): YES
+producer copy: none
+  files in from_performer: (folder empty or absent)
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+### X8_no_consent
+performer original: takes_r\20261011-152034_35e3d5e3\take01_performer_35e3d5e3.wav
+  hashlib SHA-256 after the run: 23a9a62066c048dc992c8591cf8ffc6e7f7a304249c9e6c5bdf1d455dee4f3ec
+  performer app SHA-256 before sending (OFFER, r.jsonl): none (nothing offered)
+producer copy: none
+  files in from_performer: (folder empty or absent)
+  pairing code in logs: 0; "token" fields: ['<redacted>']; any 32-hex string in logs: 0
+
+verify_take_wav.py on the 6 copies (exit 0):
+  take01_performer_abb0ab88.wav: PASS; 976208 frames = 20.338 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+  take01_performer_5b9e7ce8.wav: PASS; 976633 frames = 20.347 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+  take01_performer_56065f78.wav: PASS; 976621 frames = 20.346 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+  take01_performer_10f33a3f.wav: PASS; 976421 frames = 20.342 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+  take01_performer_c8c04fe3.wav: PASS; 976476 frames = 20.343 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+  take01_performer_c0053fd1.wav: PASS; 976071 frames = 20.335 s at 48000 Hz, 2 ch; ch1 peak -159.7 dBFS rms -169.9 dBFS, ch2 peak -159.7 dBFS rms -169.9 dBFS
+
+Windows MCI open check (copies copied to short names: c1.wav=X1_normal, c2.wav=X2_perf_drop, c3.wav=X3_prod_drop, c4.wav=X4_duplicate, c5.wav=X5_bad_chunk, c6.wav=X6_bad_file):
+  c1.wav: Windows MCI opened it: length 20338 ms, format tag 3, 2 ch, 48000 Hz
+  c2.wav: Windows MCI opened it: length 20347 ms, format tag 3, 2 ch, 48000 Hz
+  c3.wav: Windows MCI opened it: length 20346 ms, format tag 3, 2 ch, 48000 Hz
+  c4.wav: Windows MCI opened it: length 20342 ms, format tag 3, 2 ch, 48000 Hz
+  c5.wav: Windows MCI opened it: length 20343 ms, format tag 3, 2 ch, 48000 Hz
+  c6.wav: Windows MCI opened it: length 20335 ms, format tag 3, 2 ch, 48000 Hz
+
+NOTES
+----------------------------------------
+- Executed, on ONE PC (loopback), all with real recorded takes:
+  - normal (X1);
+  - interrupted by the performer (X2) and by the producer (X3), both resumed from the saved chunk;
+  - duplicate request (X4): "already verified", the existing copy re-checked (hash + WAV), nothing rewritten;
+  - corrupt chunk (X5): rejected by its SHA-256, resent;
+  - whole-file hash mismatch (X6): detected, copy set aside as .rejected-1, sent again, then VERIFIED;
+  - wrong session (X7): HELLO refused, nothing written; the producer's request ended FAILED after its 60 s wait;
+  - no delivery consent (X8): refused, nothing written.
+- Also executed as unit tests over loopback (22 cases: tests/transfer, tests/control [stage11]): wrong token, unrequested take,
+  a different existing file (never overwritten), invalid WAV with a matching hash (never VERIFIED), persistent corruption
+  (FAILED), connection from another address (refused), producer restart (resume from the journal on disk), request never
+  answered (FAILED, Record available again), automatic copies after each take.
+- Every copy that is VERIFIED is byte-identical to its original by an independent hash (Python hashlib), passes the
+  independent structural reader on every sample, and Windows MCI opens it with the length of its frame count.
+- Every original's hashlib SHA-256 after the run equals the SHA-256 the performer app computed before sending.
+  (The app opened it read-only with writers refused; this is the check that it did not change.)
+- Times over loopback (about 0.1-0.2 s for 7.8 MB) are NOT a throughput result for a LAN.
+- NOT shown:
+  - two physical PCs (real network, Wi-Fi, firewall prompt, cable pulled mid-transfer);
+  - the Qt transfer table and buttons (not compiled; syntax-checked against stub headers only);
+  - the MSVC product build;
+  - audible playback (the input is muted; MCI only opened the files and reported their length);
+  - a disk filling up during a transfer;
+  - a 1.1 performer (version gate tested only by code review: the producer checks the agreed minor version).

@@ -1,0 +1,72 @@
+# VST3 instrument hosting — design and staged plan
+
+Step 5: let a track play a real third-party instrument plugin (Sylenth1, Nexus, Serum…) instead of the built-in synth.
+This note is the plan; only stage 1 (discovery) is built so far, because the audio stages need the plugins installed on the
+machine and must not risk the working engine build. Each stage below is a separate, reviewable commit.
+
+## Why it is staged, and why it is not finished in one go
+
+* **It cannot be verified without the plugins.** Sylenth1 and Nexus are paid; CI and this environment do not have them, so the
+  audio path can only be checked by hand on a machine where they are installed. Shipping untested audio code would break the
+  honesty rule the project holds (claims must be measured).
+* **It must not break the engine.** The engine currently links JUCE **without** `juce_audio_processors`. Adding the VST3 host is a
+  real build change (new JUCE module, the bundled VST3 SDK, `JUCE_PLUGINHOST_VST3=1`). It goes behind a CMake option that is **off by
+  default**, so the normal build, the self-test, the benchmark and the app are unaffected until someone deliberately turns it on.
+* **A plugin can crash or hang.** A bad plugin must not take the audio engine down. The design hosts plugins so a failure degrades to
+  silence on that track, not a dead app.
+
+## Architecture
+
+```
+Renderer  ──pick folder / choose plugin──▶  Main process            Engine (JUCE)
+  track.instrument = "plugin"               scanPlugins()  ✅ built    loadPlugin(slot, path)
+  track.plugin = { id, name, state? }       ──loadProject──▶          AudioPluginInstance per slot
+                                            plugin:scan IPC            processBlock -> the slot's bus
+```
+
+* **Model:** a new instrument kind `"plugin"` with `track.plugin = { id (the .vst3 path), name, state? (base64 of the plugin's own
+  saved settings) }`. The audio is never in the project; only the path and the plugin's state blob, exactly like sample ids.
+* **Engine:** one `juce::AudioPluginInstance` per slot. The sequencer already emits note on/off per slot; for a plugin slot those
+  become a `juce::MidiBuffer` and the plugin renders into the slot's stereo bus, then the existing gain/pan/automation apply as now.
+* **Offline export** uses the same per-slot render, so a rendered WAV includes the plugins (at a fixed block size).
+
+## Stages
+
+1. **Discovery (built).** `apps/desktop/src/main/plugins/pluginScan.ts` finds `.vst3` files and bundles under the standard Windows
+   folders (and the user can add a folder). Pure filesystem, unit-tested. No audio.
+2. **Model + protocol (built).** Added the `"plugin"` instrument and `track.plugin` to `@daw/shared` (with `migrateProject` leaving old projects
+   unchanged), an `addPluginTrack`/`setPlugin` op, and engine-protocol messages (`scanPlugins`, `loadPlugin`, `pluginState`,
+   `showPluginEditor`) — the editor/scan commands are declared later, in their stages. Snapshot maps `track.plugin` to the slot. All TypeScript, tested (`packages/shared/test/plugin.test.ts`, `apps/desktop/src/main/engine/snapshot.plugin.test.ts`). A plugin track with no host yet falls back to the built-in synth, so nothing crashes.
+3. **Engine host — proven, not yet wired into the mixer.** Behind `-DDAW_ENABLE_VST3=ON` (off by default): `PluginHost` adds
+   `juce_audio_processors`, loads a `.vst3` by path (`juce::addHeadlessDefaultFormatsToManager`), prepares it to stereo, and renders it
+   with a `MidiBuffer`. A standalone `daw_engine --plugintest <path>` plays one note and reports whether audio came out.
+   **Findings on this machine:** Diva loads and plays (peak 0.31). A missing file and a VST2 `.dll` (Nexus) fail cleanly. **Spire
+   segfaults when hosted in-process** — a reminder that an arbitrary plugin can crash. So the host is NOT yet wired into the live slot
+   render: doing that in-process would let one bad plugin kill all audio mid-session. Wiring into the mixer waits on stage 6.
+4. **Plugin editor window.** Show the plugin's own UI (`createEditorIfNeeded`) in a child window for sound design; save its state on
+   close. Persist `track.plugin.state` and restore it on load.
+5. **UI.** "+ Add track ▸ Plugin" lists the scanned plugins; a track header shows the plugin name and an "Edit" button; a lock gates it
+   behind a lesson (a later module) in beginner mode, like the other advanced features.
+6. **Robustness — now a prerequisite, not an afterthought.** Stage 3 showed a real plugin (Spire) crashing the process, so hosting must
+   be **out of process**: a small child host process loads the plugin and streams audio/MIDI to the engine, so a crash is contained
+   (the engine detects the dead child, marks the track silent, and can relaunch it). Instantiate plugins on a worker thread (never the
+   audio thread). This stage must land before plugins are wired into the live mixer (stage 3 into 5).
+
+## What exists now
+
+* Stage 1: `pluginScan.ts` + `pluginScan.test.ts` (4 tests).
+* Stage 3a: `engine/src/PluginHost.{h,cpp}` behind the off-by-default `DAW_ENABLE_VST3` CMake flag, with `daw_engine --plugintest`. The
+  default engine build, self-test and app are unchanged (the flag pulls in `juce_audio_processors` only when on). Verified by hand:
+  Diva plays, Spire crashes in-process, VST2/missing files fail cleanly. The scanner (stage 1) now also finds nested `.vst3` (Spire's layout).
+* Stage 2: `PluginRef` / `track.plugin` / instrument `"plugin"` in `@daw/shared`, the `setPlugin` op (validated, undoable), the snapshot's
+  `pluginPath`/`pluginState`, and the engine-protocol fields. 10 tests. No UI creates a plugin track yet (stage 5), so the DAW behaves as before.
+
+**Installed plugins on the dev machine** (found under `C:\Program Files\Common Files\VST3`): Diva, Spire, Keyscape, Kontakt, LABS, plus
+FabFilter/Valhalla/iZotope effects. Stage 3 will be verified against the VST3 instruments (Diva, Spire). **Nexus here is `Nexus3.4.4.dll`
+— a VST2 plugin, not VST3**; hosting VST2 needs Steinberg's withdrawn VST2 SDK, so Nexus needs its `.vst3` build or stays out of scope.
+
+## Open questions for when the plugins are on the machine
+
+* Scan cost: a first scan of many plugins is slow; cache the results (name, path, mtime) and rescan in the background.
+* Latency reporting (`getLatencySamples`) so plugin latency can be compensated in render.
+* Whether any target plugin needs out-of-process hosting (stage 6) for stability.

@@ -1,50 +1,24 @@
 {
-  "name": "component03-collaboration",
-  "version": "1.0.0",
-  "description": "Real-time collaborative production module (Component 3)",
-  "main": "dist/main.js",
+  "name": "collab-daw",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Standalone beginner-friendly collaborative DAW (research project J26-IM-303)",
+  "workspaces": [
+    "packages/*",
+    "apps/desktop"
+  ],
   "scripts": {
-    "build": "node build.mjs",
-    "start": "node build.mjs && node run-electron.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "esbuild scripts/sync-test.ts --bundle --platform=node --format=esm --outfile=dist/sync-test.mjs --packages=external --log-level=error && node dist/sync-test.mjs && esbuild scripts/netstats-test.ts --bundle --platform=node --format=esm --outfile=dist/netstats-test.mjs --packages=external --log-level=error && node dist/netstats-test.mjs",
-    "dist": "node build.mjs && electron-builder --win nsis portable",
-    "server": "esbuild src/server/cloud.ts --bundle --platform=node --format=esm --outfile=dist/server.mjs --packages=external --log-level=error && node dist/server.mjs",
-    "test:ui": "node build.mjs && node scripts/e2e-ui.mjs"
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "engine:configure": "cmake -S engine -B engine/build -G \"Visual Studio 17 2022\" -A x64",
+    "engine:build": "cmake --build engine/build --config Release",
+    "engine:selftest": "node scripts/engine-selftest.mjs",
+    "dev": "npm run dev -w apps/desktop",
+    "start": "electron apps/desktop",
+    "engine:benchmark": "node scripts/engine-selftest.mjs --benchmark"
   },
-  "keywords": [],
-  "author": "B W C L Withanage",
-  "license": "ISC",
-  "type": "commonjs",
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "@types/ws": "^8.18.2",
-    "electron": "^44.7.2",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
-    "ws": "^8.22.0"
-  },
-  "build": {
-    "appId": "lk.sliit.comp3.collab",
-    "productName": "Comp3 Collab DAW",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "signAndEditExecutable": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+    "vitest": "^5.0.4"
   }
 }

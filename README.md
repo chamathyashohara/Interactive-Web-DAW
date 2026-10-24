@@ -1,34 +1,67 @@
-# Component 3: Real-Time Collaborative Production (J26-IM-303)
+# Collab DAW (J26-IM-303)
 
-Collaboration layer for the Collab DAW: several producers edit one project at the same time, see each other,
-and can measure how the connection performs. Standalone Electron app (test screen) plus a session server.
+Standalone Windows DAW for beginner music production with (later) real-time collaboration.
+Hybrid architecture: **Electron + React + TypeScript UI**, a **JUCE C++ audio engine process**, and (planned) a Node/TS collaboration server.
+See `docs/adr/` for decisions.
 
-## How it works
-- A session server keeps the real project for each session and puts every edit in one order (a server-ordered
-  operation list). Every edit is checked with Component 1's own `applyOp`, so the server enforces the same rules as the DAW.
-- Each app shows its own edits at once and is corrected if the server's order differs. Dropped connections reconnect and catch up.
-- Presence (names, colours, live pointers), a history bar (one coloured segment per action; hover for who and what; click to put the project back to that point), and a Network panel (ping, jitter, loss, sync delay, CSV export).
-- Hosting on the same network (the app runs the server) or online (`npm run server` behind a tunnel or on a host).
+## Status: Milestone 4 (beginner layer foundation) complete
+
+* **M1:** piano roll, transport + tempo, local autosave + crash recovery, undo/redo, JUCE engine with offline timing tests.
+* **M2:** up to 16 tracks (synth + synthesised drum kit), per-track volume / pan / mute / solo, master volume, level meters,
+  mixer view, track list (add / rename / recolour / delete, all undoable), and the FL-style piano-roll tools:
+  Draw, Paint, Select (box select, group move/resize), Delete (drag to erase), Mute note, Slice,
+  Copy / Paste / Duplicate, Quantize, horizontal + vertical zoom, drum-name rows.
+* **M3:** arrangement view (several non-overlapping clips per track on a timeline: create by double-click, drag to move,
+  drag the right edge to resize, split at the playhead, duplicate, delete), an explicit song length, clip-aware piano roll
+  (it edits the selected clip), and **offline WAV export** (48 kHz / 24-bit stereo, song length + 2 s tail) that runs beside
+  live playback. Projects from M2 migrate automatically.
+* **UI:** piano roll with a real-piano keyboard, close and maximize buttons (full-height editing), reopen with the Piano roll button or by double-clicking a clip.
+* **M4:** project **key** with scale highlighting and **red out-of-key notes** (with a Fix button), the **feature unlock registry** (features locked until
+  their lesson is completed; Beginner mode), per-user learner progress, and the lesson API `window.daw.completeLesson("M2.6")`.
+  See `docs/lessons/INTEGRATION.md` and `docs/m4-results.md`.
+* **Not yet:** the lessons themselves (Component 1), interaction tracking and the guided "make a song" workflow (Component 2), collaboration server (Component 3), plugin hosting (VST3),
+  audio clips / remote recording (Component 4), effects, automation.
 
 ## Layout
-| Path | What it is |
-|---|---|
-| `src/server/` | Room (ordering + rules) and session server (WebSocket, HTTP API, `/ping`) |
-| `src/client/` | Connection client and replica (no DOM, reusable by the real DAW) |
-| `src/shared/` | Protocol, seed-project check, plain-English op descriptions, stats, address parsing |
-| `src/daw-shared/` | Unchanged copy of Component 1's shared model (see `SOURCE.md`); replace with `@daw/shared` at integration |
-| `src/main/`, `src/renderer/` | Electron test app |
-| `scripts/` | Automated tests |
 
-## Run
+| Path | Responsibility |
+|---|---|
+| `packages/shared` | Project model (ticks, track→clip→note, mixer fields, song length, key), music theory (`theory.ts`), feature registry and unlock rules (`features.ts`), typed ops, pure `applyOp` (idempotent, validated), `invertOp`, undo `History`, `migrateProject`, pure arrangement edits (`arrangement.ts`: move/resize/split/duplicate). Shared by client and future server. |
+| `packages/engine-protocol` | NDJSON message types between Electron main and the engine. |
+| `engine/` | JUCE C++ engine: multi-track tick sequencer (`Sequencer`), synth + synthesised drum kit, per-track mixer with smoothed gain/pan, master soft-clip, meters (`AudioEngine`), offline render + WAV export (`Export`), stdin/stdout bridge, `--selftest`, `--benchmark`. |
+| `apps/desktop/src/main` | Owns project state: `ProjectService` (ops, batches = one undo step, undo/redo), `LocalStore` (snapshot + journal), `EngineBridge` (spawn/supervise/restart engine), `snapshot.ts` (mute/solo resolution, stable engine slots). |
+| `apps/desktop/src/preload` | Typed `window.daw` bridge (context isolation). |
+| `apps/desktop/src/renderer` | React UI: arrangement (track headers + clip lanes), piano roll (`editing.ts` holds the pure multi-note edit logic), mixer, meters, toolbar, export progress, diagnostics. UI state (tool, zoom, selection, playhead) is never part of project state. |
+| `apps/desktop/e2e` | `run.mjs` (M1), `m2.mjs` (M2) and `m3.mjs` (M3) acceptance checks driving the real app over CDP, reading the engine's own meters and parsing exported WAVs; `soak.mjs` 8-track engine soak (optionally with periodic export); `lib.mjs` shared helpers. |
+
+## Build and run (Windows)
+
+Requirements: Node 22+, Visual Studio 2022 (C++ workload), CMake 3.22+.
+
 ```bash
 npm install
-npm start                 # build and launch the test app (open it twice for two windows)
-npm run server            # standalone session server (env PORT, AUTH_TOKEN)
-npm test                  # 94 headless checks
-npm run test:ui           # drives two real app windows (close other copies of the app first)
-npm run typecheck
-npm run dist              # Windows installer + portable exe in release/
+npm run engine:configure      # fetches JUCE 8.0.15 via CMake FetchContent
+npm run engine:build
+npm run build -w apps/desktop
+npx electron apps/desktop     # or: npm run dev
 ```
 
-See `NOTES.md` for decisions and progress, `PLAN.md` for the research plan (its Yjs wording is superseded; see the update note at its top).
+## Tests
+
+```bash
+npm test                      # shared model, history, storage/recovery, piano-roll geometry
+npm run engine:selftest       # offline: sequencer sample-accuracy (2 tracks) + mixer (pan, mute, master, drums, meters)
+npm run engine:benchmark   # offline CPU cost per block size (64-1024), 8 tracks, no audio device
+node apps/desktop/e2e/run.mjs # M1 end-to-end checks against the built app (needs an audio device)
+node apps/desktop/e2e/m2.mjs  # M2 end-to-end checks (tracks, mute/solo/pan/volume via engine meters, tools, recovery)
+node apps/desktop/e2e/m3.mjs  # M3 end-to-end checks (clips, song length, playback follows clips, WAV export parsed byte by byte, M2 migration)
+node apps/desktop/e2e/m4.mjs  # M4 end-to-end checks (key help, red notes, Fix, feature locks, lesson API, persistence)
+node apps/desktop/e2e/pianoroll-ui.mjs  # piano roll window behaviour (close / reopen / maximize / restore) and piano-style keys
+node apps/desktop/e2e/soak.mjs 10 0 60   # 10-minute 8-track engine soak with an export every 60 s; prints overruns and hardware
+```
+
+## How audio stays independent of the UI and network
+
+* The engine renders from its own immutable copy of the playable project; it never waits for a message per audio operation.
+* The audio callback does no allocation, locking, I/O or JSON parsing. Commands go through atomics, an atomic model-pointer swap, and a lock-free FIFO for note previews.
+* The callback records its own duration; `overruns` counts callbacks that exceeded the buffer time. These are *measured*, not assumed zero.
