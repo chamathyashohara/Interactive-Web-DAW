@@ -16,7 +16,7 @@ import { Workspace } from "./project/workspace";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
-import { CollabClient, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { CollabClient, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
 import { WebSocket as NodeWebSocket } from "ws";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
@@ -152,14 +152,14 @@ app.whenReady().then(() => {
   });
 
   // ---- real-time collaboration session (Component 3) ----
-  interface CollabState { client: CollabClient; server: SessionServer | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
   let collab: CollabState | null = null;
   const lanIp = () => {
     for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
     return "127.0.0.1";
   };
   const cleanName = (name: unknown) => (typeof name === "string" && name.trim() ? name.trim().slice(0, 24) : os.userInfo().username || "Producer");
-  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, users: collab.users, me: collab.client.clientId } : { active: false });
+  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, online: collab.remote !== null, users: collab.users, me: collab.client.clientId } : { active: false });
   const publishCollab = () => sendToRenderer("collab:state", collabStateMsg());
   const pushToUi = (project: Project, canUndo: boolean, canRedo: boolean) => {
     pushProjectToEngine(project);
@@ -190,6 +190,10 @@ app.whenReady().then(() => {
       c.server.endSession(c.code); // tell the others it ended (closes their sockets with the SESSION_ENDED code) before shutting the server
       await new Promise((r) => setTimeout(r, 200)); // let the close frames flush so joiners see "host ended" rather than a dropped link
       await c.server.close();
+    }
+    if (c.remote) {
+      // The session lives on the online server: ask it to end the session for everyone.
+      await fetch(`${c.remote.http}/sessions/${c.code}`, { method: "DELETE", headers: { "X-Host-Key": c.remote.hostKey }, signal: AbortSignal.timeout(4000) }).catch(() => {});
     }
     if (c.hosting && finalProject) {
       service.adopt(finalProject); // the host's own project carries the result of the session
@@ -539,13 +543,39 @@ app.whenReady().then(() => {
   });
   // ---- collaboration: host / join / leave ----
   ipcMain.handle("collab:state", () => collabStateMsg());
-  ipcMain.handle("collab:host", async (_e, name?: unknown) => {
+  ipcMain.handle("collab:host", async (_e, name?: unknown, online?: unknown) => {
     if (collab) return { ok: false, reason: "already in a session" };
+    // "Different network": the session is created on a separate server (reached by address, optionally with an access token).
+    if (online && typeof online === "object") {
+      const { server: serverInput, token } = online as { server?: unknown; token?: unknown };
+      if (typeof serverInput !== "string" || !serverInput.trim()) return { ok: false, reason: "enter the server address" };
+      const addr = parseServerAddress(serverInput);
+      try {
+        const res = await fetch(`${addr.http}/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(typeof token === "string" && token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {}) },
+          body: JSON.stringify({ project: service.current }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (res.status === 401) return { ok: false, reason: "wrong access token" };
+        if (!res.ok) return { ok: false, reason: `the server replied ${res.status}` };
+        const { code, hostKey } = (await res.json()) as { code: string; hostKey: string };
+        const client = new CollabClient({ baseUrl: addr.ws, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+        collab = { client, server: null, remote: { http: addr.http, hostKey }, hosting: true, users: [], project: null, code, address: addr.http };
+        wireClient(client);
+        client.connect();
+        telemetry.record("ui.collab", { action: "hostOnline" });
+        publishCollab();
+        return { ok: true, code, address: addr.http };
+      } catch (err) {
+        return { ok: false, reason: err instanceof TypeError || (err as Error)?.name === "TimeoutError" ? `cannot reach ${addr.http}. Is the server running, and is the address right?` : String(err) };
+      }
+    }
     try {
       const server = await startSessionServer(0);
       const code = server.createSession(service.current);
       const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-      collab = { client, server, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      collab = { client, server, remote: null, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
       wireClient(client);
       client.connect();
       telemetry.record("ui.collab", { action: "host" });
@@ -558,9 +588,9 @@ app.whenReady().then(() => {
   ipcMain.handle("collab:join", (_e, address: unknown, code: unknown, name?: unknown) => {
     if (collab) return { ok: false, reason: "already in a session" };
     if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
-    const baseUrl = /^wss?:\/\//.test(address) ? address.replace(/\/+/, "") : `ws://${address.trim()}`;
+    const baseUrl = parseServerAddress(address).ws; // accepts 192.168.1.5, 192.168.1.5:5000, https://abc.trycloudflare.com ...
     const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-    collab = { client, server: null, hosting: false, users: [], project: null, code, address: address.trim() };
+    collab = { client, server: null, remote: null, hosting: false, users: [], project: null, code, address: address.trim() };
     wireClient(client);
     client.connect();
     telemetry.record("ui.collab", { action: "join" });

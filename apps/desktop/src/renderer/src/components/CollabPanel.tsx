@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { collabNoteStore, collabStore, useStore } from "../store";
 
+/** A setting remembered between runs (the access token is deliberately not kept). */
+function remembered(key: string): string {
+  try { return localStorage.getItem(`collab.${key}`) ?? ""; } catch { return ""; }
+}
+function remember(key: string, value: string) {
+  try { localStorage.setItem(`collab.${key}`, value); } catch { /* storage may be unavailable */ }
+}
+
 /** The Collaborate button and its popover: host a session, join one by code, or see who is in the live session. */
 export function CollabPanel() {
   const state = useStore(collabStore);
@@ -9,7 +17,9 @@ export function CollabPanel() {
   const [mode, setMode] = useState<"menu" | "join">("menu");
   const [addr, setAddr] = useState("");
   const [code, setCode] = useState("");
-  const [name, setName] = useState("");
+  const [name, setName] = useState(() => remembered("name"));
+  const [server, setServer] = useState(() => remembered("server"));
+  const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -36,11 +46,22 @@ export function CollabPanel() {
   const host = async () => {
     setBusy(true);
     setMessage("");
+    remember("name", name.trim());
     const r = await window.daw.collab.host(name.trim() || undefined);
     setBusy(false);
     if (!r.ok) setMessage(r.reason ?? "Could not start a session.");
   };
+  const hostOnline = async () => {
+    setBusy(true);
+    setMessage("");
+    remember("name", name.trim());
+    remember("server", server.trim());
+    const r = await window.daw.collab.host(name.trim() || undefined, { server: server.trim(), token: token.trim() || undefined });
+    setBusy(false);
+    if (!r.ok) setMessage(`Could not start the session: ${r.reason ?? "unknown problem"}`);
+  };
   const join = async () => {
+    remember("name", name.trim());
     setBusy(true);
     setMessage("");
     const r = await window.daw.collab.join(addr.trim(), code.trim(), name.trim() || undefined);
@@ -90,7 +111,7 @@ export function CollabPanel() {
               </div>
               {state.hosting && (
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-slate-400">Host address</span>
+                  <span className="text-slate-400">{state.online ? "Server" : "Host address"}</span>
                   <button className="hw-field max-w-[170px] truncate px-2 py-0.5 font-mono text-[11px]" onClick={() => copy(state.address)} title="Copy the address" data-testid="collab-address">{state.address}</button>
                 </div>
               )}
@@ -116,21 +137,28 @@ export function CollabPanel() {
                 <span className="text-slate-400">Your name</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} maxLength={24} placeholder="Producer" className={`${field} mt-1`} data-testid="collab-name" />
               </label>
-              <button className="hw-btn hw-go mb-1.5 w-full py-1.5 text-xs" disabled={busy} onClick={() => void host()} data-testid="collab-host">
+              <div className="hw-legend mb-1 !text-[10px]">SAME NETWORK (LAN)</div>
+              <button className="hw-btn hw-go mb-2 w-full py-1.5 text-xs" disabled={busy} onClick={() => void host()} data-testid="collab-host">
                 Host a new session
+              </button>
+              <div className="hw-legend mb-1 !text-[10px]">DIFFERENT NETWORK</div>
+              <input value={server} onChange={(e) => setServer(e.target.value)} placeholder="Server address (https://…)" className={`${field} mb-1`} data-testid="collab-server" />
+              <input value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder="Access token (if the server needs one)" className={`${field} mb-1.5`} data-testid="collab-token" />
+              <button className="hw-btn hw-go mb-2 w-full py-1.5 text-xs" disabled={busy || server.trim().length < 3} onClick={() => void hostOnline()} data-testid="collab-host-online">
+                Host on that server
               </button>
               <button className="hw-btn w-full py-1.5 text-xs" disabled={busy} onClick={() => setMode("join")} data-testid="collab-join-open">
                 Join with a code…
               </button>
-              <p className="mt-2 text-[11px] text-slate-500">Hosting shares your current project. Everyone needs to be on the same network (or a shared link).</p>
+              <p className="mt-2 text-[11px] text-slate-500">Hosting shares a copy of your current project with everyone in the session.</p>
               {message && <div className="mt-2 text-[11px] text-rose-300" data-testid="collab-message">{message}</div>}
             </>
           ) : (
             <>
               <div className="hw-legend mb-2 !text-[10px]">JOIN A SESSION</div>
               <label className="mb-2 block">
-                <span className="text-slate-400">Host address (e.g. 192.168.1.5:4000)</span>
-                <input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="192.168.1.5:4000" className={`${field} mt-1`} data-testid="collab-addr" />
+                <span className="text-slate-400">Host address: an IP (192.168.1.5:4000) or a server link (https://…)</span>
+                <input value={addr} onChange={(e) => setAddr(e.target.value)} placeholder="192.168.1.5:4000 or https://…" className={`${field} mt-1`} data-testid="collab-addr" />
               </label>
               <label className="mb-3 block">
                 <span className="text-slate-400">6-digit code</span>

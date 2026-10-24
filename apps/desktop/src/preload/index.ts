@@ -62,7 +62,7 @@ export interface CollabUser {
 }
 export type CollabState =
   | { active: false }
-  | { active: true; hosting: boolean; status: string; code: string; address: string; users: CollabUser[]; me: string };
+  | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; users: CollabUser[]; me: string };
 export interface InitialPayload extends ProjectPayload {
   projects: ProjectListPayload;
   collab: CollabState;
@@ -75,7 +75,8 @@ const api = {
   // ---- real-time collaboration (host / join a live session) ----
   collab: {
     getState: (): Promise<CollabState> => ipcRenderer.invoke("collab:state"),
-    host: (name?: string): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name),
+    /** No `online` = host on this computer (same network). With `online` = create the session on a server elsewhere (different network). */
+    host: (name?: string, online?: { server: string; token?: string }): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name, online),
     join: (address: string, code: string, name?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("collab:join", address, code, name),
     leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:leave"),
     onState: (cb: (s: CollabState) => void) => {

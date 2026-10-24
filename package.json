@@ -14,6 +14,7 @@
     "engine:build": "cmake --build engine/build --config Release",
     "engine:selftest": "node scripts/engine-selftest.mjs",
     "dev": "npm run dev -w apps/desktop",
+    "server": "npm run server -w @daw/collab",
     "start": "electron apps/desktop",
     "engine:benchmark": "node scripts/engine-selftest.mjs --benchmark"
   },
