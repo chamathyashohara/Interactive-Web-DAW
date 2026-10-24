@@ -4,11 +4,16 @@ import { Arrangement } from "./components/Arrangement";
 import { Mixer } from "./components/Mixer";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { ExportDialog } from "./components/ExportDialog";
+import { CollabPanel } from "./components/CollabPanel";
+import { CollabPointers } from "./components/CollabPointers";
+import { CollabNetwork } from "./components/CollabNetwork";
+import { RecordingPanel } from "./components/RecordingPanel";
 import { BarBeatReadout, TapTempoButton } from "./components/TransportExtras";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
 import { DEFAULT_ROW_H, GRID_OPTIONS, MAX_PX_PER_BEAT, MAX_ROW_H, MIN_PX_PER_BEAT, MIN_ROW_H } from "./pianoRoll/geometry";
 import { PianoRoll, type Tool } from "./pianoRoll/PianoRoll";
+import { LearnView } from "./features/lessons/LearnView";
 import { SamplesPanel } from "./samples/SamplesPanel";
 import { WindowButtons } from "./pianoRoll/WindowButtons";
 import { engineStateStore, exportStore, projectStore, statusStore, telemetryStore, useStore } from "./store";
@@ -159,6 +164,7 @@ export function App() {
   const [pxPerBeat, setPxPerBeat] = useState(120);
   const [rowH, setRowH] = useState(DEFAULT_ROW_H);
   const [mixerOpen, setMixerOpen] = useState(false);
+  const [lessonsOpen, setLessonsOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] = useState("");
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [focus, setFocus] = useState<"arrangement" | "pianoroll">("pianoroll");
@@ -270,14 +276,20 @@ export function App() {
     const r = await window.daw.exportWav();
     if (!r.ok && !r.canceled) exportStore.set({ state: "error", id: "-", message: r.reason ?? "unknown error" });
   };
+  // The lessons take over the whole window; the studio stays mounted-state-wise (selection, zoom) in App.
+  if (lessonsOpen) return <LearnView project={project} onOpenClip={selectTrackClip} onExit={() => setLessonsOpen(false)} />;
 
   return (
     <div className="flex h-full flex-col">
+      <CollabPointers />
+      <CollabNetwork />
       <header className="hw-panel flex flex-wrap items-center gap-2 border-b border-black px-3 py-2">
         <div className="mr-1 text-sm font-semibold text-amber-300">
           Collab<span className="text-slate-200">DAW</span>
         </div>
         <ProjectMenu onExport={() => setExportOpen(true)} />
+        <CollabPanel />
+        <RecordingPanel />
         <span className="mx-1 h-5 w-px bg-white/10" />
 
         <div className="flex gap-1">
@@ -394,6 +406,9 @@ export function App() {
             data-testid="export-wav"
           >
             ⤓ Export WAV {!unlock.can("export.wav") && <LockIcon />}
+          </button>
+          <button className={`${btn} ${idle}`} onClick={() => setLessonsOpen(true)} title="Open the lessons" data-testid="lessons-toggle">
+            Lessons
           </button>
           <button
             className={`${btn} hw-teal ${samplesLocked ? "cursor-not-allowed opacity-50" : ""}`}

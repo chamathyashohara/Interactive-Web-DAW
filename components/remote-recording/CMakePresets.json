@@ -1,0 +1,67 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "msvc-x64",
+      "displayName": "Windows x64, MSVC v143 (VS 2022), Qt 6 - product build",
+      "description": "Visual Studio 2022 generator with the v143 toolset pinned. Qt from the RR_QT_DIR environment variable.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "toolset": { "value": "v143,host=x64", "strategy": "set" },
+      "binaryDir": "${sourceDir}/build/msvc-x64",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{RR_QT_DIR}",
+        "RR_BUILD_APPS": "ON",
+        "RR_BUILD_TESTS": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "msvc-x64-core",
+      "inherits": "msvc-x64",
+      "displayName": "Windows x64, MSVC v143 - Qt-free libraries and tests only",
+      "binaryDir": "${sourceDir}/build/msvc-x64-core",
+      "cacheVariables": { "RR_BUILD_APPS": "OFF" }
+    },
+    {
+      "name": "core-check-gcc",
+      "displayName": "NOT A PRODUCT BUILD - Qt-free portability check with GCC/MinGW + Ninja",
+      "description": "Builds and tests only libs/shared and libs/session with a non-MSVC compiler. Statically linked so the test exe does not pick up other MinGW runtimes on PATH.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/core-check-gcc",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++",
+        "RR_ALLOW_NON_MSVC": "ON",
+        "RR_BUILD_APPS": "OFF",
+        "RR_BUILD_TESTS": "ON",
+        "CMAKE_EXE_LINKER_FLAGS": "-static"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-x64-debug", "configurePreset": "msvc-x64", "configuration": "Debug" },
+    { "name": "msvc-x64-release", "configurePreset": "msvc-x64", "configuration": "Release" },
+    { "name": "msvc-x64-core-debug", "configurePreset": "msvc-x64-core", "configuration": "Debug" },
+    { "name": "core-check-gcc", "configurePreset": "core-check-gcc" }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc-x64-debug", "configurePreset": "msvc-x64", "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-x64-release", "configurePreset": "msvc-x64", "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-x64-core-debug", "configurePreset": "msvc-x64-core", "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "core-check-gcc", "configurePreset": "core-check-gcc",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

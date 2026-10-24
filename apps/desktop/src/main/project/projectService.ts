@@ -40,6 +40,14 @@ export class ProjectService {
     this.store.snapshot(this.project);
   }
 
+  /** Replaces the whole project (e.g. with the result of a collaboration session); persists, clears undo, publishes. */
+  adopt(project: Project): void {
+    this.project = project;
+    this.store.snapshot(this.project);
+    this.history.clear();
+    this.publish();
+  }
+
   /** Renames the project (not a musical edit: not journalled, not undoable); persists and publishes at once. */
   setName(name: string): void {
     if (name === this.project.name) return;

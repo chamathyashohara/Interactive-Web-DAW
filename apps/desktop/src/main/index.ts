@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
@@ -7,6 +8,8 @@ import type { OpBody, Project } from "@daw/shared";
 import { EngineBridge } from "./engine/engineBridge";
 import { SlotAllocator, toEngineSnapshot } from "./engine/snapshot";
 import { LibraryService } from "./library/libraryService";
+import { RecordingService } from "./recording/recordingService";
+import { LiveRecordingService, listInterfaces } from "./recording/liveRecording";
 import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
@@ -15,6 +18,8 @@ import { Workspace } from "./project/workspace";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
+import { CollabClient, NetStats, isLanHost, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { WebSocket as NodeWebSocket } from "ws";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
 interface EngineState {
@@ -29,6 +34,8 @@ let lastStatus: (EngineStatus & { levels: Record<string, number> }) | null = nul
 
 function resolveEnginePath(): string {
   if (process.env.DAW_ENGINE_PATH) return process.env.DAW_ENGINE_PATH;
+  // The installed / portable app carries the engine beside it (see `build.extraResources` in apps/desktop/package.json).
+  if (app.isPackaged) return path.join(process.resourcesPath, "engine", "daw_engine.exe");
   return path.resolve(app.getAppPath(), "../../engine/build/daw_engine_artefacts/Release/daw_engine.exe");
 }
 
@@ -59,7 +66,16 @@ function createWindow() {
 // End-to-end tests keep everything the app stores (settings, local storage, caches) out of the real user profile.
 if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
 
+// The window records the microphone (remote recording). End-to-end tests use Chromium's built-in fake microphone, so no sound card is needed.
+if (process.env.DAW_E2E === "1" && process.env.DAW_FAKE_MIC === "1") {
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+  app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+}
+
 app.whenReady().then(() => {
+  // Only the microphone (and nothing else) may be asked for, and only by this app's own window.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === "media"));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === "media");
   // Projects live under <userData>/projects, each in its own folder, managed by the Workspace.
   const workspace = new Workspace(process.env.DAW_PROJECTS_DIR ?? path.join(app.getPath("userData"), "projects"));
   let activeProjectId: string;
@@ -148,37 +164,126 @@ app.whenReady().then(() => {
     sendToRenderer("engine:status", lastStatus);
   });
 
+  // ---- real-time collaboration session (Component 3) ----
+  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; /** Ping, sync delay and traffic measuring for the Network panel. */ net: NetStats | null; /** true when everyone is on one network (the in-app server, or an address like 192.168.x.x), which live recording needs */ lan: boolean; /** Notes this person put in the room, sent again if the connection drops and comes back. */ shares: Map<string, unknown>; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  let collab: CollabState | null = null;
+  const lanIp = () => {
+    for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
+    return "127.0.0.1";
+  };
+  const cleanName = (name: unknown) => (typeof name === "string" && name.trim() ? name.trim().slice(0, 24) : os.userInfo().username || "Producer");
+  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, online: collab.remote !== null, lan: collab.lan, lanIp: lanIp(), users: collab.users, me: collab.client.clientId } : { active: false });
+  const publishCollab = () => sendToRenderer("collab:state", collabStateMsg());
+  const pushToUi = (project: Project, canUndo: boolean, canRedo: boolean) => {
+    pushProjectToEngine(project);
+    sendToRenderer("project:update", { project, canUndo, canRedo });
+  };
+  const wireClient = (client: CollabClient, baseWs: string) => {
+    if (collab) collab.net = new NetStats(baseWs, client, NodeWebSocket as unknown as typeof globalThis.WebSocket);
+    client.on("change", (project) => {
+      if (!collab) return;
+      collab.project = project;
+      try {
+        pushToUi(project, false, false); // option A: no local undo during a session (the session has a shared restore)
+      } catch (err) {
+        console.error("collab change push failed:", err); // never let a sync update crash the app
+      }
+    });
+    client.on("presence", ({ id, state }) => {
+      const p = (state as { pointer?: { x?: unknown; y?: unknown } | null } | null)?.pointer;
+      const ok = p && typeof p.x === "number" && typeof p.y === "number" && Number.isFinite(p.x) && Number.isFinite(p.y);
+      sendToRenderer("collab:pointer", { id, pointer: ok ? { x: Math.min(1, Math.max(0, p.x as number)), y: Math.min(1, Math.max(0, p.y as number)) } : null });
+    });
+    client.on("share", (note) => sendToRenderer("collab:share", note));
+    client.on("status", (status) => {
+      // The server drops a person's notes when they disconnect, so put them back after a reconnect.
+      if (status === "connected" && collab) for (const [topic, data] of collab.shares) client.share(topic, data);
+      publishCollab();
+    });
+    client.on("users", (users) => { if (collab) collab.users = users; publishCollab(); });
+    client.on("dropped", (dropped) => { if (dropped.length) sendToRenderer("collab:note", { kind: "dropped", count: dropped.length }); });
+    client.on("ended", ({ reason }) => { void leaveCollab(reason); });
+  };
+  const leaveCollab = async (reason?: string) => {
+    if (!collab) return;
+    const c = collab;
+    const finalProject = c.project;
+    collab = null;
+    c.net?.stop();
+    c.client.close();
+    if (c.server) {
+      c.server.endSession(c.code); // tell the others it ended (closes their sockets with the SESSION_ENDED code) before shutting the server
+      await new Promise((r) => setTimeout(r, 200)); // let the close frames flush so joiners see "host ended" rather than a dropped link
+      await c.server.close();
+    }
+    if (c.remote) {
+      // The session lives on the online server: ask it to end the session for everyone.
+      await fetch(`${c.remote.http}/sessions/${c.code}`, { method: "DELETE", headers: { "X-Host-Key": c.remote.hostKey }, signal: AbortSignal.timeout(4000) }).catch(() => {});
+    }
+    if (c.hosting && finalProject) {
+      service.adopt(finalProject); // the host's own project carries the result of the session
+    } else {
+      // A guest's own open project is never touched: show it again and keep the session as a separate new project.
+      pushToUi(service.current, service.canUndo, service.canRedo);
+      if (finalProject) {
+        const saved = workspace.importProject(`${finalProject.name} (session)`.slice(0, 80), finalProject);
+        publishProjects();
+        telemetry.record("ui.collab", { action: "saveSessionCopy" });
+        sendToRenderer("collab:note", { kind: "saved-copy", name: saved.name });
+      }
+    }
+    publishCollab();
+    if (reason === "host-ended") sendToRenderer("collab:note", { kind: "host-ended" });
+    if (reason === "cannot-join") sendToRenderer("collab:note", { kind: "cannot-join" });
+  };
+
   service.subscribe((project, meta) => {
+    if (collab) return; // during a session the shared project drives the UI and engine
     pushProjectToEngine(project);
     sendToRenderer("project:update", { project, ...meta });
   });
 
   ipcMain.handle("project:get", () => ({
-    project: service.current,
+    project: collab ? (collab.project ?? service.current) : service.current,
     projects: projectList(),
+    collab: collabStateMsg(),
     canUndo: service.canUndo,
     canRedo: service.canRedo,
     engine: engineState,
     status: lastStatus,
   }));
   ipcMain.handle("op:dispatch", (_e, body: OpBody, group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatch(body);
+      if (result.ok && before) telemetry.recordOps(before, [body]);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatch(body, group);
     if (result.ok) telemetry.recordOps(before, [body]);
     return result;
   });
   ipcMain.handle("op:batch", (_e, bodies: OpBody[], group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatchBatch(bodies);
+      if (result.ok && before) telemetry.recordOps(before, bodies);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatchBatch(bodies, group);
     if (result.ok) telemetry.recordOps(before, bodies);
     return result;
   });
   ipcMain.handle("history:undo", () => {
+    if (collab) return false; // local undo is off during a session; use the shared restore instead
     const ok = service.undo();
     if (ok) telemetry.record("history", { kind: "undo" });
     return ok;
   });
   ipcMain.handle("history:redo", () => {
+    if (collab) return false;
     const ok = service.redo();
     if (ok) telemetry.record("history", { kind: "redo" });
     return ok;
@@ -213,6 +318,96 @@ app.whenReady().then(() => {
     engine.send({ t: "exportWav", id, path: target, tailSeconds });
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
+  });
+  // ---- remote recording (Component 4, now inside the DAW): the recordings folder, and the live session service ----
+  const recordingsRootDefault = process.env.DAW_RR_WATCH_DIR ?? path.join(app.getPath("music"), "RemoteRecording");
+  const recording = new RecordingService({
+    settingsFile: path.join(app.getPath("userData"), "recording.json"),
+    defaultWatchDir: recordingsRootDefault,
+    onChange: (s) => sendToRenderer("recording:state", s),
+  });
+  recording.start();
+  const live = new LiveRecordingService({
+    recordingsRoot: recording.folder,
+    logFile: path.join(app.getPath("userData"), "recording-logs", `live-${new Date().toISOString().slice(0, 10)}.jsonl`),
+    appVersion: app.getVersion(),
+    onState: (s) => sendToRenderer("live:state", s),
+    toRenderer: sendToRenderer,
+  });
+  live.start();
+  ipcMain.handle("recording:state", () => recording.state());
+  ipcMain.handle("recording:chooseFolder", async (_e, explicitPath?: unknown) => {
+    let dir = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!dir) {
+      const picked = await dialog.showOpenDialog(win!, { title: "Folder where recordings are saved", properties: ["openDirectory"], defaultPath: recording.state().watchDir });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      dir = picked.filePaths[0];
+    }
+    recording.setWatchDir(dir);
+    live.setRecordingsRoot(dir);
+    return { ok: true };
+  });
+  ipcMain.handle("recording:openFolder", async () => {
+    const dir = recording.state().watchDir;
+    fs.mkdirSync(dir, { recursive: true });
+    const err = await shell.openPath(dir);
+    return err ? { ok: false, reason: err } : { ok: true };
+  });
+  ipcMain.handle("recording:pollNow", () => (process.env.DAW_E2E === "1" ? (recording.pollNow(), true) : false));
+  // Copies one recording into the sound library and returns its entry; the window then places it on a new track.
+  ipcMain.handle("recording:addTake", async (_e, file?: unknown) => {
+    if (libraryStatus.state !== "ready") return { ok: false, reason: "The sound library is still being prepared." };
+    if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
+    let source = typeof file === "string" ? file : undefined;
+    if (!source) {
+      const picked = await dialog.showOpenDialog(win!, { title: "Add a recording", properties: ["openFile"], defaultPath: recording.state().watchDir, filters: [{ name: "Audio", extensions: ["wav", "aiff", "aif", "flac", "ogg"] }] });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      source = picked.filePaths[0];
+    }
+    const result = await library.importFile(source, (p) => sendToRenderer("library:importProgress", p));
+    sendToRenderer("library:importProgress", { phase: "done", done: 0, total: 0 });
+    if (!result.ok) return result;
+    sendToRenderer("library:update", library.list());
+    recording.dismiss(source);
+    telemetry.record("ui.recording", { action: "addTake" });
+    return result;
+  });
+  // ---- live session: control from the window ----
+  const text = (v: unknown, max = 80): string => (typeof v === "string" ? v.slice(0, max) : "");
+  const num = (v: unknown, min: number, max: number, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.trunc(v))) : fallback);
+  ipcMain.handle("live:state", () => live.state());
+  ipcMain.handle("live:interfaces", () => listInterfaces());
+  ipcMain.handle("live:create", async (_e, o: { bind?: unknown; port?: unknown; name?: unknown }) => {
+    telemetry.record("ui.recording", { action: "create-session" });
+    return live.createSession({ bind: text(o?.bind, 45), port: num(o?.port, 1024, 65533, 52000), name: text(o?.name, 40) });
+  });
+  ipcMain.handle("live:join", async (_e, o: { host?: unknown; port?: unknown; code?: unknown; name?: unknown }) => {
+    telemetry.record("ui.recording", { action: "join-session" });
+    return live.join({ host: text(o?.host, 45), port: num(o?.port, 1, 65535, 52000), code: text(o?.code, 6), name: text(o?.name, 40) });
+  });
+  ipcMain.handle("live:leave", async () => { await live.leave(); return { ok: true }; });
+  ipcMain.handle("live:consent", (_e, on: unknown) => (live.setConsent(on === true), { ok: true }));
+  ipcMain.handle("live:deliveryConsent", (_e, on: unknown) => (live.setDeliveryConsent(on === true), { ok: true }));
+  ipcMain.handle("live:record", () => { const r = live.record(); telemetry.record("ui.recording", { action: r ? "record-refused" : "record" }); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:stop", () => { const r = live.stop(); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:newCode", () => ({ ok: true, code: live.newCode() }));
+  ipcMain.handle("live:lead", (_e, ms: unknown, auto: unknown) => (live.setLead(num(ms, 300, 10000, 1000), auto !== false), { ok: true }));
+  ipcMain.handle("live:autoTransfer", (_e, on: unknown) => (live.setAutoTransfer(on === true), { ok: true }));
+  ipcMain.handle("live:transfer", async (_e, take: unknown) => { const r = await live.requestTransfer(num(take, 1, 999, 0)); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:cancelTransfer", (_e, take: unknown) => (live.cancelTransfer(num(take, 1, 999, 0)), { ok: true }));
+  ipcMain.handle("live:talkback", (_e, send: unknown, hear: unknown) => (live.setTalkback(send === true, hear === true), { ok: true }));
+  // ---- live session: audio from the window (high rate, no reply) ----
+  ipcMain.on("live:captureState", (_e, s: { open?: unknown; deviceName?: unknown; sampleRate?: unknown; channels?: unknown; failed?: unknown }) =>
+    live.captureState({ open: s?.open === true, deviceName: text(s?.deviceName, 120), sampleRate: num(s?.sampleRate, 8000, 192000, 48000), channels: num(s?.channels, 1, 2, 1), failed: text(s?.failed, 200) }));
+  ipcMain.on("live:capture", (_e, frame: unknown, samples: unknown) => {
+    if (typeof frame === "number" && samples instanceof Float32Array) live.capture(frame, samples);
+  });
+  ipcMain.on("live:send", (_e, opus: unknown, mediaIndex: unknown, muted: unknown) => {
+    if (opus instanceof Uint8Array && typeof mediaIndex === "number") live.liveSend(opus, mediaIndex, muted === true);
+  });
+  ipcMain.on("live:incomingStats", (_e, r: Record<string, unknown>) => {
+    const n = (k: string) => (typeof r?.[k] === "number" ? (r[k] as number) : 0);
+    live.liveIncomingStats({ received: n("received"), lostEstimate: n("lostEstimate"), late: n("late"), duplicates: n("duplicates"), reordered: n("reordered"), jitterUs: n("jitterUs"), jbFill: n("jbFill"), jbTarget: n("jbTarget"), underruns: n("underruns"), concealed: n("concealed"), decodeErrors: n("decodeErrors") });
   });
   ipcMain.handle("library:get", () => ({ status: libraryStatus, ...library.list() }));
   ipcMain.on("library:preview", (_e, id: unknown) => {
@@ -461,6 +656,98 @@ app.whenReady().then(() => {
     publishProjects();
     return { ok: true, id: meta.id, tracks: trackCount };
   });
+  // ---- collaboration: host / join / leave ----
+  ipcMain.handle("collab:state", () => collabStateMsg());
+  ipcMain.handle("collab:host", async (_e, name?: unknown, online?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    // "Different network": the session is created on a separate server (reached by address, optionally with an access token).
+    if (online && typeof online === "object") {
+      const { server: serverInput, token } = online as { server?: unknown; token?: unknown };
+      if (typeof serverInput !== "string" || !serverInput.trim()) return { ok: false, reason: "enter the server address" };
+      const addr = parseServerAddress(serverInput);
+      try {
+        const res = await fetch(`${addr.http}/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(typeof token === "string" && token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {}) },
+          body: JSON.stringify({ project: service.current }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (res.status === 401) return { ok: false, reason: "wrong access token" };
+        if (!res.ok) return { ok: false, reason: `the server replied ${res.status}` };
+        const { code, hostKey } = (await res.json()) as { code: string; hostKey: string };
+        const client = new CollabClient({ baseUrl: addr.ws, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+        collab = { client, server: null, remote: { http: addr.http, hostKey }, net: null, lan: isLanHost(addr.ws), shares: new Map(), hosting: true, users: [], project: null, code, address: addr.http };
+        wireClient(client, addr.ws);
+        client.connect();
+        telemetry.record("ui.collab", { action: "hostOnline" });
+        publishCollab();
+        return { ok: true, code, address: addr.http };
+      } catch (err) {
+        return { ok: false, reason: err instanceof TypeError || (err as Error)?.name === "TimeoutError" ? `cannot reach ${addr.http}. Is the server running, and is the address right?` : String(err) };
+      }
+    }
+    try {
+      const server = await startSessionServer(0);
+      const code = server.createSession(service.current);
+      const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+      collab = { client, server, remote: null, net: null, lan: true, shares: new Map(), hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      wireClient(client, `ws://127.0.0.1:${server.port}`);
+      client.connect();
+      telemetry.record("ui.collab", { action: "host" });
+      publishCollab();
+      return { ok: true, code, address: collab.address };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+  });
+  ipcMain.handle("collab:join", (_e, address: unknown, code: unknown, name?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
+    const baseUrl = parseServerAddress(address).ws; // accepts 192.168.1.5, 192.168.1.5:5000, https://abc.trycloudflare.com ...
+    const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+    collab = { client, server: null, remote: null, net: null, lan: isLanHost(baseUrl), shares: new Map(), hosting: false, users: [], project: null, code, address: address.trim() };
+    wireClient(client, baseUrl);
+    client.connect();
+    telemetry.record("ui.collab", { action: "join" });
+    publishCollab();
+    return { ok: true };
+  });
+  ipcMain.on("collab:pointer", (_e, p: unknown) => {
+    if (!collab || collab.client.status !== "connected") return;
+    const q = p as { x?: unknown; y?: unknown } | null;
+    collab.client.setPresence(q && typeof q.x === "number" && typeof q.y === "number" ? { pointer: { x: q.x, y: q.y } } : { pointer: null });
+  });
+  // A small note for the whole room (used by Live recording to hand the Producer's address and pairing code to the Singers).
+  ipcMain.handle("collab:share", (_e, topic: unknown, data: unknown) => {
+    if (!collab || typeof topic !== "string") return { ok: false };
+    if (data === null || data === undefined) collab.shares.delete(topic);
+    else collab.shares.set(topic, data);
+    collab.client.share(topic, data ?? null);
+    sendToRenderer("collab:share", { id: collab.client.clientId, topic, data: data ?? null }); // the server does not echo a note to its sender
+    return { ok: true };
+  });
+  ipcMain.handle("collab:net", () => collab?.net?.snapshot() ?? null);
+  ipcMain.handle("collab:netExport", async (_e, explicitPath?: unknown) => {
+    if (!collab?.net) return { ok: false, reason: "not in a session" };
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    let target = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!target) {
+      const picked = await dialog.showSaveDialog(win!, { title: "Export network measurements", defaultPath: `network-${collab.code}-${stamp}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    try {
+      fs.writeFileSync(target, collab.net.toCsv());
+      return { ok: true, file: target };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+  });
+  ipcMain.handle("collab:leave", async () => {
+    await leaveCollab();
+    telemetry.record("ui.collab", { action: "leave" });
+    return { ok: true };
+  });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
@@ -469,6 +756,9 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on("before-quit", () => {
+    recording.stop();
+    void live.shutdown();
+    if (collab) { collab.client.close(); void collab.server?.close(); }
     telemetry.recordSummary(service.current);
     engine.stop();
     service.close();

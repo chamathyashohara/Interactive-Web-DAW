@@ -1,0 +1,178 @@
+# Windows Build Guide
+
+**Applies to:** Stage 3 foundation (version 0.1.0). Two Qt Widgets apps,
+`ProducerStudio.exe` and `PerformerClient.exe`, plus Qt-free libraries and unit tests.
+**Toolchain (ADR-002):** MSVC v143 (Visual Studio 2022), C++17, CMake ≥ 3.21, Qt 6.11.3
+`msvc2022_64`, Windows 10 1809+ / 11 x64.
+
+## 0. What has and has not been verified (11 October 2026)
+
+| Check | Result | Where |
+|---|---|---|
+| Qt-free libraries + 26 tests, built with **GCC 16.2 (MinGW)** via preset `core-check-gcc` | **PASS**: 0 warnings, 26/26 tests | Stage 3 report |
+| Configure fails with a clear message: no VS, non-MSVC compiler, non-MSVC with apps, Qt missing | **PASS** (messages captured) | Stage 3 report |
+| Build with **MSVC v143** | **NOT TESTED**: the MSVC toolset is not installed on the development PC | — |
+| Build of the two **Qt apps** and their smoke tests | **NOT TESTED**: Qt is not installed on the development PC | — |
+| Stage 6: `rr_network`, `rr_control`, `rr_session_probe` + session tests with GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process session runs on one PC. | Stage 6 report, `docs/testing/evidence/2026-10-11_devpc_stage6_session_runs.txt` |
+| Stage 6: Qt `SessionPanel` | **NOT COMPILED** (no Qt). Only a `g++ -fsyntax-only` check against hand-written stub headers, which checks the non-Qt logic only. | Stage 6 report |
+| Stage 7: libopus 1.6.1 fetch (SHA-256 checked) + `rr_media` + live probe + media tests with GCC | **PASS**: 0 warnings in a clean rebuild (libopus included), all tests, 10 repeats. Two-process live runs on one PC. | Stage 7 report, `docs/testing/evidence/2026-10-11_devpc_stage7_live_runs.txt` |
+| Stage 7: libopus and `rr_media` with **MSVC** | **NOT TESTED** (no MSVC). libopus selects `USE_ALLOCA` there; configuration stops if it would fall back to its pseudostack. | — |
+| Stage 7: Qt `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 7 report |
+| Stage 8: two-way `rr_media` (endpoint, streams, report) + duplex tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Two-process duplex runs on one PC. | Stage 8 report, `docs/testing/evidence/2026-10-11_devpc_stage8_duplex_runs.txt` |
+| Stage 8: Qt two-way `LivePanel` | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 8 report |
+| Stage 9: coordinated recording (control 1.1, readiness, timing) + tests + probe, GCC | **PASS**: 0 warnings, all tests, 10 repeats. Real-device coordinated runs on one PC. | Stage 9 report, `docs/testing/evidence/2026-10-11_devpc_stage9_coordinated_runs.txt` |
+| Stage 9: Qt `SessionPanel` changes (checklist, countdown, per-PC rows, start lead) | **NOT COMPILED** (no Qt). `g++ -fsyntax-only` against stub headers only. | Stage 9 report |
+| **Product build (11 Oct 2026, after Stage 11):** VS 2022 Build Tools, **MSVC 19.44 (v143)**, Windows SDK 10.0.26100, **Qt 6.11.3 msvc2022_64**, preset `msvc-x64`, Release | **PASS**: both apps and every library build; **0 compiler warnings** after fixing 6 (2 × C4458 shadowing, 4 × C4996 CRT deprecations); **170/170 tests** incl. `producer_smoke` and `performer_smoke`. `windeployqt` warns that Qt translations are unavailable (qttranslations not installed; the UI is English only). | This section; DECISION_LOG D-86, D-87 |
+| Qt panels (session, live, transfer table) compiled with real Qt | **PASS** (compiled; both windows opened, rendered and closed normally on the development PC; screenshots checked). Not yet used in a session. | — |
+| Two-PC package (app-local Qt + MSVC runtime DLLs) | Assembled; starts from its own folder and loads Qt and the runtime from there. **Not yet run on a second PC.** | — |
+| **Stage 10 (19 Oct 2026):** guided "Start here" view, style sheet, `ui_*` hooks | **PASS**: 0 warnings in our code; GCC 168/168 and MSVC 170/170; the real GUI driven end to end through UI Automation on one PC (session, take, VERIFIED copy); 2 faults found and fixed | ADR-021, SESSION_TEST_PROTOCOL §6 |
+
+**How Qt was installed on the development PC (deviation from §1 step 2, D-87):** the Qt Online Installer was not used. `aqtinstall` 3.3.0 cannot read the per-kit repository layout Qt uses for 6.11.x, so the two archives needed (`qtbase`, `qtsvg` of package `qt.qt6.6113.win64_msvc2022_64`) were downloaded from `https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6113/qt6_6113_msvc2022_64/`, checked against the published `.sha1` files (both OK), and extracted to `D:\Qt\6.11.3\msvc2022_64`. `RR_QT_DIR` points there (user environment).
+
+The commands below are the intended reference procedure. Run them on a PC with
+the prerequisites, and record the output in the next stage report.
+
+## 1. Prerequisites (one time per PC)
+
+1. **Visual Studio 2022 Build Tools** with the C++ workload. This brings MSVC v143, the Windows SDK and CMake. Admin rights needed, several GB:
+   ```powershell
+   winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+   ```
+   It can sit next to Visual Studio 2026. The presets pin toolset `v143`.
+2. **Qt 6.11.3 for MSVC 2022 64-bit**, using the Qt Online Installer (free Qt account). Select only *Qt 6.11.3 → MSVC 2022 64-bit*. Then:
+   ```powershell
+   setx RR_QT_DIR C:\Qt\6.11.3\msvc2022_64
+   ```
+   Open a new terminal afterwards so the variable is visible.
+3. **Git for Windows.**
+4. **Internet access at the first configure,** to download Catch2. For offline use, see §5.
+
+## 2. Build from a clean checkout (product build)
+
+Run in PowerShell, in the repository root:
+
+```powershell
+cmake --preset msvc-x64                    # configure (Visual Studio 17 2022, x64, v143)
+cmake --build --preset msvc-x64-debug      # or msvc-x64-release
+ctest --preset msvc-x64-debug              # unit tests + both app smoke tests
+```
+or the same steps through the script:
+```powershell
+.\scripts\build-windows.ps1 -Config Debug
+```
+
+**Outputs:** `build\msvc-x64\bin\Debug\`:
+- `ProducerStudio.exe`
+- `PerformerClient.exe`
+- `rr_unit_tests.exe`
+- the Qt DLLs and `platforms\qwindows.dll`, copied by `windeployqt` after each app build
+
+**Expected `ctest` result:**
+- 26 unit/boundary tests;
+- `producer_smoke` and `performer_smoke`: each app opens its window, checks that it shows its role name, "Not connected" and "Not ready", logs `smoke_test_passed` and exits 0.
+
+**Start the apps:**
+```powershell
+.\build\msvc-x64\bin\Debug\ProducerStudio.exe
+.\build\msvc-x64\bin\Debug\PerformerClient.exe
+```
+Each window shows:
+- its own role name ("Producer Studio" or "Performer Client");
+- "Connection: Not connected" and "Session: Not ready: …";
+- a notice that audio, recording and networking are not implemented;
+- the LAN-only security notice.
+
+The **Diagnostics** tab shows the build, Qt, OS, configuration and recent log records.
+
+**Logs:** one JSON Lines file per run, in
+`%LOCALAPPDATA%\SLIIT-J26-IM-303\<ProducerStudio|PerformerClient>\logs\`
+(override with `--log-dir <folder>`).
+
+## 3. Qt-free libraries only
+
+```powershell
+cmake --preset msvc-x64-core
+cmake --build --preset msvc-x64-core-debug
+ctest --preset msvc-x64-core-debug
+```
+
+## 4. Portability check without MSVC (not a product build)
+
+This is the check that **was** run on the development PC: GCC/MinGW + Ninja,
+apps off, statically linked.
+```bash
+cmake --preset core-check-gcc
+cmake --build --preset core-check-gcc
+ctest --preset core-check-gcc
+```
+
+## 4b. Device check without the GUI
+`rr_audio_probe.exe` is built with every preset into `bin\<Config>\`. It lists devices and records a test take through the
+same library code as the apps. See `docs/testing/AUDIO_DEVICE_TEST_PROTOCOL.md` §1. Since Stage 5 it can also monitor input to output
+(`--monitor`, `--reopen-input-at`) and play a test tone (`--tone`). See `docs/testing/MONITOR_LOOPBACK_TEST_PROTOCOL.md` §1.
+
+## 4c. Session check without the GUI (Stage 6)
+`rr_session_probe.exe` runs a scripted producer or performer through the same session controller as the apps,
+with a test recorder (no audio) or `--audio`. Run two instances (two terminals, or two PCs). See
+`docs/testing/SESSION_TEST_PROTOCOL.md`. Windows Firewall: see §3 of that document. The tool never changes firewall settings.
+
+## 4d. Live audio check without the GUI (Stage 7)
+`rr_session_probe.exe --live` adds the one-way live stream (producer -> performer) to a session run:
+- a labelled test tone or the real input on the producer;
+- a labelled 10 ms test playback clock (optionally saved to a WAV) or the real output on the performer;
+- test-only loss simulation (`--sim-*`).
+
+See `docs/testing/LIVE_AUDIO_TEST_PROTOCOL.md`. The producer PC needs inbound UDP on the media port (control port + 1) on the Private profile; see §3 of that document.
+
+## 4e. Take transfer check without the GUI (Stage 11)
+`rr_session_probe.exe` with `--allow-delivery` (performer) and the script commands `transfer <take>; wait-transfer <take> 60 VERIFIED` (producer) requests a verified copy of the performer's take over the transfer connection (control port + 2). Fault injection for tests: `--xfer-drop-after`, `--xfer-corrupt-chunk`, `--xfer-corrupt-whole`, `--xfer-wrong-session`. See `docs/testing/SESSION_TEST_PROTOCOL.md` §5.
+
+## 5. Dependencies and how they are acquired
+See `third_party/README.md`.
+- **Catch2:** fetched at configure time and **checked against a pinned SHA-256**. To build offline:
+  1. download `https://github.com/catchorg/Catch2/archive/refs/tags/v3.16.0.tar.gz` on a connected PC;
+  2. check its SHA-256 equals `0957cae5…af34`;
+  3. unpack it and configure with `-DFETCHCONTENT_SOURCE_DIR_CATCH2=<unpacked folder>`.
+
+  The source-dir override skips the hash check, so check the archive yourself in step 2.
+- **libopus 1.6.1** (Stage 7, `cmake/RrOpus.cmake`): fetched at configure time from `https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz` and **checked against SHA-256 `6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1`**, as published in `https://downloads.xiph.org/releases/opus/SHA256SUMS.txt`. To build offline, follow the Catch2 steps with `-DFETCHCONTENT_SOURCE_DIR_OPUS=<unpacked folder>`.
+- **Qt:** installed manually (§1). Never committed.
+- **Windows CNG (`bcrypt.lib`, Stage 11):** part of the Windows SDK, linked by `rr_transfer` for SHA-256. Nothing to download.
+
+## 6. Options
+| CMake option | Default | Meaning |
+|---|---|---|
+| `RR_BUILD_APPS` | ON | Build the two Qt apps |
+| `RR_BUILD_TESTS` | ON | Build the tests (fetches Catch2) |
+| `RR_RUN_WINDEPLOYQT` | ON | Copy the Qt runtime next to the apps after each build |
+| `RR_WARNINGS_AS_ERRORS` | OFF | `/WX` or `-Werror`. OFF until a full MSVC build has been seen warning-free. |
+| `RR_ALLOW_UNPINNED_MSVC` | OFF | Accept a toolset other than v143 (for example VS 2026 v145). The deviation goes into the build info. |
+| `RR_ALLOW_NON_MSVC` | OFF | Allow GCC/Clang for the Qt-free check only |
+
+## 7. Troubleshooting (messages seen on the development PC)
+| Message | Cause | Fix |
+|---|---|---|
+| `Generator Visual Studio 17 2022 could not find any instance of Visual Studio.` | VS 2022 Build Tools not installed. VS 2026 alone doesn't count. | §1 step 1 |
+| `MSVC_VERSION 19xx … is not the pinned toolchain` | Configured with a toolset other than v143 | Use the `msvc-x64` preset, or `-DRR_ALLOW_UNPINNED_MSVC=ON` (recorded as a deviation) |
+| `Product builds require MSVC v143 …` | GCC/Clang selected | Use `msvc-x64`, or `core-check-gcc` for the Qt-free check |
+| `Qt 6.11 or newer … was not found` | `RR_QT_DIR` / `CMAKE_PREFIX_PATH` not set or wrong | §1 step 2 |
+| Catch2 download `status_code: 60 … SSL peer certificate … not OK`, `SSL Trust Anchors:` empty | The CMake on PATH has no CA certificates. Seen with the WinLibs MinGW CMake 4.4.2. | Use VS's CMake, or pass `-DCMAKE_TLS_CAINFO="C:/Program Files/Git/mingw64/etc/ssl/certs/ca-bundle.crt"`. **Do not set `CMAKE_TLS_VERIFY=0`.** |
+| A MinGW-built exe exits immediately (code 127) | An older `libstdc++-6.dll` from Git is found first on PATH | The `core-check-gcc` preset links statically. Product builds use MSVC. |
+| `The object file directory … has 196 characters. The maximum full path to an object file is 250` (in Catch2) | The checkout path is too deep. Seen when cloning into a deep temp folder. | Clone to a short path such as `C:\src\rr` |
+| App starts with "could not find the Qt platform plugin windows" | `windeployqt` did not run | Rebuild with `RR_RUN_WINDEPLOYQT=ON`, or run `%RR_QT_DIR%\bin\windeployqt.exe <exe>` |
+
+## 8. Running on another PC (packaging is not automated yet)
+Copy `bin\Release\` (the exes plus the `windeployqt` output). On the target PC, run the
+**official `vc_redist.x64.exe`** once (ADR-002). Add the `LICENSES\` folder and
+`NOTICE.txt` required by ADR-004 before giving the build to anyone. That
+packaging step is planned, not implemented.
+
+## 9. CI recipe (not set up: the repository has no remote yet)
+On a hosted `windows-2022` runner, which has VS 2022:
+1. check out the repo;
+2. install Qt 6.11.3 `msvc2022_64` with a pinned Qt installer step;
+3. set `RR_QT_DIR`;
+4. run §2's three commands with the release presets.
+
+The smoke tests need an interactive desktop session, which hosted Windows runners
+provide. Nothing in this recipe has been run.

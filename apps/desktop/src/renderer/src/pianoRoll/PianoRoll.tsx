@@ -28,6 +28,46 @@ import {
 
 export type Tool = "draw" | "paint" | "select" | "delete" | "mute" | "slice";
 
+/** A note drawn by a guide (lessons): never part of the project and never editable. */
+export interface GuideNote {
+  pitch: number;
+  startTick: number;
+  durationTicks: number;
+  /** "ghost": dashed outline to follow ("ghost-root" for the root); "demo": solid, drawn by a demonstration ("root" for the root). */
+  style: "ghost" | "ghost-root" | "demo" | "root";
+  /** Short text inside the note, e.g. "root". */
+  label?: string;
+}
+
+/**
+ * Optional teaching overlay used by the lessons. When omitted the piano roll behaves exactly as before.
+ * Everything here is display or restriction only: it never changes project data.
+ */
+export interface PianoRollGuide {
+  notes?: GuideNote[];
+  /** Pitch rows to highlight (e.g. a hint pointing at the right rows). */
+  rows?: number[];
+  /** CSS colour per real note id, e.g. red for a wrong note while learning. */
+  noteColor?: Record<string, string>;
+  /** Only these tools work; tool shortcuts outside the list are ignored. */
+  tools?: Tool[];
+  /** false hides the edit-strip commands (select all, copy, paste, duplicate, quantize, delete) and their shortcuts. */
+  commands?: boolean;
+  /** No editing at all (for demonstrations). */
+  readOnly?: boolean;
+  /** Time spans to highlight across the grid (where to place notes), with an optional short label in the ruler. */
+  columns?: { startTick: number; durationTicks: number; label?: string }[];
+  /** Number every beat in the ruler (1 2 3 4), for learners who are still counting. */
+  countBeats?: boolean;
+  /** Keyboard keys to light up (for example the notes sounding right now in a demonstration). */
+  activeKeys?: number[];
+  /**
+   * Bring these pitches (and optionally this moment) into view, scrolling smoothly and only when they are not already
+   * visible. `key` changes each time a new focus is wanted.
+   */
+  focus?: { key: string; pitches: number[]; tick?: number };
+}
+
 interface Props {
   track: Track;
   clip: Clip;
@@ -38,12 +78,16 @@ interface Props {
   gridTicks: number;
   pxPerBeat: number;
   /** Horizontal zoom (ctrl + middle mouse sweep). */
-  onZoom: (pxPerBeat: number) => void;
+  /** Ctrl + middle-drag zoom; the lessons' embedded roll zooms with its own sliders and leaves this out. */
+  onZoom?: (pxPerBeat: number) => void;
   rowH: number;
   onTool: (t: Tool) => void;
-  maximized: boolean;
-  onToggleMaximize: () => void;
-  onClose: () => void;
+  /** Teaching overlay (lessons only). */
+  guide?: PianoRollGuide;
+  /** The window buttons (maximize, close) show only when these are given; the lessons' embedded roll has none. */
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
+  onClose?: () => void;
   /** The project's key (null = none). Drives scale highlighting and the red out-of-key notes. */
   musicKey: ProjectKey | null;
   keyHelp: boolean;
@@ -78,18 +122,28 @@ const Playhead = memo(function Playhead({ pxPerBeat, clipStart, clipLength }: { 
 
 const btn = "hw-btn px-2 py-0.5 text-[11px]";
 
-export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxPerBeat, onZoom, rowH, onTool, maximized, onToggleMaximize, onClose, musicKey, keyHelp, onToggleKeyHelp }: Props) {
+export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap, gridTicks, pxPerBeat, onZoom, rowH, onTool: requestTool, guide, maximized = false, onToggleMaximize, onClose, musicKey, keyHelp, onToggleKeyHelp }: Props) {
+  const allowed = guide?.tools;
+  const tool: Tool = allowed && !allowed.includes(requestedTool) ? (allowed[0] ?? "select") : requestedTool;
+  const onTool = (t: Tool) => {
+    if (!allowed || allowed.includes(t)) requestTool(t);
+  };
+  const readOnly = guide?.readOnly ?? false;
+  const commands = !readOnly && guide?.commands !== false;
   const clipId = clip.id;
   const noteClip: NoteClip = { trackId: track.id, clipId, lengthTicks: clip.lengthTicks };
   const notes = useMemo(() => Object.values(clip.notes), [clip.notes]);
   const gridW = tickToPx(clip.lengthTicks, pxPerBeat);
   const gridH = PITCHES.length * rowH;
   const isDrums = track.instrument === "drums";
-  const unlock = useUnlock();
+  const gated = useUnlock();
+  // A lesson's own roll is where these features are learned, so it is never locked; the lesson limits its tools itself.
+  const unlock = guide ? { can: () => true, reason: () => null } : gated;
   // Drum clips open in the step sequencer; the roll is one click away.
   const [drumView, setDrumView] = useState<"steps" | "roll">("steps");
   const [arpOpen, setArpOpen] = useState(false); // the little arpeggiator mode popover
-  const showSteps = isDrums && unlock.can("seq.steps") && drumView === "steps";
+  // A lesson's roll always shows the roll (its exercises draw ghost notes there).
+  const showSteps = !guide && isDrums && unlock.can("seq.steps") && drumView === "steps";
   // Key help applies to melodic tracks only (drum rows are instruments, not pitches) and only once its lesson is done.
   const keyHelpAvailable = !isDrums && musicKey !== null && unlock.can("key.help");
   const hint = keyHelpAvailable && keyHelp ? musicKey : null;
@@ -128,6 +182,62 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track.id, clip.id]);
 
+  // Guided focus: scroll just enough to show the given pitches / moment, smoothly, and never when they are already visible.
+  const focusKey = guide?.focus?.key;
+  // Our own short ease-out scroll (the browser's smooth scrolling gets cancelled by the roll's re-renders while a
+  // demonstration lights keys). While it runs, visibility is judged from where it is heading.
+  const scrollAnim = useRef<{ frame: number; top: number; left: number } | null>(null);
+  const animateScroll = (el: HTMLDivElement, top: number, left: number) => {
+    if (scrollAnim.current) cancelAnimationFrame(scrollAnim.current.frame);
+    if (document.visibilityState === "hidden") {
+      // No animation frames run in a hidden window: go straight there.
+      scrollAnim.current = null;
+      el.scrollTop = top;
+      el.scrollLeft = left;
+      return;
+    }
+    const fromTop = el.scrollTop;
+    const fromLeft = el.scrollLeft;
+    const t0 = performance.now();
+    const DURATION = 280;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / DURATION);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.scrollTop = fromTop + (top - fromTop) * e;
+      el.scrollLeft = fromLeft + (left - fromLeft) * e;
+      scrollAnim.current = k < 1 ? { frame: requestAnimationFrame(step), top, left } : null;
+    };
+    scrollAnim.current = { frame: requestAnimationFrame(step), top, left };
+  };
+  useEffect(() => () => {
+    if (scrollAnim.current) cancelAnimationFrame(scrollAnim.current.frame);
+  }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    const f = guide?.focus;
+    if (!el || !f || !f.pitches.length) return;
+    const curTop = scrollAnim.current?.top ?? el.scrollTop;
+    const curLeft = scrollAnim.current?.left ?? el.scrollLeft;
+    const top = RULER_H + Math.min(...f.pitches.map((p) => pitchToY(p, rowH)));
+    const bottom = RULER_H + Math.max(...f.pitches.map((p) => pitchToY(p, rowH))) + rowH;
+    const viewTop = curTop + RULER_H;
+    const viewBottom = curTop + el.clientHeight - VEL_H;
+    const margin = rowH;
+    let nextTop = curTop;
+    if (top < viewTop + margin || bottom > viewBottom - margin) {
+      const visible = el.clientHeight - VEL_H - RULER_H;
+      nextTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, (top + bottom) / 2 - RULER_H - visible / 2));
+    }
+    let nextLeft = curLeft;
+    if (f.tick !== undefined) {
+      const x = tickToPx(f.tick, pxPerBeat);
+      const visibleW = el.clientWidth - KEYS_W;
+      if (x < curLeft || x > curLeft + visibleW - 60) nextLeft = Math.max(0, x - 40);
+    }
+    if (Math.abs(nextTop - curTop) > 2 || Math.abs(nextLeft - curLeft) > 2) animateScroll(el, nextTop, nextLeft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey]);
+
   // After a zoom, keep the moment under the cursor where it was.
   useLayoutEffect(() => {
     const a = anchor.current, el = scrollRef.current;
@@ -151,7 +261,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
     const next = Math.round(clamp(z.zoom0 * Math.exp((e.clientX - z.x0) / 150), MIN_PX_PER_BEAT, MAX_PX_PER_BEAT));
     if (next === pxPerBeat) return;
     anchor.current = { tick: Math.max(0, z.anchorTick), viewX: z.viewX };
-    onZoom(next);
+    onZoom?.(next);
   };
   const onZoomUp = () => {
     zoomDrag.current = null;
@@ -200,12 +310,13 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
   const cmdTranspose = (semitones: number) => batch(transposeOps(noteClip, targets(), semitones));
 
   useEffect(() => {
-    if (!keysEnabled) return;
+    if (!keysEnabled || readOnly) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA")) return;
       const k = e.key.toLowerCase();
       if (e.ctrlKey || e.metaKey) {
+        if (!commands) return;
         if (k === "a") (e.preventDefault(), cmdSelectAll());
         else if (k === "c") (e.preventDefault(), cmdCopy());
         else if (k === "v") (e.preventDefault(), cmdPaste());
@@ -229,7 +340,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
       else if (k === "e") onTool("delete");
       else if (k === "m") onTool("mute");
       else if (k === "c") onTool("slice");
-      else if (k === "q") cmdQuantize();
+      else if (k === "q" && commands) cmdQuantize();
       else if ((k === "delete" || k === "backspace") && liveSelected.size) cmdDelete();
     };
     window.addEventListener("keydown", onKey);
@@ -253,7 +364,9 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
 
   // ---- grid pointer handling ----
   const onGridPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 2) return;
+    if ((e.button !== 0 && e.button !== 2) || readOnly) return;
+    // In a lesson that does not allow deleting, the right button (sweep-delete) does nothing.
+    if (e.button === 2 && allowed && !allowed.includes("delete")) return;
     const { x, y } = gridPoint(e);
     const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
     const note = hit ? clip.notes[hit.dataset.noteId!] : undefined;
@@ -452,7 +565,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
   };
   const onVelDown = (e: React.PointerEvent) => {
     const el = (e.target as HTMLElement).closest<HTMLElement>("[data-vel-id]");
-    if (!el || e.button !== 0) return;
+    if (!el || e.button !== 0 || readOnly) return;
     const id = el.dataset.velId!;
     velRef.current!.setPointerCapture(e.pointerId);
     setSelected(new Set([id]));
@@ -496,13 +609,13 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
           {track.name}
           <span className="text-slate-600">· {isDrums ? "Drums" : "Synth"} · {clip.name ?? "Clip"}</span>
         </span>
-        {isDrums && (
+        {isDrums && !guide && (
           <span className="flex gap-1" role="group" aria-label="Drum view">
             <button className={`${btn} hw-teal`} aria-pressed={showSteps} disabled={!unlock.can("seq.steps")} onClick={() => (window.daw.telemetry.event("ui.view", { view: "steps" }), setDrumView("steps"))} title={unlock.reason("seq.steps") ?? "Step sequencer: place drum hits on pads"} data-testid="view-steps">Steps{!unlock.can("seq.steps") && <LockIcon className="ml-1" />}</button>
             <button className={`${btn} hw-teal`} aria-pressed={!showSteps} onClick={() => (window.daw.telemetry.event("ui.view", { view: "roll" }), setDrumView("roll"))} title="Piano roll: every note on a grid" data-testid="view-roll">Roll</button>
           </span>
         )}
-        {!showSteps && (
+        {!showSteps && commands && (
           <>
         <button className={btn} disabled={!unlock.can("tool.select")} onClick={cmdSelectAll} title={unlock.reason("tool.select") ?? "Select all (Ctrl+A)"}>Select all{!unlock.can("tool.select") && <LockIcon className="ml-1" />}</button>
         <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdCopy} title={unlock.reason("edit.clipboard") ?? "Copy (Ctrl+C)"}>Copy{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
@@ -536,7 +649,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
           </span>
         )}
         <span className="ml-auto text-[11px] text-slate-500" data-testid="selection-count">{liveSelected.size ? `${liveSelected.size} selected` : `${notes.length} notes`}</span>
-        <WindowButtons maximized={maximized} onToggleMaximize={onToggleMaximize} onClose={onClose} />
+        {onClose && onToggleMaximize && <WindowButtons maximized={maximized} onToggleMaximize={onToggleMaximize} onClose={onClose} />}
       </div>
 
       {showSteps ? (
@@ -572,6 +685,21 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
                 </div>
               ))}
               {Array.from({ length: bars * 4 }, (_, i) => (i % 4 === 0 ? null : <div key={i} className="absolute bottom-0 h-1.5 border-l border-white/20" style={{ left: i * beatPx }} />))}
+              {guide?.countBeats &&
+                Array.from({ length: bars * 4 }, (_, i) =>
+                  i % 4 === 0 ? null : (
+                    <div key={`beat-${i}`} className="pointer-events-none absolute top-0 pl-1 text-[9px] leading-[22px] text-slate-500" style={{ left: i * beatPx }} data-beat-number={(i % 4) + 1}>
+                      {(i % 4) + 1}
+                    </div>
+                  ),
+                )}
+              {guide?.columns?.map((c, i) =>
+                c.label ? (
+                  <div key={`col-label-${i}`} className="pointer-events-none absolute top-0.5 z-10 truncate rounded bg-emerald-300 px-1 text-[9px] leading-[14px] font-semibold text-slate-900" style={{ left: tickToPx(c.startTick, pxPerBeat) + 1, maxWidth: Math.max(24, tickToPx(c.durationTicks, pxPerBeat) - 2) }}>
+                    {c.label}
+                  </div>
+                ) : null,
+              )}
               <div className="absolute right-0 bottom-0 left-0 h-[3px]" style={{ background: track.color, opacity: 0.6 }} title="Loop region" />
             </div>
           </div>
@@ -579,7 +707,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
           {/* Keys + grid */}
           <div className="flex">
             <div className="sticky left-0 z-20 shrink-0 border-r border-black/60" style={{ width: KEYS_W, height: gridH }}>
-              <PianoKeys trackId={track.id} isDrums={isDrums} rowH={rowH} musicKey={hint} />
+              <PianoKeys trackId={track.id} isDrums={isDrums} rowH={rowH} musicKey={hint} activeKeys={guide?.activeKeys} />
             </div>
 
             <div
@@ -606,7 +734,36 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
                   }}
                 />
               ))}
+              {guide?.columns?.map((c, i) => (
+                <div
+                  key={`col-${i}`}
+                  className="pointer-events-none absolute top-0 bottom-0 border-x border-emerald-300/50 bg-emerald-300/10"
+                  style={{ left: tickToPx(c.startTick, pxPerBeat), width: Math.max(3, tickToPx(c.durationTicks, pxPerBeat)) }}
+                  data-guide-column={i}
+                />
+              ))}
+              {guide?.rows?.map((p) => (
+                <div key={`row-${p}`} className="pointer-events-none absolute right-0 left-0 border-y border-amber-300/50 bg-amber-300/15" style={{ top: pitchToY(p, rowH), height: rowH }} data-guide-row={p} />
+              ))}
               <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: [lines(0.3, barPx), lines(0.13, beatPx), lines(0.05, gridPx)].join(",") }} />
+              {guide?.notes?.map((g, i) => (
+                <div
+                  key={`guide-${i}`}
+                  className={`pointer-events-none absolute flex items-center overflow-hidden rounded-[3px] px-1 text-[10px] font-semibold ${
+                    g.style === "ghost"
+                      ? "border-2 border-dashed border-white/60 bg-white/10 text-white/80"
+                      : g.style === "ghost-root"
+                        ? "border-2 border-dashed border-amber-300 bg-amber-300/15 text-amber-200"
+                        : g.style === "root"
+                          ? "bg-amber-400 text-slate-950 ring-2 ring-amber-200"
+                          : "bg-violet-500 text-white"
+                  }`}
+                  style={{ left: tickToPx(g.startTick, pxPerBeat), top: pitchToY(g.pitch, rowH) + 1, width: Math.max(4, tickToPx(g.durationTicks, pxPerBeat) - 1), height: rowH - 2 }}
+                  data-guide-note={g.style}
+                >
+                  {rowH >= 14 && (g.label ?? (isDrums ? "" : pitchLabel(g.pitch)))}
+                </div>
+              ))}
 
               {drag?.kind === "draw" && (
                 <div
@@ -649,7 +806,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool, snap, gridTicks, pxP
                       top: pitchToY(n.pitch, rowH) + 1,
                       width: Math.max(4, tickToPx(n.durationTicks, pxPerBeat) - 1),
                       height: rowH - 2,
-                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : outOfKey ? "repeating-linear-gradient(135deg,#ef4444 0 5px,#b91c1c 5px 10px)" : track.color,
+                      background: n.muted ? "repeating-linear-gradient(45deg,#475569 0 4px,#334155 4px 8px)" : guide?.noteColor?.[n.id] ? guide.noteColor[n.id] : outOfKey ? "repeating-linear-gradient(135deg,#ef4444 0 5px,#b91c1c 5px 10px)" : track.color,
                       boxShadow: outOfKey ? "0 0 0 1px #fecaca" : undefined,
                       filter: isSel ? "brightness(1.3)" : undefined,
                       opacity: erasing ? 0.25 : n.muted ? 0.7 : 0.55 + (n.velocity / 127) * 0.45,

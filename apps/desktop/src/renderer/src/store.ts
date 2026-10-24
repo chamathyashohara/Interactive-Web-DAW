@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { defaultProgress, type Progress, type Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../../main/telemetry/telemetryStore";
+import type { CollabState, LiveState, RecordingState } from "../../preload/index";
 import type { EngineState, ExportStatus, ProjectListPayload, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
@@ -39,6 +40,20 @@ export const statusStore = createStore<StatusPayload | null>(null);
 export const exportStore = createStore<ExportStatus | null>(null);
 /** The list of projects and which one is open (for the Project menu). */
 export const projectsStore = createStore<ProjectListPayload>({ projects: [], activeId: "" });
+/** Live collaboration session state (who is here, the join code). */
+export const collabStore = createStore<CollabState>({ active: false });
+/** Where each other person's pointer is (fractions of their window), by user id. */
+export const collabPointers = createStore<Record<string, { x: number; y: number }>>({});
+/** Notes people put in the room, by topic (the Producer's live-recording address and code). Cleared when the session ends. */
+export const collabShares = createStore<Record<string, { id: string; data: unknown }>>({});
+/** The Live recording lab: which recorder programs were found and the takes noticed in the watched folder. */
+export const recordingStore = createStore<RecordingState | null>(null);
+/** The remote-recording session as the main process sees it (null until the first state arrives). */
+export const liveStore = createStore<LiveState | null>(null);
+/** Whether the Network panel is showing. */
+export const collabNetOpen = createStore<boolean>(false);
+/** A short message about the session (it ended, a copy was saved...). null = none showing. */
+export const collabNoteStore = createStore<string | null>(null);
 /** Learner progress: which lessons are done and whether features are gated. */
 export const progressStore = createStore<Progress>(defaultProgress());
 /** Whether the participant has agreed to the study recording (and under which code). */
@@ -63,6 +78,35 @@ export async function initStores() {
   projectStore.set({ project: initial.project, canUndo: initial.canUndo, canRedo: initial.canRedo });
   projectsStore.set(initial.projects);
   window.daw.projects.onList((p) => projectsStore.set(p));
+  collabStore.set(initial.collab);
+  window.daw.collab.onState((s) => {
+    collabStore.set(s);
+    if (!s.active && Object.keys(collabShares.get()).length) collabShares.set({});
+  });
+  window.daw.collab.onShare((n) => {
+    const next = { ...collabShares.get() };
+    if (n.data === null) delete next[n.topic];
+    else next[n.topic] = { id: n.id, data: n.data };
+    collabShares.set(next);
+  });
+  void window.daw.recording.getState().then((s) => recordingStore.set(s));
+  window.daw.recording.onState((s) => recordingStore.set(s));
+  void window.daw.live.getState().then((s) => liveStore.set(s));
+  window.daw.live.onState((s) => liveStore.set(s));
+  window.daw.collab.onPointer(({ id, pointer }) => {
+    const next = { ...collabPointers.get() };
+    if (pointer) next[id] = pointer;
+    else delete next[id];
+    collabPointers.set(next);
+  });
+  window.daw.collab.onNote((n) => {
+    const text =
+      n.kind === "saved-copy" ? `The session was saved as a new project, "${n.name ?? "session"}". Your own project is unchanged.`
+      : n.kind === "host-ended" ? "The host ended the session."
+      : n.kind === "cannot-join" ? "Could not join: check the address and the 6-digit code."
+      : null;
+    if (text) collabNoteStore.set(text);
+  });
   engineStateStore.set(initial.engine);
   statusStore.set(initial.status);
   window.daw.onProject((p) => projectStore.set(p));

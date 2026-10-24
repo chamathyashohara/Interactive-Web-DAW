@@ -1,0 +1,397 @@
+Stage 7 evidence: one-way live audio (producer -> performer), development PC, 11 Oct 2026
+============================================================================================
+PC: Windows 11 Pro 10.0.26300, Realtek audio (microphone endpoint MUTED in Windows -> digital
+silence; speakers live, so the real-output run used -60 dB). Build: core-check-gcc (MinGW g++ 16.2,
+NOT the MSVC product build). Commit: Stage 7 working tree on top of 12bf368.
+All runs: TWO PROCESSES ON ONE PC. They test logic, codec, counters and robustness; they do NOT show
+audio heard at a remote PC, real network behaviour, or acoustic latency.
+"TEST TONE" = synthetic 440 Hz at -20 dBFS pushed every 10 ms into the live tap (not a microphone).
+"TEST PLAYBACK CLOCK" = render_add() every 10 ms on a thread, output optionally saved to WAV (not a device).
+Pairing codes are replaced by <redacted>.
+
+1. libopus 1.6.1 source verification
+----------------------------------------
+SHA256SUMS.txt (https://downloads.xiph.org/releases/opus/SHA256SUMS.txt, via redirect to ftp.osuosl.org) lists:
+  6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1  opus-1.6.1.tar.gz
+sha256sum of the downloaded opus-1.6.1.tar.gz:
+  6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1 *opus-1.6.1.tar.gz
+CMake FetchContent re-checks the same hash at configure time (cmake/RrOpus.cmake). Configure output:
+  -- libopus 1.6.1: stack scratch via VAR_ARRAYS=ON USE_ALLOCA=
+
+2. Timer granularity on this PC (scratch program timers.cpp, g++ -O2, 300/100/200 samples)
+----------------------------------------
+timeBeginPeriod(1): no
+select() with 1 ms timeout         median 15.60 ms  p95 16.08 ms  max 16.58 ms
+sleep_for(1 ms)                    median 15.63 ms  p95 16.10 ms  max 16.29 ms
+sleep_until 10 ms interval         median 15.38 ms  p95 16.09 ms  max 16.51 ms
+timeBeginPeriod(1): yes
+select() with 1 ms timeout         median 1.60 ms  p95 2.11 ms  max 2.62 ms
+sleep_for(1 ms)                    median 15.70 ms  p95 16.73 ms  max 17.24 ms
+sleep_until 10 ms interval         median 10.50 ms  p95 21.11 ms  max 22.52 ms
+Consequence: the sender uses select(1 ms) under timeBeginPeriod(1); the probe test clocks wait in
+Sleep(1) steps (DECISION_LOG D-56). The first L1 attempt (before that fix) showed 7.4 ms jitter and a
+24 ms max gap caused by the test clocks; it is superseded by L1 below (scratch L1, not kept).
+
+3. Two-process runs
+----------------------------------------
+Note: each LIVE SUMMARY is printed just BEFORE the sender/receiver stop, so the producer summary can
+show slightly fewer packets than the performer received. The final counts are in the live log events.
+COUNTER FIX found by these runs: in L1-L5 the sender packets_sent also counted the 2 END_OF_STREAM
+datagrams, so the final sender_stopped count is exactly 2 above the receiver count in every run without test impairment.
+packets_sent now counts AUDIO datagrams only (END_OF_STREAM has its own counter). L1-recheck is the
+same run after the fix: 1202 sent, 1202 received.
+
+### L1: producer test tone -> performer test playback clock (WAV), loopback, defaults
+producer>  rr_session_probe --producer --port 52300 --code-file c.txt --live --log p.jsonl --script "wait-ready 30; wait 10; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52300 --code-file c.txt --live --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait 12; live-stats; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52301 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:63366, packets 1203 (127518 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (407 ms ago): received 1163, lost est 0, late 0, dup 0, reordered 0, jitter 0.875 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 24, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.352 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1204, lost est 0, dup 0, reordered 0, late 0, jitter 0.735 ms, max gap 13.7 ms, buffer 0/3 (max 3), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -200.0 dBFS
+[performer]   played 1201, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1403, max render 0.490 ms, wrong-rate callbacks 0, reports sent 28, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (673920 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 673920 frames = 14.040 s
+  active span: 0.040 s .. 12.050 s (12.010 s)
+  active RMS -35.02 dBFS, peak -31.75 dBFS
+  tone frequency (zero crossings): 440.07 Hz
+  10 ms blocks in span: 1200, median block RMS -35.02 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52301","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:63366"}}
+  sender_stopped {"packets_sent":"1206","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52301","local":"127.0.0.1:63366","jitter_target_frames":"3","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1204","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L2: as L1 with TEST impairment in the producer: 5 % loss, 2 % duplicates, 2 % reorder, 25-packet (250 ms) burst every 200 packets
+producer>  rr_session_probe --producer --port 52310 --code-file c.txt --live --sim-loss 5 --sim-dup 2 --sim-reorder 2 --sim-burst 200:25 --sim-seed 11 --log p.jsonl --script "wait-ready 30; wait 15; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52310 --code-file c.txt --live --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait 17; live-stats; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52311 for performer 127.0.0.1  ** TEST IMPAIRMENT ON **
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:52388, packets 1429 (151474 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 299/27/29
+[producer]   performer reports (298 ms ago): received 1374, lost est 274, late 0, dup 27, reordered 28, jitter 1.320 ms, buffer 2/3, underruns 160, concealed 231, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 34, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.288 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1403, lost est 275, dup 27, reordered 28, late 0, jitter 1.037 ms, max gap 291.2 ms, buffer 0/3 (max 4), underruns 160, concealed 232, decode errors 0, invalid 0, output peak -200.0 dBFS
+[performer]   played 1401, lost (concealed) 72, rebuffers 8, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1902, max render 0.245 ms, wrong-rate callbacks 0, reports sent 38, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (913440 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 913440 frames = 19.030 s
+  active span: 0.280 s .. 17.040 s (16.760 s)
+  active RMS -35.63 dBFS, peak -31.84 dBFS
+  tone frequency (zero crossings): 430.02 Hz
+  10 ms blocks in span: 1675, median block RMS -35.08 dBFS
+  dropout blocks (< -60 dBFS): 76 at 2.08 s, 2.09 s, 2.10 s, 2.11 s, 2.12 s, 2.23 s, 2.24 s, 2.25 s, 2.26 s, 2.27 s
+  dip blocks (> 6 dB below median): 164 at 0.28 s, 2.06 s, 2.07 s, 2.08 s, 2.09 s, 2.10 s, 2.11 s, 2.12 s, 2.13 s, 2.14 s
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52311","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"ON (test only)"}}
+  peer_learned {"peer":"127.0.0.1:52388"}}
+  sender_stopped {"packets_sent":"1432","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52311","local":"127.0.0.1:52388","jitter_target_frames":"3","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1403","lost_estimate":"275","late":"0","underruns":"160","invalid":"0"}}
+
+### L3: as L1 over the Wi-Fi address 192.168.1.222 (same PC)
+producer>  rr_session_probe --producer --bind 192.168.1.222 --port 52320 --code-file c.txt --live --log p.jsonl --script "wait-ready 30; wait 10; live-stats; quit"
+performer> rr_session_probe --performer --host 192.168.1.222 --port 52320 --code-file c.txt --live --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait 12; live-stats; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 192.168.1.222:52321 for performer 192.168.1.222
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 192.168.1.222:52680, packets 1201 (127306 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (377 ms ago): received 1164, lost est 0, late 0, dup 0, reordered 0, jitter 0.833 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 24, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.476 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1202, lost est 0, dup 0, reordered 0, late 0, jitter 0.986 ms, max gap 13.7 ms, buffer 0/3 (max 3), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -200.0 dBFS
+[performer]   played 1199, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1401, max render 0.249 ms, wrong-rate callbacks 0, reports sent 28, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (672960 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 672960 frames = 14.020 s
+  active span: 0.040 s .. 12.030 s (11.990 s)
+  active RMS -35.02 dBFS, peak -31.80 dBFS
+  tone frequency (zero crossings): 440.22 Hz
+  10 ms blocks in span: 1198, median block RMS -35.04 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"192.168.1.222:52321","expected_peer":"192.168.1.222","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"192.168.1.222:52680"}}
+  sender_stopped {"packets_sent":"1204","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"192.168.1.222:52321","local":"192.168.1.222:52680","jitter_target_frames":"3","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1202","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L4: REAL devices: producer live source = input device (endpoint muted in Windows -> digital silence), performer plays on the real default output at -60 dB; both record a master take meanwhile
+producer>  rr_session_probe --producer --port 52330 --code-file c.txt --audio --out takes_p --live --log p.jsonl --script "wait-ready 30; wait 2; record; wait 6; stop; wait-state Ready 15; wait 2; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52330 --code-file c.txt --audio --out takes_r --live --live-sink device --live-gain-db -60 --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: input device 'Microphone Array (2- Realtek(R) Audio)'
+[producer] live sender on UDP 127.0.0.1:52331 for performer 127.0.0.1
+  last take 1: local started (complete, 253327 frames, takes_p\20261011-091414_c2b56482\take01_producer_c2b56482.wav)
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:52681, packets 1240 (131440 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (213 ms ago): received 1219, lost est 0, late 0, dup 0, reordered 0, jitter 0.573 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 25, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.298 ms, tap overflow events 0
+[performer] live output: Speakers (2- Realtek(R) Audio) at 48000 Hz, gain -60.0 dB. Use HEADPHONES (feedback and bleed into the master).
+  last take 1: local started (complete, 253329 frames, takes_r\20261011-091414_c2b56482\take01_performer_c2b56482.wav)
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1240, lost est 0, dup 0, reordered 0, late 0, jitter 0.547 ms, max gap 12.1 ms, buffer 0/3 (max 3), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -733.8 dBFS
+[performer]   played 1238, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1245, max render 0.166 ms, wrong-rate callbacks 0, reports sent 25, gain -60.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52331","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:52681"}}
+  sender_stopped {"packets_sent":"1242","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52331","local":"127.0.0.1:52681","jitter_target_frames":"3","gain_db":"-60.000000"}}
+  receiver_stopped {"received":"1240","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L1-recheck: L1 repeated AFTER the counter fix (packets_sent = AUDIO only); sent must equal received on loopback
+producer>  rr_session_probe --producer --port 52390 --code-file c.txt --live --log p.jsonl --script "wait-ready 30; wait 10; live-stats; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52390 --code-file c.txt --live --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait 12; live-stats; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52391 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:57952, packets 1200 (127200 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (379 ms ago): received 1163, lost est 0, late 0, dup 0, reordered 0, jitter 0.998 ms, buffer 2/3, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 24, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.317 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1202, lost est 0, dup 0, reordered 0, late 0, jitter 1.012 ms, max gap 13.8 ms, buffer 0/3 (max 3), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -32.0 dBFS
+[performer]   played 1199, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1399, max render 0.362 ms, wrong-rate callbacks 0, reports sent 28, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (672000 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 672000 frames = 14.000 s
+  active span: 0.041 s .. 12.030 s (11.989 s)
+  active RMS -35.02 dBFS, peak -31.33 dBFS
+  tone frequency (zero crossings): 440.73 Hz
+  10 ms blocks in span: 1198, median block RMS -35.02 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52391","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:57952"}}
+  sender_stopped {"packets_sent":"1202","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52391","local":"127.0.0.1:57952","jitter_target_frames":"3","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1202","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L5a: 2.5 ms frames, 96 kbit/s, jitter buffer 4 frames (10 ms)
+producer>  rr_session_probe --producer --port 52340 --code-file c.txt --live --frame-ms 2.5 --bitrate 96000 --log p.jsonl --script "wait-ready 30; wait 8; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52340 --code-file c.txt --live --jitter-frames 4 --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52341 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:53897, packets 4010 (224560 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (429 ms ago): received 3838, lost est 0, late 603, dup 0, reordered 0, jitter 3.858 ms, buffer 0/4, underruns 603, concealed 606, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 120 samples (2.5 ms), 96000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 20, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.233 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 4016, lost est 0, dup 0, reordered 0, late 635, jitter 3.614 ms, max gap 14.6 ms, buffer 0/4 (max 4), underruns 635, concealed 635, decode errors 0, invalid 0, output peak -32.0 dBFS
+[performer]   played 3377, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1008, max render 0.383 ms, wrong-rate callbacks 0, reports sent 20, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (484320 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 484320 frames = 10.090 s
+  active span: 0.021 s .. 10.050 s (10.029 s)
+  active RMS -36.07 dBFS, peak -31.79 dBFS
+  tone frequency (zero crossings): 440.53 Hz
+  10 ms blocks in span: 1002, median block RMS -35.38 dBFS
+  dropout blocks (< -60 dBFS): 14 at 1.27 s, 1.28 s, 1.32 s, 1.82 s, 3.13 s, 5.12 s, 6.23 s, 6.27 s, 6.28 s, 6.29 s
+  dip blocks (> 6 dB below median): 38 at 0.39 s, 1.27 s, 1.28 s, 1.31 s, 1.32 s, 1.82 s, 1.83 s, 1.91 s, 2.42 s, 2.64 s
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52341","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"120","bitrate_bps":"96000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:53897"}}
+  sender_stopped {"packets_sent":"4018","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52341","local":"127.0.0.1:53897","jitter_target_frames":"4","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"4016","lost_estimate":"0","late":"635","underruns":"635","invalid":"0"}}
+
+### L5b: 20 ms frames, OPUS_APPLICATION_AUDIO, 32 kbit/s, jitter buffer 2 frames (40 ms)
+producer>  rr_session_probe --producer --port 52350 --code-file c.txt --live --frame-ms 20 --application audio --bitrate 32000 --log p.jsonl --script "wait-ready 30; wait 8; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52350 --code-file c.txt --live --jitter-frames 2 --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52351 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:53899, packets 501 (53106 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (330 ms ago): received 485, lost est 0, late 0, dup 0, reordered 0, jitter 0.893 ms, buffer 1/2, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_AUDIO, frame 960 samples (20.0 ms), 32000 bit/s CBR, complexity 5, lookahead 312 samples (6.50 ms); streams 1, reports 20, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.391 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 502, lost est 0, dup 0, reordered 0, late 0, jitter 0.959 ms, max gap 23.3 ms, buffer 0/2 (max 2), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -31.9 dBFS
+[performer]   played 500, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1008, max render 0.212 ms, wrong-rate callbacks 0, reports sent 20, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (484320 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 484320 frames = 10.090 s
+  active span: 0.061 s .. 10.060 s (9.999 s)
+  active RMS -35.00 dBFS, peak -31.40 dBFS
+  tone frequency (zero crossings): 440.42 Hz
+  10 ms blocks in span: 999, median block RMS -34.99 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52351","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_AUDIO","frame_samples":"960","bitrate_bps":"32000","complexity":"5","cbr":"1","lookahead_samples":"312","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:53899"}}
+  sender_stopped {"packets_sent":"504","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52351","local":"127.0.0.1:53899","jitter_target_frames":"2","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"502","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L5c: 2.5 ms frames, 96 kbit/s, jitter buffer 8 frames (20 ms)
+producer>  rr_session_probe --producer --port 52360 --code-file c.txt --live --frame-ms 2.5 --bitrate 96000 --log p.jsonl --script "wait-ready 30; wait 8; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52360 --code-file c.txt --live --jitter-frames 8 --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52361 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:61859, packets 4004 (224224 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (415 ms ago): received 3840, lost est 0, late 0, dup 0, reordered 0, jitter 3.560 ms, buffer 4/8, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 120 samples (2.5 ms), 96000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 20, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.221 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 4008, lost est 0, dup 0, reordered 0, late 0, jitter 3.573 ms, max gap 13.7 ms, buffer 0/8 (max 12), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -32.1 dBFS
+[performer]   played 4000, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1005, max render 0.309 ms, wrong-rate callbacks 0, reports sent 20, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (482880 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 482880 frames = 10.060 s
+  active span: 0.030 s .. 10.030 s (10.000 s)
+  active RMS -35.20 dBFS, peak -32.07 dBFS
+  tone frequency (zero crossings): 442.52 Hz
+  10 ms blocks in span: 999, median block RMS -35.19 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52361","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"120","bitrate_bps":"96000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:61859"}}
+  sender_stopped {"packets_sent":"4010","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52361","local":"127.0.0.1:61859","jitter_target_frames":"8","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"4008","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L5d: 10 ms frames, jitter buffer 1 frame (10 ms)
+producer>  rr_session_probe --producer --port 52370 --code-file c.txt --live --frame-ms 10 --log p.jsonl --script "wait-ready 30; wait 8; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52370 --code-file c.txt --live --jitter-frames 1 --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52371 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:62187, packets 1002 (106212 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (429 ms ago): received 960, lost est 0, late 0, dup 0, reordered 0, jitter 0.830 ms, buffer 0/1, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 20, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.249 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1003, lost est 0, dup 0, reordered 0, late 0, jitter 1.102 ms, max gap 13.5 ms, buffer 0/1 (max 1), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -32.0 dBFS
+[performer]   played 1002, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1007, max render 0.213 ms, wrong-rate callbacks 0, reports sent 20, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (483840 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 483840 frames = 10.080 s
+  active span: 0.021 s .. 10.040 s (10.019 s)
+  active RMS -35.02 dBFS, peak -31.33 dBFS
+  tone frequency (zero crossings): 440.95 Hz
+  10 ms blocks in span: 1001, median block RMS -35.02 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52371","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:62187"}}
+  sender_stopped {"packets_sent":"1005","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52371","local":"127.0.0.1:62187","jitter_target_frames":"1","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1003","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+### L5e: 10 ms frames, jitter buffer 2 frames (20 ms)
+producer>  rr_session_probe --producer --port 52380 --code-file c.txt --live --frame-ms 10 --log p.jsonl --script "wait-ready 30; wait 8; quit"
+performer> rr_session_probe --performer --host 127.0.0.1 --port 52380 --code-file c.txt --live --jitter-frames 2 --live-sink wav:live_sink.wav --log r.jsonl --script "wait-ready 30; wait-closed"
+exit codes: performer 0 (producer ran in the background; its script ended with quit)
+[producer] live source: TEST TONE 440 Hz at -20 dBFS (not a microphone)
+[producer] live sender on UDP 127.0.0.1:52381 for performer 127.0.0.1
+[producer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[producer] live send: STREAMING, peer 127.0.0.1:62188, packets 1000 (106000 B), encode errors 0, send errors 0, tap gaps 0 fr, backlog trims 0 fr, sim dropped/dup/reorder 0/0/0
+[producer]   performer reports (399 ms ago): received 961, lost est 0, late 0, dup 0, reordered 0, jitter 0.924 ms, buffer 1/2, underruns 0, concealed 0, decode errors 0, invalid 0
+[producer]   codec libopus 1.6.1, OPUS_APPLICATION_RESTRICTED_LOWDELAY, frame 480 samples (10.0 ms), 64000 bit/s CBR, complexity 5, lookahead 120 samples (2.50 ms); streams 1, reports 20, peer timeouts 0, invalid in 0 (src 0, crc 0, session 0), max encode 0.228 ms, tap overflow events 0
+[performer] live sink: TEST PLAYBACK CLOCK (10 ms), output saved to live_sink.wav
+[performer] LIVE SUMMARY (live monitor stream only; the master recordings are separate files)
+[performer] live receive: filling, received 1002, lost est 0, dup 0, reordered 0, late 0, jitter 0.937 ms, max gap 13.4 ms, buffer 0/2 (max 3), underruns 0, concealed 0, decode errors 0, invalid 0, output peak -32.0 dBFS
+[performer]   played 1000, lost (concealed) 0, rebuffers 0, drift skips 0, too-early resets 0, stream resets 2, end-of-stream 2, queue-full drops 0, render callbacks 1005, max render 0.218 ms, wrong-rate callbacks 0, reports sent 20, gain -12.0 dB
+[performer]   invalid by reason: src 0, oversized 0, length 0, version 0, type 0, crc 0, session 0, payload 0
+[performer] live sink saved: live_sink.wav (482880 frames; TEST PLAYBACK CLOCK output, not a recording)
+analyse_live_sink.py live_sink.wav:
+  format: float32, 48000 Hz, 1 ch; 482880 frames = 10.060 s
+  active span: 0.041 s .. 10.040 s (9.999 s)
+  active RMS -35.02 dBFS, peak -31.33 dBFS
+  tone frequency (zero crossings): 440.93 Hz
+  10 ms blocks in span: 999, median block RMS -35.02 dBFS
+  dropout blocks (< -60 dBFS): 0
+  dip blocks (> 6 dB below median): 0
+pairing code occurrences in p.jsonl + r.jsonl: 0
+live log events (JSONL, comp "live"; final counts are in sender_stopped/receiver_stopped):
+  sender_started {"local":"127.0.0.1:52381","expected_peer":"127.0.0.1","codec":"libopus 1.6.1","application":"OPUS_APPLICATION_RESTRICTED_LOWDELAY","frame_samples":"480","bitrate_bps":"64000","complexity":"5","cbr":"1","lookahead_samples":"120","test_impairment":"off"}}
+  peer_learned {"peer":"127.0.0.1:62188"}}
+  sender_stopped {"packets_sent":"1004","send_errors":"0","tap_gap_frames":"0","backlog_trim_frames":"0"}}
+  receiver_started {"producer":"127.0.0.1:52381","local":"127.0.0.1:62188","jitter_target_frames":"2","gain_db":"-12.000000"}}
+  receiver_stopped {"received":"1002","lost_estimate":"0","late":"0","underruns":"0","invalid":"0"}}
+
+4. Observations (measured here; one PC, loopback or own Wi-Fi address, test clocks unless stated)
+----------------------------------------
+- Live path works end to end (L1, L3):
+  - every packet sent was received; 0 lost, late, concealed or invalid; 0 decode errors;
+  - the sink is 440 Hz at -35.0 dBFS RMS. That is expected: the -20 dBFS-peak sine is -23 dBFS RMS, and the gain is -12 dB;
+  - 0 dropout blocks and 0 dip blocks;
+  - inter-arrival jitter 0.7-1.1 ms, largest arrival gap 13.4-13.7 ms (test clocks, one PC).
+- Forced impairment (L2) did not crash either process. All of it was counted on both sides:
+  - 299 packets dropped by the simulator; the receiver estimated 275 lost. The difference is the final 24-packet burst, which came after the last received packet and so cannot be inferred from sequence numbers;
+  - 27 duplicates and 28 reordered packets detected;
+  - 160 underruns, 8 refills (the stall limit is 20 frames, and each 250 ms burst exceeded it), 232 frames concealed;
+  - playback resumed after every burst; 0 decode errors.
+- Real devices (L4):
+  - the WASAPI output callback ran at 48 kHz (0 wrong-rate callbacks);
+  - worst render_add (queue + jitter buffer + Opus decode + mix) was 0.166 ms per callback;
+  - 0 lost and 0 underruns; output peak -200 dBFS, i.e. silent: the microphone is muted, so this run shows the path, not audible content;
+  - both master takes were complete (253 327 and 253 329 frames) in separate files while the live stream ran.
+- Encode cost: the worst single Opus encode was 0.23-0.48 ms across the runs.
+  - Lookahead read from libopus: 120 samples (2.5 ms) for RESTRICTED_LOWDELAY, 312 samples (6.5 ms) for AUDIO.
+  - Packet size at 64 kbit/s CBR, 10 ms: 106 bytes per datagram (80 bytes Opus + 26 bytes header).
+- Responsiveness versus stability (L5, one PC, test clocks):
+
+  | Frame | Jitter target | Underruns | Concealed | Dropout blocks |
+  |---|---|---|---|---|
+  | 10 ms | 1 frame (10 ms) | 0 | 0 | 0 |
+  | 10 ms | 2 frames (20 ms) | 0 | 0 | 0 |
+  | 20 ms | 2 frames (40 ms) | 0 | 0 | 0 |
+  | 2.5 ms | 4 frames (10 ms) | 635 in about 10 s (also 635 late) | 635 | 14 dropout, 38 dip blocks |
+  | 2.5 ms | 8 frames (20 ms) | 0 | 0 | 0 |
+
+  - Cause: the source and the playout run in 10 ms blocks, so 2.5 ms packets arrive four at a time and are pulled four per callback.
+  - A 10 ms buffer leaves no margin. A smaller frame does not lower the usable buffer below the block period.
+- NOT shown by these runs:
+  - audio heard at a remote PC;
+  - behaviour on a real LAN between two PCs;
+  - clock drift between two devices (the drift skip is unit-tested only);
+  - acoustic latency;
+  - audible quality;
+  - the Qt Live audio panel (not compiled).
+  "No glitches" is claimed only in this narrow sense: 0 underruns, concealment and dropout blocks in the stated runs (L1 12 s, L3 12 s, L4 about 12 s, L5b/c/d/e about 10 s each), on one PC, loopback or own Wi-Fi address, with test clocks (L4: real devices, silent input).
+

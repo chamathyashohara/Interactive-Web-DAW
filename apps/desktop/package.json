@@ -8,11 +8,13 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "electron-builder --win nsis portable"
   },
   "dependencies": {
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -21,8 +23,50 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.3.3",
     "vite": "^7.3.7"
+  },
+  "author": "B W C L Withanage and the J26-IM-303 group",
+  "description": "Collab DAW: a beginner-friendly DAW with lessons, live collaboration and remote recording",
+  "build": {
+    "appId": "lk.sliit.collabdaw",
+    "productName": "Collab DAW",
+    "executableName": "Collab DAW",
+    "electronVersion": "44.9.3",
+    "directories": {
+      "output": "../../release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../engine/build/daw_engine_artefacts/Release/daw_engine.exe",
+        "to": "engine/daw_engine.exe"
+      },
+      {
+        "from": "build-resources/vcruntime",
+        "to": "engine"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "Collab-DAW-portable-${version}.exe"
+    },
+    "artifactName": "Collab-DAW-setup-${version}.${ext}"
   }
 }

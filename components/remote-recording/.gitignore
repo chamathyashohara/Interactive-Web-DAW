@@ -1,0 +1,11 @@
+# Build trees. Deliberately NOT anchored with a leading slash: this project may be
+# nested inside the group repository (e.g. apps/remote-recording/), where "/build/"
+# would only match the parent's root and the build tree would be staged.
+build/
+out/
+.vs/
+CMakeUserPresets.json
+*.user
+# recorded takes and logs produced when running the apps
+takes/
+*.wav.partial
