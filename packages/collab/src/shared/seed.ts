@@ -6,6 +6,7 @@ export type SeedResult = { ok: true; project: Project } | { ok: false; reason: s
  * Builds the starting project of a session from whatever the host sent.
  * The host's project is never trusted as-is: it is rebuilt by replaying addTrack/setTempo/setMasterVolume
  * through the same `applyOp` rules every later edit goes through (note ranges, 16 track limit, colours...).
+ * That covers the song length, tracks, tempo, master volume, key, loop and section markers.
  * No seed means a fresh default project.
  */
 export function buildSeedProject(seed: unknown, projectId: string): SeedResult {
@@ -25,6 +26,8 @@ export function buildSeedProject(seed: unknown, projectId: string): SeedResult {
   };
 
   const bodies: OpBody[] = [];
+  // The song length goes first: a track's clips are checked against it, and the default may be shorter than the host's song.
+  if (s.songBars !== undefined) bodies.push({ type: 'setSongLength', bars: s.songBars });
   for (const id of s.trackOrder) {
     const track = s.tracks[id as string];
     if (!track) return { ok: false, reason: `trackOrder lists unknown track ${String(id)}` };
@@ -32,6 +35,9 @@ export function buildSeedProject(seed: unknown, projectId: string): SeedResult {
   }
   if (s.tempo !== undefined) bodies.push({ type: 'setTempo', bpm: s.tempo });
   if (s.masterVolume !== undefined) bodies.push({ type: 'setMasterVolume', volume: s.masterVolume });
+  if (s.key !== undefined) bodies.push({ type: 'setKey', key: s.key });
+  if (s.loop) bodies.push({ type: 'setLoop', loop: s.loop });
+  if (Array.isArray(s.markers) && s.markers.length) bodies.push({ type: 'setMarkers', markers: s.markers });
 
   for (let i = 0; i < bodies.length; i++) {
     let result;
