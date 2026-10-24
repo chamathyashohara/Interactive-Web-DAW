@@ -9,7 +9,9 @@ const { check, finish } = makeReporter();
 const dir = tmpDataDir("daw-rec-");
 const watch = path.join(dir, "takes");
 fs.mkdirSync(watch, { recursive: true });
-const child = launch(9360, dir, { DAW_RR_PRODUCER: process.execPath, DAW_RR_WATCH_DIR: watch });
+const emptySearch = path.join(dir, "no-programs"); // so a real build of the recorder programs on this PC is not found
+fs.mkdirSync(emptySearch, { recursive: true });
+const child = launch(9360, dir, { DAW_RR_PRODUCER: process.execPath, DAW_RR_WATCH_DIR: watch, DAW_RR_SEARCH_ROOT: emptySearch });
 
 /** A short 16-bit mono 48 kHz WAV (a decaying tone), like a recorded take. */
 function wav16(file, secs, hz) {

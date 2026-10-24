@@ -34,6 +34,11 @@ export function RecordingPanel() {
   const [message, setMessage] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
+  // Look again each time the popover opens: the recorder programs may have been built since the DAW started.
+  useEffect(() => {
+    if (open) void window.daw.recording.getState().then((s) => recordingStore.set(s));
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);

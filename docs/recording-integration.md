@@ -31,8 +31,14 @@ and `isLanHost` decides what counts as the same network. These two are new in `p
   There is no shared start time between the DAW's playback and a take.
 - In a collaboration session the new track refers to the recording by library id only, so other people see the track but not its audio until a
   file-sharing channel exists (the audio is on the Producer's PC).
-- Nothing here was tested with the real Qt programs (Qt is not installed on the development PC) or on two PCs. The tests use a stand-in program
-  and generated WAV files.
+- Checked with the **real** programs on one PC (Qt 6.11.3, MSVC 19.44, Release build; Component 4's own 171 tests pass): the DAW finds both under
+  `components/remote-recording/build/msvc-x64/bin/Release` and the two buttons open them as running windows. The automated tests still use a stand-in
+  program and generated WAV files, so they run without Qt. A full session between the real programs, started from the DAW, and anything on two PCs, have not been tried.
+
+## Building the two programs (one time per PC)
+
+Needs Visual Studio 2022 Build Tools (C++), CMake and Qt 6.11.3 for MSVC 2022 (Core, Gui, Widgets, Svg). Put Qt in a folder and set `RR_QT_DIR` to it, then in
+`components/remote-recording`: `cmake --preset msvc-x64` and `cmake --build --preset msvc-x64-release`. Full guide: `components/remote-recording/docs/build/WINDOWS_BUILD.md`.
 
 ## Tests
 

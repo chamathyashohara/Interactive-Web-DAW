@@ -312,7 +312,7 @@ app.whenReady().then(() => {
   const recording = new RecordingService({
     settingsFile: path.join(app.getPath("userData"), "recording.json"),
     defaultWatchDir: process.env.DAW_RR_WATCH_DIR ?? path.join(app.getPath("music"), "RemoteRecording"),
-    searchRoots: [path.resolve(app.getAppPath(), "../../components/remote-recording/build"), path.join(process.resourcesPath ?? "", "remote-recording")],
+    searchRoots: process.env.DAW_E2E === "1" && process.env.DAW_RR_SEARCH_ROOT !== undefined ? [process.env.DAW_RR_SEARCH_ROOT] : [path.resolve(app.getAppPath(), "../../components/remote-recording/build"), path.join(process.resourcesPath ?? "", "remote-recording")],
     env: { producer: process.env.DAW_RR_PRODUCER, performer: process.env.DAW_RR_PERFORMER },
     onChange: (s) => sendToRenderer("recording:state", s),
   });
