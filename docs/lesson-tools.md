@@ -10,7 +10,7 @@ already exists, was just added, or is still a gap. Only the genuinely missing sm
 | **Chopper** (`Chop` button / **Alt+U**) | 5.2 Chop the bass | Slices each held note into equal pieces at the toolbar grid size, back to back (a root note becomes a 1/8 rhythm). `pianoRoll/chop.ts`. |
 | **Arpeggiator** (`Arp ▾` button: up / down / up-down) | 6.1 Add an arp preset | Spreads a chord (notes that start together) into a sequence at the grid size, cycling through the chord's pitches. `pianoRoll/arp.ts`. |
 | **Transpose** (**Ctrl+↑/↓** octave, **Shift+↑/↓** semitone) | 1.3 Repeat and transpose, 5.1 Bass from roots | Shifts the selection as a group (chords stay intact), clamped to 0–127. `pianoRoll/editing.ts` `transposeOps`. |
-| **Synth presets** (picker on each synth track) | 1.4 Layer on pads/strings, 5.1 Bass, 6.1 Arp | Keys / Pad / Strings / Pluck / Lead / Bass — distinct timbres from one parameter-driven engine synth (envelope, detuned oscillators, tone). `packages/shared/src/synth.ts`, `setSynthPreset` op. |
+| **Synth presets** (picker on each synth track) | 1.4 Layer on pads/strings, 5.1 Bass, 6.1 Arp | Classic / **Piano** / Pad / **Violin** / Pluck / Lead / **Bass**. Piano is an additive struck model (partials that decay at their own rates, string inharmonicity, hammer click, brighter when played harder); Violin is a bowed ensemble (detuned saws, delayed vibrato, bow noise, body resonances); Bass is a full fundamental + sub-octave with soft saturation. `packages/shared/src/synth.ts`, `engine/src/Synth.h`, `setSynthPreset` op. Measured on the rendered audio in `e2e/presets.mjs`. |
 
 All three are pure op builders (one undo step), with `pianoRoll/chopArp.test.ts` (10 unit tests) and `apps/desktop/e2e/pianotools.mjs` (9 checks).
 

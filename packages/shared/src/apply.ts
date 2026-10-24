@@ -410,7 +410,7 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
     }
     case "setSynthPreset": {
       const track = before.tracks[op.trackId];
-      return track ? { ...base, type: "setSynthPreset", trackId: op.trackId, preset: track.synthPreset ?? "keys" } : null;
+      return track ? { ...base, type: "setSynthPreset", trackId: op.trackId, preset: track.synthPreset ?? "classic" } : null;
     }
     case "setLoop":
       return { ...base, type: "setLoop", loop: before.loop ? { ...before.loop } : null };

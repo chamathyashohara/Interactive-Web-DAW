@@ -126,6 +126,14 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
                 if (const auto s = t["synth"]; s.isObject())
                 {
                     SynthParams& p = tm.synth;
+                    p.model = static_cast<int>(static_cast<double>(s["model"]));
+                    p.sineLevel = static_cast<float>(static_cast<double>(s["sineLevel"]));
+                    p.drive = static_cast<float>(static_cast<double>(s["drive"]));
+                    p.decaySec = s.hasProperty("decaySec") ? static_cast<float>(static_cast<double>(s["decaySec"])) : 5.0f;
+                    p.vibratoHz = static_cast<float>(static_cast<double>(s["vibratoHz"]));
+                    p.vibratoCents = static_cast<float>(static_cast<double>(s["vibratoCents"]));
+                    p.vibratoDelaySec = static_cast<float>(static_cast<double>(s["vibratoDelaySec"]));
+                    p.noiseLevel = static_cast<float>(static_cast<double>(s["noiseLevel"]));
                     p.attackSec = static_cast<float>(static_cast<double>(s["attackSec"]));
                     p.releaseSec = static_cast<float>(static_cast<double>(s["releaseSec"]));
                     p.sawLevel = static_cast<float>(static_cast<double>(s["sawLevel"]));

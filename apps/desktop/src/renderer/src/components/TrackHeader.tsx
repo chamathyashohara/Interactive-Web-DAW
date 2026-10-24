@@ -145,7 +145,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
       <div className="mt-1 flex items-center gap-2 pl-[1.6rem]">
         {t.instrument === "synth" && (
           <select
-            value={t.synthPreset ?? "keys"}
+            value={t.synthPreset ?? "classic"}
             onChange={(e) => void window.daw.dispatch({ type: "setSynthPreset", trackId: id, preset: e.target.value })}
             className="hw-lcd shrink-0 px-1 py-0.5 text-[10px] outline-none"
             aria-label={`Sound of ${t.name}`}

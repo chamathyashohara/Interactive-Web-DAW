@@ -138,7 +138,7 @@ export interface Track {
   sample?: SampleRef;
   /** Only for instrument "plugin": the VST3 instrument this track plays (absent until one is chosen). */
   plugin?: PluginRef;
-  /** Only for instrument "synth": which built-in preset it plays (absent = the default "keys" sound). */
+  /** Only for instrument "synth": which built-in preset it plays (absent = the default "classic" sound). */
   synthPreset?: string;
   /** Curves that move a control over the song. A parameter without a curve is not automated. */
   automation?: Partial<Record<AutoParam, AutoPoint[]>>;

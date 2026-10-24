@@ -10,23 +10,38 @@ const ok = (p: Project, op: Record<string, unknown>): Project => {
 };
 
 describe("synth presets", () => {
-  it("has a 'keys' default whose params match the original synth sound", () => {
-    expect(DEFAULT_SYNTH_PRESET).toBe("keys");
-    const keys = synthParamsFor("keys");
-    expect(keys).toMatchObject({ attackSec: 0.004, releaseSec: 0.18, sawLevel: 0.7, subLevel: 0.3, osc2Level: 0, detuneCents: 0, toneHz: 20000, gain: 0.16 });
+  it("has a 'classic' default whose params match the original synth sound", () => {
+    expect(DEFAULT_SYNTH_PRESET).toBe("classic");
+    expect(synthParamsFor("classic")).toMatchObject({ model: 0, attackSec: 0.004, releaseSec: 0.18, sawLevel: 0.7, subLevel: 0.3, osc2Level: 0, detuneCents: 0, toneHz: 20000, gain: 0.16, sineLevel: 0, drive: 0 });
   });
-  it("offers pad, strings, pluck, lead and bass with distinct, sensible params", () => {
-    const ids = SYNTH_PRESETS.map((p) => p.id);
-    expect(ids).toEqual(["keys", "pad", "strings", "pluck", "lead", "bass"]);
-    expect(synthParamsFor("pad").attackSec).toBeGreaterThan(0.2); // pads swell in slowly
-    expect(synthParamsFor("pluck").releaseSec).toBeLessThan(0.2); // plucks are short
-    expect(synthParamsFor("bass").subLevel).toBeGreaterThan(synthParamsFor("lead").subLevel); // bass has more sub
-    expect(synthParamsFor("pad").toneHz).toBeLessThan(synthParamsFor("lead").toneHz); // pads are darker
+  it("offers classic, piano, pad, violin, pluck, lead and bass", () => {
+    expect(SYNTH_PRESETS.map((p) => p.id)).toEqual(["classic", "keys", "pad", "strings", "pluck", "lead", "bass"]);
+    expect(SYNTH_PRESETS.find((p) => p.id === "keys")!.name).toBe("Piano");
+    expect(SYNTH_PRESETS.find((p) => p.id === "strings")!.name).toBe("Violin");
   });
-  it("falls back to keys for a missing or unknown id", () => {
-    expect(synthParamsFor()).toEqual(synthParamsFor("keys"));
-    expect(synthParamsFor("nope")).toEqual(synthParamsFor("keys"));
-    expect(isSynthPreset("pad")).toBe(true);
+  it("uses a different voice MODEL for piano and violin, not just a different filter", () => {
+    expect(synthParamsFor("classic").model).toBe(0);
+    expect(synthParamsFor("keys").model).toBe(1); // additive, struck piano
+    expect(synthParamsFor("strings").model).toBe(2); // bowed ensemble
+    expect(synthParamsFor("strings").vibratoCents).toBeGreaterThan(5); // violin has vibrato
+    expect(synthParamsFor("strings").noiseLevel).toBeGreaterThan(0); // and bow noise
+  });
+  it("makes the bass heavy: a strong fundamental and sub, a dark tone, and saturation", () => {
+    const bass = synthParamsFor("bass");
+    expect(bass.sineLevel).toBeGreaterThan(0.5);
+    expect(bass.subLevel).toBeGreaterThan(synthParamsFor("lead").subLevel * 2);
+    expect(bass.toneHz).toBeLessThan(1500);
+    expect(bass.drive).toBeGreaterThan(0);
+  });
+  it("keeps the other character differences (pad swells and is dark, pluck is short)", () => {
+    expect(synthParamsFor("pad").attackSec).toBeGreaterThan(0.2);
+    expect(synthParamsFor("pluck").releaseSec).toBeLessThan(0.2);
+    expect(synthParamsFor("pad").toneHz).toBeLessThan(synthParamsFor("lead").toneHz);
+  });
+  it("falls back to classic for a missing or unknown id", () => {
+    expect(synthParamsFor()).toEqual(synthParamsFor("classic"));
+    expect(synthParamsFor("nope")).toEqual(synthParamsFor("classic"));
+    expect(isSynthPreset("keys")).toBe(true);
     expect(isSynthPreset("nope")).toBe(false);
   });
 });
@@ -47,6 +62,6 @@ describe("setSynthPreset op", () => {
     const after = applyOp(p0, set);
     if (!after.ok) throw new Error("x");
     const back = applyOp(after.project, invertOp(p0, set, "a2")!);
-    expect(back.ok && (back.project.tracks["track-1"]!.synthPreset ?? "keys")).toBe("keys");
+    expect(back.ok && (back.project.tracks["track-1"]!.synthPreset ?? "classic")).toBe("classic");
   });
 });

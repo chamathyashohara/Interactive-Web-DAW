@@ -36,7 +36,9 @@ describe("synth preset in the snapshot", () => {
     const p = createProject("p");
     const et = toEngineSnapshot(p, new SlotAllocator()).tracks[0]!;
     expect(et.instrument).toBe("synth");
-    expect(et.synth).toMatchObject({ attackSec: 0.004, releaseSec: 0.18 }); // default keys
+    expect(et.synth).toMatchObject({ model: 0, attackSec: 0.004, releaseSec: 0.18 }); // default classic
+    const piano = run(p, { type: "setSynthPreset", trackId: "track-1", preset: "keys" });
+    expect(toEngineSnapshot(piano, new SlotAllocator()).tracks[0]!.synth!.model).toBe(1);
     const pad = run(p, { type: "setSynthPreset", trackId: "track-1", preset: "pad" });
     expect(toEngineSnapshot(pad, new SlotAllocator()).tracks[0]!.synth!.attackSec).toBeGreaterThan(0.2);
   });
