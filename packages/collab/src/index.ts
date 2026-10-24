@@ -6,6 +6,6 @@ export { startSessionServer, type SessionServer, type ServerOptions } from "./se
 export { buildSeedProject } from "./shared/seed";
 export * from "./shared/protocol";
 export * from "./shared/types";
-export { parseServerAddress, type ServerAddress } from "./shared/serverAddress";
+export { isLanHost, parseServerAddress, type ServerAddress } from "./shared/serverAddress";
 export { NetStats } from "./client/netStats";
 export { summarize, quality, type Summary } from "./shared/stats";

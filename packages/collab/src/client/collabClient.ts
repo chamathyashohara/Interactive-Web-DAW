@@ -27,6 +27,8 @@ interface Events {
   dropped: Dropped[];
   presence: { id: string; state: Record<string, unknown> | null };
   probe: ProbeMsg;
+  /** A note someone put in the room appeared, changed (`data` set) or was taken down (`data` null). */
+  share: { id: string; topic: string; data: unknown | null };
   /** The session ended (host closed it) or could not be joined. */
   ended: { reason: 'host-ended' | 'cannot-join' };
 }
@@ -63,6 +65,8 @@ export class CollabClient {
   status: ClientStatus = 'connecting';
   users: UserInfo[] = [];
   reconnects = 0;
+  /** Topics of the notes currently in the room, so a note that vanished while we were disconnected can be reported gone. */
+  private sharedTopics = new Set<string>();
   bytesIn = 0;
   bytesOut = 0;
 
@@ -179,6 +183,11 @@ export class CollabClient {
     return { ok: true };
   }
 
+  /** Puts a small note in the room for everyone to read (including people who join later); `null` takes it down. */
+  share(topic: string, data: unknown | null) {
+    this.send({ t: 'share', topic, data });
+  }
+
   setPresence(state: Record<string, unknown> | null) {
     this.send({ t: 'presence', state });
   }
@@ -227,6 +236,18 @@ export class CollabClient {
         }
         this.setStatus('connected');
         this.emit('users', this.users);
+        // The welcome carries every note currently in the room; one that was there before and is gone now was taken down.
+        const present = new Set<string>();
+        for (const note of msg.shared ?? []) {
+          present.add(note.topic);
+          this.sharedTopics.add(note.topic);
+          this.emit('share', { id: note.id, topic: note.topic, data: note.data });
+        }
+        for (const topic of [...this.sharedTopics]) {
+          if (present.has(topic)) continue;
+          this.sharedTopics.delete(topic);
+          this.emit('share', { id: '', topic, data: null });
+        }
         if (dropped.length) this.emit('dropped', dropped);
         if (this.replica) {
           this.emit('change', this.replica.view);
@@ -235,6 +256,11 @@ export class CollabClient {
           for (const ops of this.replica.pendingBatches) this.send({ t: 'ops', ops });
         }
         return;
+      }
+      case 'share': {
+        if (msg.data === null) this.sharedTopics.delete(msg.topic);
+        else this.sharedTopics.add(msg.topic);
+        return this.emit('share', { id: msg.id, topic: msg.topic, data: msg.data });
       }
       case 'entries': {
         if (!this.replica) return;
