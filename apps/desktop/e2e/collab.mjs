@@ -1,5 +1,6 @@
 // Real-time collaboration in the DAW: one window hosts, another joins, and edits sync live (option A: no local undo).
 // Launches two app instances on one machine. Usage: node apps/desktop/e2e/collab.mjs (build first).
+import fs from "node:fs";
 import path from "node:path";
 import { connect, killTree, launch, makeReporter, rmDir, sleep, tmpDataDir, until } from "./lib.mjs";
 
@@ -54,6 +55,19 @@ try {
   check("C8c. you never see your own pointer drawn", !(await pointerText(host)).includes("Ana"), await pointerText(host));
   await host.evalJs(`window.daw.collab.sendPointer(null)`);
   check("C8d. the pointer disappears when it leaves the window", await until(async () => (await pointerText(join)) === "", 6000), await pointerText(join));
+
+  // network panel: opens from the popover, shows real measurements, exports a CSV
+  await host.evalJs(`document.querySelector('[data-testid=collab-button]').click()`);
+  await sleep(150);
+  await host.evalJs(`document.querySelector('[data-testid=collab-network-button]')?.click()`);
+  check("C8e. the Network panel opens", await until(async () => await host.evalJs(`!!document.querySelector('[data-testid=collab-network]')`), 6000));
+  const pingText = () => host.evalJs(`document.querySelector('[data-testid=net-ping]')?.textContent ?? ''`);
+  check("C8f. it shows two people and a measured ping", await until(async () => (await host.evalJs(`document.querySelector('[data-testid=net-users]')?.textContent`)) === "2" && /ms/.test(await pingText()), 12000), await pingText());
+  const csvPath = path.join(hostDir, "net.csv");
+  const exported = await host.evalJs(`window.daw.collab.exportNet(${JSON.stringify(csvPath)})`);
+  const csv = exported.ok ? fs.readFileSync(csvPath, "utf8") : "";
+  check("C8g. Export CSV writes the measurements", exported.ok && csv.startsWith("time,kind,ms") && csv.split("\n").length > 2, JSON.stringify(exported));
+  await host.evalJs(`document.querySelector('[aria-label="Close the Network panel"]')?.click()`);
 
   // option A: local undo is off during a session
   const beforeUndo = await notesOf(join);

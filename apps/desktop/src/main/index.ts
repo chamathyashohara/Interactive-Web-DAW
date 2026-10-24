@@ -16,7 +16,7 @@ import { Workspace } from "./project/workspace";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
-import { CollabClient, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { CollabClient, NetStats, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
 import { WebSocket as NodeWebSocket } from "ws";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
@@ -152,7 +152,7 @@ app.whenReady().then(() => {
   });
 
   // ---- real-time collaboration session (Component 3) ----
-  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; /** Ping, sync delay and traffic measuring for the Network panel. */ net: NetStats | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
   let collab: CollabState | null = null;
   const lanIp = () => {
     for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
@@ -165,7 +165,8 @@ app.whenReady().then(() => {
     pushProjectToEngine(project);
     sendToRenderer("project:update", { project, canUndo, canRedo });
   };
-  const wireClient = (client: CollabClient) => {
+  const wireClient = (client: CollabClient, baseWs: string) => {
+    if (collab) collab.net = new NetStats(baseWs, client, NodeWebSocket as unknown as typeof globalThis.WebSocket);
     client.on("change", (project) => {
       if (!collab) return;
       collab.project = project;
@@ -190,6 +191,7 @@ app.whenReady().then(() => {
     const c = collab;
     const finalProject = c.project;
     collab = null;
+    c.net?.stop();
     c.client.close();
     if (c.server) {
       c.server.endSession(c.code); // tell the others it ended (closes their sockets with the SESSION_ENDED code) before shutting the server
@@ -566,8 +568,8 @@ app.whenReady().then(() => {
         if (!res.ok) return { ok: false, reason: `the server replied ${res.status}` };
         const { code, hostKey } = (await res.json()) as { code: string; hostKey: string };
         const client = new CollabClient({ baseUrl: addr.ws, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-        collab = { client, server: null, remote: { http: addr.http, hostKey }, hosting: true, users: [], project: null, code, address: addr.http };
-        wireClient(client);
+        collab = { client, server: null, remote: { http: addr.http, hostKey }, net: null, hosting: true, users: [], project: null, code, address: addr.http };
+        wireClient(client, addr.ws);
         client.connect();
         telemetry.record("ui.collab", { action: "hostOnline" });
         publishCollab();
@@ -580,8 +582,8 @@ app.whenReady().then(() => {
       const server = await startSessionServer(0);
       const code = server.createSession(service.current);
       const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-      collab = { client, server, remote: null, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
-      wireClient(client);
+      collab = { client, server, remote: null, net: null, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      wireClient(client, `ws://127.0.0.1:${server.port}`);
       client.connect();
       telemetry.record("ui.collab", { action: "host" });
       publishCollab();
@@ -595,8 +597,8 @@ app.whenReady().then(() => {
     if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
     const baseUrl = parseServerAddress(address).ws; // accepts 192.168.1.5, 192.168.1.5:5000, https://abc.trycloudflare.com ...
     const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-    collab = { client, server: null, remote: null, hosting: false, users: [], project: null, code, address: address.trim() };
-    wireClient(client);
+    collab = { client, server: null, remote: null, net: null, hosting: false, users: [], project: null, code, address: address.trim() };
+    wireClient(client, baseUrl);
     client.connect();
     telemetry.record("ui.collab", { action: "join" });
     publishCollab();
@@ -606,6 +608,23 @@ app.whenReady().then(() => {
     if (!collab || collab.client.status !== "connected") return;
     const q = p as { x?: unknown; y?: unknown } | null;
     collab.client.setPresence(q && typeof q.x === "number" && typeof q.y === "number" ? { pointer: { x: q.x, y: q.y } } : { pointer: null });
+  });
+  ipcMain.handle("collab:net", () => collab?.net?.snapshot() ?? null);
+  ipcMain.handle("collab:netExport", async (_e, explicitPath?: unknown) => {
+    if (!collab?.net) return { ok: false, reason: "not in a session" };
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    let target = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!target) {
+      const picked = await dialog.showSaveDialog(win!, { title: "Export network measurements", defaultPath: `network-${collab.code}-${stamp}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    try {
+      fs.writeFileSync(target, collab.net.toCsv());
+      return { ok: true, file: target };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
   });
   ipcMain.handle("collab:leave", async () => {
     await leaveCollab();

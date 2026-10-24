@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { collabNoteStore, collabStore, useStore } from "../store";
+import { collabNetOpen, collabNoteStore, collabStore, useStore } from "../store";
 
 /** A setting remembered between runs (the access token is deliberately not kept). */
 function remembered(key: string): string {
@@ -126,6 +126,9 @@ export function CollabPanel() {
                 {state.users.length === 0 && <span className="text-slate-500">connecting…</span>}
               </div>
               <p className="mb-2 text-[11px] text-slate-500">Everyone edits together. Undo is off in a session — use the history to go back.</p>
+              <button className="hw-btn mb-1.5 w-full py-1.5 text-xs" onClick={() => collabNetOpen.set(!collabNetOpen.get())} data-testid="collab-network-button">
+                Network…
+              </button>
               <button className="hw-btn hw-red w-full py-1.5 text-xs" onClick={() => void window.daw.collab.leave().then(close)} data-testid="collab-leave">
                 {state.hosting ? "End session" : "Leave session"}
               </button>

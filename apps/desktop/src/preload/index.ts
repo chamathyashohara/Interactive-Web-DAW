@@ -60,6 +60,7 @@ export interface CollabUser {
   name: string;
   color: string;
 }
+export type NetSnapshot = ReturnType<InstanceType<typeof import("@daw/collab").NetStats>["snapshot"]>;
 export type CollabState =
   | { active: false }
   | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; users: CollabUser[]; me: string };
@@ -84,6 +85,10 @@ const api = {
       ipcRenderer.on("collab:state", l);
       return () => ipcRenderer.removeListener("collab:state", l);
     },
+    /** The latest ping / sync delay / traffic numbers for the Network panel (null = not in a session). */
+    net: (): Promise<NetSnapshot | null> => ipcRenderer.invoke("collab:net"),
+    /** Saves the measurements as a CSV file (asks where). */
+    exportNet: (explicitPath?: string): Promise<{ ok: boolean; file?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("collab:netExport", explicitPath),
     /** Tells the others where this window's pointer is (fractions of the window); null = it left the window. */
     sendPointer: (pointer: { x: number; y: number } | null): void => ipcRenderer.send("collab:pointer", pointer),
     onPointer: (cb: (p: { id: string; pointer: { x: number; y: number } | null }) => void) => {

@@ -44,6 +44,8 @@ export const projectsStore = createStore<ProjectListPayload>({ projects: [], act
 export const collabStore = createStore<CollabState>({ active: false });
 /** Where each other person's pointer is (fractions of their window), by user id. */
 export const collabPointers = createStore<Record<string, { x: number; y: number }>>({});
+/** Whether the Network panel is showing. */
+export const collabNetOpen = createStore<boolean>(false);
 /** A short message about the session (it ended, a copy was saved...). null = none showing. */
 export const collabNoteStore = createStore<string | null>(null);
 /** Learner progress: which lessons are done and whether features are gated. */
