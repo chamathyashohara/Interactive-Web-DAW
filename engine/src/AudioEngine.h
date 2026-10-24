@@ -174,6 +174,7 @@ public:
                 slotGate[s] = tr.gate;
                 slotVolumeAuto[s] = tr.volumeAuto.empty() ? nullptr : &tr.volumeAuto;
                 slotFilterAuto[s] = tr.filterAuto.empty() ? nullptr : &tr.filterAuto;
+                if (tr.instrument == kSynth) slots[s].synth.setParams(tr.synth); // the track's synth preset
             }
         const int cut = cutSerial.load(std::memory_order_acquire);
         if (cut != seenCut)

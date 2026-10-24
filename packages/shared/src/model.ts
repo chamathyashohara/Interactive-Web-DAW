@@ -138,6 +138,8 @@ export interface Track {
   sample?: SampleRef;
   /** Only for instrument "plugin": the VST3 instrument this track plays (absent until one is chosen). */
   plugin?: PluginRef;
+  /** Only for instrument "synth": which built-in preset it plays (absent = the default "keys" sound). */
+  synthPreset?: string;
   /** Curves that move a control over the song. A parameter without a curve is not automated. */
   automation?: Partial<Record<AutoParam, AutoPoint[]>>;
   /** Clips on one track never overlap. */

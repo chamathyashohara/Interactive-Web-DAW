@@ -1,4 +1,5 @@
 #pragma once
+#include "Synth.h"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -46,6 +47,7 @@ inline float autoAt(const std::vector<AutoPoint>& p, double tick)
 
 struct TrackModel
 {
+    SynthParams synth; // kSynth tracks: the preset parameters (default = the original sound)
     int slot = 0;
     int instrument = kSynth;
     float gain = 0.64f; // final linear gain (mute/solo already resolved by the host)

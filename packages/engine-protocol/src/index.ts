@@ -40,6 +40,8 @@ export interface EngineTrack {
   gate?: boolean;
   /** instrument "sample": speed factor for time-stretching without changing pitch (project tempo / the sound's own tempo). Omitted = play as recorded. */
   stretchRatio?: number;
+  /** instrument "synth": the preset parameters (envelope, oscillator mix, tone). Omitted = the default sound. */
+  synth?: { attackSec: number; releaseSec: number; sawLevel: number; osc2Level: number; detuneCents: number; subLevel: number; toneHz: number; gain: number };
   /** instrument "plugin": absolute path of the .vst3 to load (omitted when none is chosen; the engine plays silence or, until the host is built, the built-in synth). */
   pluginPath?: string;
   /** instrument "plugin": base64 of the plugin's saved state, restored after loading. */
