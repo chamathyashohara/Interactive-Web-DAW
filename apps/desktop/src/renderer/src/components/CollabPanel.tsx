@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { collabStore, useStore } from "../store";
+import { collabNoteStore, collabStore, useStore } from "../store";
 
 /** The Collaborate button and its popover: host a session, join one by code, or see who is in the live session. */
 export function CollabPanel() {
   const state = useStore(collabStore);
+  const note = useStore(collabNoteStore);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"menu" | "join">("menu");
   const [addr, setAddr] = useState("");
@@ -12,6 +13,12 @@ export function CollabPanel() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!note) return;
+    const timer = window.setTimeout(() => collabNoteStore.set(null), 9000);
+    return () => window.clearTimeout(timer);
+  }, [note]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +71,13 @@ export function CollabPanel() {
           "⧉ Collaborate"
         )}
       </button>
+
+      {note && (
+        <div className="hw-popover fixed bottom-4 left-1/2 z-[80] flex max-w-[460px] -translate-x-1/2 items-start gap-3 p-3 text-[12px]" role="status" data-testid="collab-note">
+          <span className="text-slate-200">{note}</span>
+          <button className="hw-btn px-2 py-0.5 text-xs" onClick={() => collabNoteStore.set(null)}>OK</button>
+        </div>
+      )}
 
       {open && (
         <div className="hw-popover absolute top-full left-0 z-[65] mt-1.5 w-[300px] p-3 text-[12px]" data-testid="collab-popover">

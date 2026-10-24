@@ -191,8 +191,18 @@ app.whenReady().then(() => {
       await new Promise((r) => setTimeout(r, 200)); // let the close frames flush so joiners see "host ended" rather than a dropped link
       await c.server.close();
     }
-    if (finalProject) service.adopt(finalProject); // keep the result of the session in the local project
-    else pushToUi(service.current, service.canUndo, service.canRedo);
+    if (c.hosting && finalProject) {
+      service.adopt(finalProject); // the host's own project carries the result of the session
+    } else {
+      // A guest's own open project is never touched: show it again and keep the session as a separate new project.
+      pushToUi(service.current, service.canUndo, service.canRedo);
+      if (finalProject) {
+        const saved = workspace.importProject(`${finalProject.name} (session)`.slice(0, 80), finalProject);
+        publishProjects();
+        telemetry.record("ui.collab", { action: "saveSessionCopy" });
+        sendToRenderer("collab:note", { kind: "saved-copy", name: saved.name });
+      }
+    }
     publishCollab();
     if (reason === "host-ended") sendToRenderer("collab:note", { kind: "host-ended" });
     if (reason === "cannot-join") sendToRenderer("collab:note", { kind: "cannot-join" });

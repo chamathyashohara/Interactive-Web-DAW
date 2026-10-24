@@ -42,6 +42,8 @@ export const exportStore = createStore<ExportStatus | null>(null);
 export const projectsStore = createStore<ProjectListPayload>({ projects: [], activeId: "" });
 /** Live collaboration session state (who is here, the join code). */
 export const collabStore = createStore<CollabState>({ active: false });
+/** A short message about the session (it ended, a copy was saved...). null = none showing. */
+export const collabNoteStore = createStore<string | null>(null);
 /** Learner progress: which lessons are done and whether features are gated. */
 export const progressStore = createStore<Progress>(defaultProgress());
 /** Whether the participant has agreed to the study recording (and under which code). */
@@ -68,6 +70,14 @@ export async function initStores() {
   window.daw.projects.onList((p) => projectsStore.set(p));
   collabStore.set(initial.collab);
   window.daw.collab.onState((s) => collabStore.set(s));
+  window.daw.collab.onNote((n) => {
+    const text =
+      n.kind === "saved-copy" ? `The session was saved as a new project, "${n.name ?? "session"}". Your own project is unchanged.`
+      : n.kind === "host-ended" ? "The host ended the session."
+      : n.kind === "cannot-join" ? "Could not join: check the address and the 6-digit code."
+      : null;
+    if (text) collabNoteStore.set(text);
+  });
   engineStateStore.set(initial.engine);
   statusStore.set(initial.status);
   window.daw.onProject((p) => projectStore.set(p));

@@ -83,8 +83,8 @@ const api = {
       ipcRenderer.on("collab:state", l);
       return () => ipcRenderer.removeListener("collab:state", l);
     },
-    onNote: (cb: (n: { kind: string; count?: number }) => void) => {
-      const l = (_e: unknown, n: { kind: string; count?: number }) => cb(n);
+    onNote: (cb: (n: { kind: string; count?: number; name?: string }) => void) => {
+      const l = (_e: unknown, n: { kind: string; count?: number; name?: string }) => cb(n);
       ipcRenderer.on("collab:note", l);
       return () => ipcRenderer.removeListener("collab:note", l);
     },
