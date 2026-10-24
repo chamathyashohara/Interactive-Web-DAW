@@ -1,5 +1,5 @@
-// The Live recording lab: opens the recorder programs (Component 4) and adds their takes to the project.
-// A stand-in program (node.exe) plays the part of Producer Studio / Performer Client, since the real ones need Qt to build.
+// The remote-recording tab's recordings list: a finished WAV that appears in the recordings folder is offered, and Add to project puts it on a new track.
+// (The session itself is covered by remote-recording.mjs; this needs the audio engine, which analyses and plays the take.)
 // Usage: node apps/desktop/e2e/recording.mjs (build the desktop app first).
 import fs from "node:fs";
 import path from "node:path";
@@ -9,9 +9,7 @@ const { check, finish } = makeReporter();
 const dir = tmpDataDir("daw-rec-");
 const watch = path.join(dir, "takes");
 fs.mkdirSync(watch, { recursive: true });
-const emptySearch = path.join(dir, "no-programs"); // so a real build of the recorder programs on this PC is not found
-fs.mkdirSync(emptySearch, { recursive: true });
-const child = launch(9360, dir, { DAW_RR_PRODUCER: process.execPath, DAW_RR_WATCH_DIR: watch, DAW_RR_SEARCH_ROOT: emptySearch });
+const child = launch(9360, dir, { DAW_RR_WATCH_DIR: watch });
 
 /** A short 16-bit mono 48 kHz WAV (a decaying tone), like a recorded take. */
 function wav16(file, secs, hz) {
@@ -36,21 +34,12 @@ try {
   const project = () => c.evalJs(`window.daw.getInitial().then((x) => x.project)`);
 
   const s0 = await state();
-  check("R1. the tab knows which recorder programs it can find", s0.apps.producer.found === true && s0.apps.performer.found === false, JSON.stringify(s0.apps));
-  check("R2. it watches the recorder's save folder", s0.watchDir === watch);
-
-  // the two buttons
-  const opened = await c.evalJs(`window.daw.recording.launch('producer')`);
-  check("R3. \"I'm the Producer\" opens the producer program", opened.ok === true, JSON.stringify(opened));
-  const missing = await c.evalJs(`window.daw.recording.launch('performer')`);
-  check("R4. \"I'm the Singer\" says plainly when its program is not built", missing.ok === false && /PerformerClient\.exe was not found/.test(missing.reason), JSON.stringify(missing));
-  await c.evalJs(`window.daw.recording.locate('performer', ${JSON.stringify(process.execPath)})`);
-  check("R5. Locate… makes it available (and it is remembered)", (await state()).apps.performer.found === true && (await c.evalJs(`window.daw.recording.launch('performer')`)).ok === true);
+  check("R1. the tab watches the recordings folder", s0.watchDir === watch && s0.takes.length === 0, JSON.stringify(s0));
 
   // the panel in the window
   await c.evalJs(`document.querySelector('[data-testid=rec-button]').click()`);
   await sleep(200);
-  check("R6. the Live recording popover opens with both role buttons", await c.evalJs(`!!document.querySelector('[data-testid=rec-open-producer]') && !!document.querySelector('[data-testid=rec-open-performer]')`));
+  check("R6. the Remote recording panel opens with both role buttons", await c.evalJs(`!!document.querySelector('[data-testid=rec-open-producer]') && !!document.querySelector('[data-testid=rec-open-performer]')`));
   check("R7. nothing is listed before a recording exists", await c.evalJs(`!!document.querySelector('[data-testid=rec-empty]')`));
 
   // a recording appears in the watched folder
@@ -60,11 +49,11 @@ try {
   await sleep(100);
   await c.evalJs(`window.daw.recording.pollNow()`);
   check("R8. a finished recording is noticed and listed", await until(async () => (await state()).takes.some((t) => t.name === "take-001.wav"), 5000), JSON.stringify((await state()).takes));
-  check("R9. the list shows it with an Add to project button", await until(async () => await c.evalJs(`!!document.querySelector('[data-testid=rec-add-take]')`), 4000));
+  check("R9. the list shows it with an Add to project button", await until(async () => await c.evalJs(`!!document.querySelector('[data-testid=rec-add-folder-take]')`), 4000));
 
   // add it to the project
   const before = Object.keys((await project()).tracks).length;
-  await c.evalJs(`document.querySelector('[data-testid=rec-add-take]').click()`);
+  await c.evalJs(`document.querySelector('[data-testid=rec-add-folder-take]').click()`);
   const added = await until(async () => Object.keys((await project()).tracks).length === before + 1, 15000, 200);
   check("R10. Add to project makes a new track", !!added);
   const p = await project();
@@ -92,7 +81,7 @@ try {
   await c.evalJs(`window.daw.setProgressMode('beginner')`);
   await sleep(300);
   const tracksNow = Object.keys((await project()).tracks).length;
-  await c.evalJs(`document.querySelector('[data-testid=rec-add-take]').click()`);
+  await c.evalJs(`document.querySelector('[data-testid=rec-add-folder-take]').click()`);
   await sleep(500);
   const msg = await c.evalJs(`document.querySelector('[data-testid=rec-message]')?.textContent ?? ''`);
   check("R15. in beginner mode, adding is refused with the lesson named", /M\d/.test(msg) && Object.keys((await project()).tracks).length === tracksNow, msg);

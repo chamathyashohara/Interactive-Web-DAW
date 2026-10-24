@@ -1,38 +1,29 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { EXE_NAME, findRecorderApp, type RecorderRole } from "./recorderApps";
 import { TakeWatcher, type TakeFile } from "./takeWatcher";
 
 interface Settings {
-  producerExe?: string;
-  performerExe?: string;
   watchDir?: string;
 }
 
 export interface RecordingState {
-  apps: Record<RecorderRole, { found: boolean; path: string | null }>;
-  /** The folder watched for new recordings (where the recorder programs save takes). */
+  /** The folder takes are recorded into and watched (Music\RemoteRecording unless moved). */
   watchDir: string;
   /** Recordings noticed since the DAW started, newest first. */
   takes: TakeFile[];
 }
 
 export interface RecordingOptions {
-  /** A small JSON file in the user-data folder that remembers the chosen program paths and folder. */
+  /** A small JSON file in the user-data folder that remembers the chosen folder. */
   settingsFile: string;
-  /** Used until the user picks another folder (Music\RemoteRecording, the recorder programs' own default). */
+  /** Used until the user picks another folder. */
   defaultWatchDir: string;
-  /** Where to look for the programs when none was chosen. */
-  searchRoots: string[];
-  /** Overrides (DAW_RR_PRODUCER / DAW_RR_PERFORMER). */
-  env?: Partial<Record<RecorderRole, string>>;
   onChange: (state: RecordingState) => void;
 }
 
 /**
- * The "Live recording" tab's side in the main process. Component 4 stays two separate programs (Producer Studio and
- * Performer Client); this starts the right one for the role the user picked and notices the recordings they save, so a take can be added to the project.
+ * The recordings folder of the remote-recording tab. Takes made by the in-app recorder are written here (see liveRecording.ts); this notices
+ * every finished WAV that appears, so a take can be added to the project, wherever it came from.
  */
 export class RecordingService {
   private settings: Settings;
@@ -69,43 +60,12 @@ export class RecordingService {
     }
   }
 
-  private exePath(role: RecorderRole): string | null {
-    return findRecorderApp(role, { env: this.opts.env?.[role], saved: role === "producer" ? this.settings.producerExe : this.settings.performerExe, roots: this.opts.searchRoots });
-  }
-
   state(): RecordingState {
-    const app = (role: RecorderRole) => {
-      const p = this.exePath(role);
-      return { found: p !== null, path: p };
-    };
-    return { apps: { producer: app("producer"), performer: app("performer") }, watchDir: this.watcher.folder, takes: this.watcher.list() };
+    return { watchDir: this.watcher.folder, takes: this.watcher.list() };
   }
 
-  /** Starts Producer Studio or Performer Client as its own window. */
-  launch(role: RecorderRole): Promise<{ ok: boolean; reason?: string }> {
-    const exe = this.exePath(role);
-    if (!exe) {
-      return Promise.resolve({
-        ok: false,
-        reason: `${EXE_NAME[role]} was not found. Build the remote recording component (components/remote-recording/docs/build/WINDOWS_BUILD.md), or use "Locate…" to point to it.`,
-      });
-    }
-    return new Promise((resolve) => {
-      const child = spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: "ignore" });
-      child.once("error", (err) => resolve({ ok: false, reason: `Could not start ${EXE_NAME[role]}: ${err.message}` }));
-      child.once("spawn", () => {
-        child.unref();
-        resolve({ ok: true });
-      });
-    });
-  }
-
-  /** Remembers where a program is (when the user picked it by hand). */
-  locate(role: RecorderRole, file: string) {
-    if (role === "producer") this.settings.producerExe = file;
-    else this.settings.performerExe = file;
-    this.saveSettings();
-    this.opts.onChange(this.state());
+  get folder(): string {
+    return this.watcher.folder;
   }
 
   setWatchDir(dir: string) {

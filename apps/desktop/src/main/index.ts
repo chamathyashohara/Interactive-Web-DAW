@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import fs from "node:fs";
@@ -9,7 +9,7 @@ import { EngineBridge } from "./engine/engineBridge";
 import { SlotAllocator, toEngineSnapshot } from "./engine/snapshot";
 import { LibraryService } from "./library/libraryService";
 import { RecordingService } from "./recording/recordingService";
-import type { RecorderRole } from "./recording/recorderApps";
+import { LiveRecordingService, listInterfaces } from "./recording/liveRecording";
 import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
@@ -66,7 +66,16 @@ function createWindow() {
 // End-to-end tests keep everything the app stores (settings, local storage, caches) out of the real user profile.
 if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
 
+// The window records the microphone (remote recording). End-to-end tests use Chromium's built-in fake microphone, so no sound card is needed.
+if (process.env.DAW_E2E === "1" && process.env.DAW_FAKE_MIC === "1") {
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+  app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+}
+
 app.whenReady().then(() => {
+  // Only the microphone (and nothing else) may be asked for, and only by this app's own window.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === "media"));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === "media");
   // Projects live under <userData>/projects, each in its own folder, managed by the Workspace.
   const workspace = new Workspace(process.env.DAW_PROJECTS_DIR ?? path.join(app.getPath("userData"), "projects"));
   let activeProjectId: string;
@@ -310,44 +319,32 @@ app.whenReady().then(() => {
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
   });
-  // ---- live recording: opens Producer Studio / Performer Client (Component 4) and adds their takes to the project ----
+  // ---- remote recording (Component 4, now inside the DAW): the recordings folder, and the live session service ----
+  const recordingsRootDefault = process.env.DAW_RR_WATCH_DIR ?? path.join(app.getPath("music"), "RemoteRecording");
   const recording = new RecordingService({
     settingsFile: path.join(app.getPath("userData"), "recording.json"),
-    defaultWatchDir: process.env.DAW_RR_WATCH_DIR ?? path.join(app.getPath("music"), "RemoteRecording"),
-    searchRoots: process.env.DAW_E2E === "1" && process.env.DAW_RR_SEARCH_ROOT !== undefined ? [process.env.DAW_RR_SEARCH_ROOT] : [path.resolve(app.getAppPath(), "../../components/remote-recording/build"), path.join(process.resourcesPath ?? "", "remote-recording")],
-    env: { producer: process.env.DAW_RR_PRODUCER, performer: process.env.DAW_RR_PERFORMER },
+    defaultWatchDir: recordingsRootDefault,
     onChange: (s) => sendToRenderer("recording:state", s),
   });
   recording.start();
-  const asRole = (v: unknown): RecorderRole | null => (v === "producer" || v === "performer" ? v : null);
+  const live = new LiveRecordingService({
+    recordingsRoot: recording.folder,
+    logFile: path.join(app.getPath("userData"), "recording-logs", `live-${new Date().toISOString().slice(0, 10)}.jsonl`),
+    appVersion: app.getVersion(),
+    onState: (s) => sendToRenderer("live:state", s),
+    toRenderer: sendToRenderer,
+  });
+  live.start();
   ipcMain.handle("recording:state", () => recording.state());
-  ipcMain.handle("recording:launch", async (_e, role: unknown) => {
-    const r = asRole(role);
-    if (!r) return { ok: false, reason: "unknown role" };
-    const result = await recording.launch(r);
-    telemetry.record("ui.recording", { action: result.ok ? `open-${r}` : `open-${r}-failed` });
-    return result;
-  });
-  ipcMain.handle("recording:locate", async (_e, role: unknown, explicitPath?: unknown) => {
-    const r = asRole(role);
-    if (!r) return { ok: false, reason: "unknown role" };
-    let file = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
-    if (!file) {
-      const picked = await dialog.showOpenDialog(win!, { title: r === "producer" ? "Locate ProducerStudio.exe" : "Locate PerformerClient.exe", properties: ["openFile"], filters: [{ name: "Program", extensions: ["exe"] }] });
-      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
-      file = picked.filePaths[0];
-    }
-    recording.locate(r, file);
-    return { ok: true };
-  });
   ipcMain.handle("recording:chooseFolder", async (_e, explicitPath?: unknown) => {
     let dir = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
     if (!dir) {
-      const picked = await dialog.showOpenDialog(win!, { title: "Folder where the recorder programs save takes", properties: ["openDirectory"], defaultPath: recording.state().watchDir });
+      const picked = await dialog.showOpenDialog(win!, { title: "Folder where recordings are saved", properties: ["openDirectory"], defaultPath: recording.state().watchDir });
       if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
       dir = picked.filePaths[0];
     }
     recording.setWatchDir(dir);
+    live.setRecordingsRoot(dir);
     return { ok: true };
   });
   ipcMain.handle("recording:openFolder", async () => {
@@ -374,6 +371,43 @@ app.whenReady().then(() => {
     recording.dismiss(source);
     telemetry.record("ui.recording", { action: "addTake" });
     return result;
+  });
+  // ---- live session: control from the window ----
+  const text = (v: unknown, max = 80): string => (typeof v === "string" ? v.slice(0, max) : "");
+  const num = (v: unknown, min: number, max: number, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.trunc(v))) : fallback);
+  ipcMain.handle("live:state", () => live.state());
+  ipcMain.handle("live:interfaces", () => listInterfaces());
+  ipcMain.handle("live:create", async (_e, o: { bind?: unknown; port?: unknown; name?: unknown }) => {
+    telemetry.record("ui.recording", { action: "create-session" });
+    return live.createSession({ bind: text(o?.bind, 45), port: num(o?.port, 1024, 65533, 52000), name: text(o?.name, 40) });
+  });
+  ipcMain.handle("live:join", async (_e, o: { host?: unknown; port?: unknown; code?: unknown; name?: unknown }) => {
+    telemetry.record("ui.recording", { action: "join-session" });
+    return live.join({ host: text(o?.host, 45), port: num(o?.port, 1, 65535, 52000), code: text(o?.code, 6), name: text(o?.name, 40) });
+  });
+  ipcMain.handle("live:leave", async () => { await live.leave(); return { ok: true }; });
+  ipcMain.handle("live:consent", (_e, on: unknown) => (live.setConsent(on === true), { ok: true }));
+  ipcMain.handle("live:deliveryConsent", (_e, on: unknown) => (live.setDeliveryConsent(on === true), { ok: true }));
+  ipcMain.handle("live:record", () => { const r = live.record(); telemetry.record("ui.recording", { action: r ? "record-refused" : "record" }); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:stop", () => { const r = live.stop(); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:newCode", () => ({ ok: true, code: live.newCode() }));
+  ipcMain.handle("live:lead", (_e, ms: unknown, auto: unknown) => (live.setLead(num(ms, 300, 10000, 1000), auto !== false), { ok: true }));
+  ipcMain.handle("live:autoTransfer", (_e, on: unknown) => (live.setAutoTransfer(on === true), { ok: true }));
+  ipcMain.handle("live:transfer", async (_e, take: unknown) => { const r = await live.requestTransfer(num(take, 1, 999, 0)); return r ? { ok: false, reason: r } : { ok: true }; });
+  ipcMain.handle("live:cancelTransfer", (_e, take: unknown) => (live.cancelTransfer(num(take, 1, 999, 0)), { ok: true }));
+  ipcMain.handle("live:talkback", (_e, send: unknown, hear: unknown) => (live.setTalkback(send === true, hear === true), { ok: true }));
+  // ---- live session: audio from the window (high rate, no reply) ----
+  ipcMain.on("live:captureState", (_e, s: { open?: unknown; deviceName?: unknown; sampleRate?: unknown; channels?: unknown; failed?: unknown }) =>
+    live.captureState({ open: s?.open === true, deviceName: text(s?.deviceName, 120), sampleRate: num(s?.sampleRate, 8000, 192000, 48000), channels: num(s?.channels, 1, 2, 1), failed: text(s?.failed, 200) }));
+  ipcMain.on("live:capture", (_e, frame: unknown, samples: unknown) => {
+    if (typeof frame === "number" && samples instanceof Float32Array) live.capture(frame, samples);
+  });
+  ipcMain.on("live:send", (_e, opus: unknown, mediaIndex: unknown, muted: unknown) => {
+    if (opus instanceof Uint8Array && typeof mediaIndex === "number") live.liveSend(opus, mediaIndex, muted === true);
+  });
+  ipcMain.on("live:incomingStats", (_e, r: Record<string, unknown>) => {
+    const n = (k: string) => (typeof r?.[k] === "number" ? (r[k] as number) : 0);
+    live.liveIncomingStats({ received: n("received"), lostEstimate: n("lostEstimate"), late: n("late"), duplicates: n("duplicates"), reordered: n("reordered"), jitterUs: n("jitterUs"), jbFill: n("jbFill"), jbTarget: n("jbTarget"), underruns: n("underruns"), concealed: n("concealed"), decodeErrors: n("decodeErrors") });
   });
   ipcMain.handle("library:get", () => ({ status: libraryStatus, ...library.list() }));
   ipcMain.on("library:preview", (_e, id: unknown) => {
@@ -723,6 +757,7 @@ app.whenReady().then(() => {
 
   app.on("before-quit", () => {
     recording.stop();
+    void live.shutdown();
     if (collab) { collab.client.close(); void collab.server?.close(); }
     telemetry.recordSummary(service.current);
     engine.stop();

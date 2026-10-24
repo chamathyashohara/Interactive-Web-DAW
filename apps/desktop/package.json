@@ -51,26 +51,6 @@
       {
         "from": "build-resources/vcruntime",
         "to": "engine"
-      },
-      {
-        "from": "../../components/remote-recording/build/msvc-x64/bin/Release",
-        "to": "remote-recording",
-        "filter": [
-          "ProducerStudio.exe",
-          "PerformerClient.exe",
-          "*.dll",
-          "platforms/**",
-          "styles/**",
-          "imageformats/**",
-          "iconengines/**",
-          "generic/**",
-          "networkinformation/**",
-          "tls/**"
-        ]
-      },
-      {
-        "from": "build-resources/vcruntime",
-        "to": "remote-recording"
       }
     ],
     "win": {

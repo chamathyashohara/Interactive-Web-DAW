@@ -4,7 +4,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { computePeaks, decodeWav, encodeWav } from "@daw/sounds";
 import { LibraryService, type Analyzer } from "../library/libraryService";
-import { EXE_NAME, findRecorderApp, searchRecorderApp } from "./recorderApps";
 import { RecordingService, type RecordingState } from "./recordingService";
 import { TakeWatcher, looksLikeWav, type TakeFile } from "./takeWatcher";
 
@@ -23,30 +22,6 @@ const touch = (file: string, content: Buffer | string = "x") => {
   fs.writeFileSync(file, content);
 };
 const wavBytes = (secs = 0.3) => Buffer.from(encodeWav([Float32Array.from({ length: Math.round(secs * 48000) }, (_, i) => 0.4 * Math.sin((2 * Math.PI * 220 * i) / 48000))]));
-
-describe("finding Producer Studio and Performer Client", () => {
-  it("looks in the build folder and prefers a Release build", () => {
-    const root = tmp();
-    touch(path.join(root, "msvc-x64", "bin", "Debug", EXE_NAME.producer));
-    touch(path.join(root, "msvc-x64", "bin", "Release", EXE_NAME.producer));
-    const found = searchRecorderApp("producer", [root]);
-    expect(found).toHaveLength(2);
-    expect(found[0]).toContain("Release");
-    expect(searchRecorderApp("performer", [root])).toEqual([]);
-  });
-
-  it("an override or a program chosen by hand wins over searching, and a missing path is ignored", () => {
-    const root = tmp();
-    const built = path.join(root, "build", "bin", "Release", EXE_NAME.performer);
-    const chosen = path.join(root, "mine", "Perf.exe");
-    touch(built);
-    touch(chosen);
-    expect(findRecorderApp("performer", { roots: [root] })).toBe(built);
-    expect(findRecorderApp("performer", { roots: [root], saved: chosen })).toBe(chosen);
-    expect(findRecorderApp("performer", { roots: [root], saved: chosen, env: path.join(root, "gone.exe") })).toBe(chosen);
-    expect(findRecorderApp("producer", { roots: [root] })).toBeNull();
-  });
-});
 
 describe("noticing new recordings", () => {
   it("looksLikeWav accepts a real WAV and refuses anything else", () => {
@@ -115,49 +90,39 @@ describe("noticing new recordings", () => {
 });
 
 describe("RecordingService", () => {
-  const make = (root: string, over: Partial<ConstructorParameters<typeof RecordingService>[0]> = {}) => {
+  const make = (root: string) => {
     const changes: RecordingState[] = [];
     const svc = new RecordingService({
       settingsFile: path.join(root, "settings", "recording.json"),
       defaultWatchDir: path.join(root, "takes"),
-      searchRoots: [path.join(root, "build")],
       onChange: (s) => changes.push(s),
-      ...over,
     });
     return { svc, changes };
   };
 
-  it("reports which programs were found, and says so plainly when a program is missing", async () => {
+  it("watches the default folder until another is chosen, and tells the window when a take appears", () => {
     const root = tmp();
-    touch(path.join(root, "build", "bin", "Release", EXE_NAME.producer));
-    const { svc } = make(root);
-    const st = svc.state();
-    expect(st.apps.producer.found).toBe(true);
-    expect(st.apps.performer.found).toBe(false);
-    const r = await svc.launch("performer");
-    expect(r.ok).toBe(false);
-    expect(r.reason).toContain("PerformerClient.exe was not found");
+    const { svc, changes } = make(root);
+    expect(svc.state().watchDir).toBe(path.join(root, "takes"));
+    svc.start();
+    touch(path.join(root, "takes", "session", "take01_performer_1a2b3c4d.wav"), wavBytes(0.2));
+    svc.pollNow();
+    svc.pollNow();
+    expect(svc.state().takes.map((t) => t.name)).toEqual(["take01_performer_1a2b3c4d.wav"]);
+    expect(changes.length).toBeGreaterThan(0);
+    svc.dismiss(svc.state().takes[0]!.file);
+    expect(svc.state().takes).toEqual([]);
+    svc.stop();
   });
 
-  it("starts the chosen program as its own process", async () => {
+  it("remembers the watched folder across restarts", () => {
     const root = tmp();
-    const { svc } = make(root, { env: { producer: process.execPath } }); // node.exe stands in for a recorder program
-    const r = await svc.launch("producer");
-    expect(r).toEqual({ ok: true });
-  });
-
-  it("remembers a program picked by hand and the watched folder across restarts", () => {
-    const root = tmp();
-    const exe = path.join(root, "elsewhere", "Producer.exe");
-    touch(exe);
     const picked = path.join(root, "my-takes");
     fs.mkdirSync(picked);
     const first = make(root);
-    first.svc.locate("producer", exe);
     first.svc.setWatchDir(picked);
     first.svc.stop();
     const second = make(root);
-    expect(second.svc.state().apps.producer.path).toBe(exe);
     expect(second.svc.state().watchDir).toBe(picked);
     second.svc.stop();
   });

@@ -1,6 +1,6 @@
 // Gathers what the packaged app needs that is not built by npm, and stops with a plain message if something is missing.
-//   - checks the audio engine and the two remote-recording programs have been built
-//   - copies the Visual C++ runtime DLLs next to them (apps/desktop/build-resources/vcruntime), so a PC without the
+//   - checks the audio engine has been built (remote recording is part of the app itself and needs nothing built)
+//   - copies the Visual C++ runtime DLLs next to the engine (apps/desktop/build-resources/vcruntime), so a PC without the
 //     "Visual C++ Redistributable" still starts them. (These DLLs are redistributable app-locally.)
 // Usage: node scripts/stage-runtime.mjs   (run by `npm run dist`)
 import fs from "node:fs";
@@ -10,8 +10,6 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const need = [
   ["the audio engine", "engine/build/daw_engine_artefacts/Release/daw_engine.exe", "npm run engine:configure && npm run engine:build"],
-  ["Producer Studio", "components/remote-recording/build/msvc-x64/bin/Release/ProducerStudio.exe", "see docs/recording-integration.md (Building the two programs)"],
-  ["Performer Client", "components/remote-recording/build/msvc-x64/bin/Release/PerformerClient.exe", "see docs/recording-integration.md (Building the two programs)"],
 ];
 let missing = false;
 for (const [what, rel, how] of need) {

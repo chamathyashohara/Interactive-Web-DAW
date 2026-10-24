@@ -10,32 +10,28 @@
 
 ## What is inside
 
-- the DAW itself (Electron + React): lessons, collaboration (host / join, pointers, Network panel), Live recording tab
+- the DAW itself (Electron + React): lessons, collaboration (host / join, pointers, Network panel), the Remote recording panel (Component 4, written in TypeScript: nothing separate to install)
 - the JUCE audio engine (`resources/engine/daw_engine.exe`)
-- Component 4's two programs with their Qt files (`resources/remote-recording/ProducerStudio.exe`, `PerformerClient.exe`)
-- the Visual C++ runtime DLLs next to the engine and the Qt programs, so a PC without the "Visual C++ Redistributable" still starts them
+- the Visual C++ runtime DLLs next to the engine, so a PC without the "Visual C++ Redistributable" still starts it
 - Electron's own runtime. Nothing else has to be installed. The starter sound packs are generated on the first run (a few seconds).
 
 ## Building it
 
-One time per PC: build the audio engine and Component 4 (they are not built by npm).
+One time per PC: build the audio engine (it is not built by npm).
 
 ```powershell
 npm install
 npm run engine:configure ; npm run engine:build                 # the audio engine (needs CMake + Visual Studio 2022 C++)
-cd components\remote-recording                                  # the two Qt programs (needs Qt 6.11.3, RR_QT_DIR set)
-cmake --preset msvc-x64 ; cmake --build --preset msvc-x64-release
-cd ..\..
 npm run dist
 ```
 
-`npm run dist` first runs `scripts/stage-runtime.mjs`, which checks the three programs exist (and says what to build if one does not) and gathers the
+`npm run dist` first runs `scripts/stage-runtime.mjs`, which checks the audio engine exists (and says what to build if it does not) and gathers the
 Visual C++ runtime DLLs; then it builds the app and runs electron-builder (`build` section of `apps/desktop/package.json`).
 
 ## What to expect on another PC
 
 - The app is **not code-signed** (no certificate), so Windows SmartScreen may say "Windows protected your PC": choose **More info -> Run anyway**.
-- Windows Firewall will ask once when a collaboration session is hosted or a recording session starts: allow it on the private network.
+- Windows Firewall will ask once when a collaboration session is hosted or a recording session is created: allow it on the private network. A recording session uses TCP ports 52000 and 52002 and UDP port 52001 on the Producer's PC (the Singer's PC opens only outgoing connections).
 - A sound output device is needed for the engine to start; the Singer needs a microphone.
 - Not yet tried on a second PC (the tests below were run on the development PC against a copy of the packaged folder).
 
@@ -43,8 +39,8 @@ Visual C++ runtime DLLs; then it builds the app and runs electron-builder (`buil
 
 - `ws` (the WebSocket library) must stay a normal external dependency. Bundling it into the app made live collaboration hang; the
   config says so in `apps/desktop/electron.vite.config.ts`.
-- The installed app finds its engine at `resources/engine/daw_engine.exe` (`resolveEnginePath` in `apps/desktop/src/main/index.ts`) and the
-  Qt programs under `resources/remote-recording`; in development it still uses the build folders.
+- The installed app finds its engine at `resources/engine/daw_engine.exe` (`resolveEnginePath` in `apps/desktop/src/main/index.ts`);
+  in development it still uses the build folder. Remote recording is bundled into the app's own JavaScript: there is no second program.
 
 ## Tests
 
@@ -56,5 +52,5 @@ node apps/desktop/e2e/run.mjs ; node apps/desktop/e2e/collab.mjs ; node apps/des
 node apps/desktop/e2e/recording.mjs ; node apps/desktop/e2e/recording-room.mjs
 ```
 
-Run on a copy of `win-unpacked` outside the repository: 16, 21, 15, 15 and 12 checks passed, and the app found and started its bundled
-Producer Studio and Performer Client.
+The numbers of checks below are from before remote recording was ported into the app (it used to start two Qt programs); re-run them against a new
+build with `node apps/desktop/e2e/remote-recording.mjs` as well.

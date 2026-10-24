@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { defaultProgress, type Progress, type Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../../main/telemetry/telemetryStore";
-import type { CollabState, RecordingState } from "../../preload/index";
+import type { CollabState, LiveState, RecordingState } from "../../preload/index";
 import type { EngineState, ExportStatus, ProjectListPayload, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
@@ -48,6 +48,8 @@ export const collabPointers = createStore<Record<string, { x: number; y: number 
 export const collabShares = createStore<Record<string, { id: string; data: unknown }>>({});
 /** The Live recording lab: which recorder programs were found and the takes noticed in the watched folder. */
 export const recordingStore = createStore<RecordingState | null>(null);
+/** The remote-recording session as the main process sees it (null until the first state arrives). */
+export const liveStore = createStore<LiveState | null>(null);
 /** Whether the Network panel is showing. */
 export const collabNetOpen = createStore<boolean>(false);
 /** A short message about the session (it ended, a copy was saved...). null = none showing. */
@@ -89,6 +91,8 @@ export async function initStores() {
   });
   void window.daw.recording.getState().then((s) => recordingStore.set(s));
   window.daw.recording.onState((s) => recordingStore.set(s));
+  void window.daw.live.getState().then((s) => liveStore.set(s));
+  window.daw.live.onState((s) => liveStore.set(s));
   window.daw.collab.onPointer(({ id, pointer }) => {
     const next = { ...collabPointers.get() };
     if (pointer) next[id] = pointer;
