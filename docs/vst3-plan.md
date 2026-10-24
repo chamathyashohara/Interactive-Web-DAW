@@ -34,23 +34,36 @@ Renderer  ──pick folder / choose plugin──▶  Main process            En
 
 1. **Discovery (built).** `apps/desktop/src/main/plugins/pluginScan.ts` finds `.vst3` files and bundles under the standard Windows
    folders (and the user can add a folder). Pure filesystem, unit-tested. No audio.
-2. **Model + protocol.** Add the `"plugin"` instrument and `track.plugin` to `@daw/shared` (with `migrateProject` leaving old projects
+2. **Model + protocol (built).** Added the `"plugin"` instrument and `track.plugin` to `@daw/shared` (with `migrateProject` leaving old projects
    unchanged), an `addPluginTrack`/`setPlugin` op, and engine-protocol messages (`scanPlugins`, `loadPlugin`, `pluginState`,
-   `showPluginEditor`). Snapshot maps `track.plugin` to the slot. All TypeScript, fully testable without a plugin.
-3. **Engine host (needs the plugins).** Behind `-DDAW_ENABLE_VST3=ON`: add `juce_audio_processors`, scan/instantiate a plugin by path,
-   drive it with a `MidiBuffer`, render into the slot bus. Fall back to silence (and report a problem) when a plugin is missing or fails
-   to load, so a project opened without its plugins still plays everything else. Verified by hand with Sylenth1/Nexus.
+   `showPluginEditor`) — the editor/scan commands are declared later, in their stages. Snapshot maps `track.plugin` to the slot. All TypeScript, tested (`packages/shared/test/plugin.test.ts`, `apps/desktop/src/main/engine/snapshot.plugin.test.ts`). A plugin track with no host yet falls back to the built-in synth, so nothing crashes.
+3. **Engine host — proven, not yet wired into the mixer.** Behind `-DDAW_ENABLE_VST3=ON` (off by default): `PluginHost` adds
+   `juce_audio_processors`, loads a `.vst3` by path (`juce::addHeadlessDefaultFormatsToManager`), prepares it to stereo, and renders it
+   with a `MidiBuffer`. A standalone `daw_engine --plugintest <path>` plays one note and reports whether audio came out.
+   **Findings on this machine:** Diva loads and plays (peak 0.31). A missing file and a VST2 `.dll` (Nexus) fail cleanly. **Spire
+   segfaults when hosted in-process** — a reminder that an arbitrary plugin can crash. So the host is NOT yet wired into the live slot
+   render: doing that in-process would let one bad plugin kill all audio mid-session. Wiring into the mixer waits on stage 6.
 4. **Plugin editor window.** Show the plugin's own UI (`createEditorIfNeeded`) in a child window for sound design; save its state on
    close. Persist `track.plugin.state` and restore it on load.
 5. **UI.** "+ Add track ▸ Plugin" lists the scanned plugins; a track header shows the plugin name and an "Edit" button; a lock gates it
    behind a lesson (a later module) in beginner mode, like the other advanced features.
-6. **Robustness.** Instantiate plugins on a worker thread (never the audio thread), guard the audio thread against a plugin that throws
-   or blocks, and consider out-of-process hosting if a common plugin proves unstable (the protocol already allows it — the engine would
-   talk to a small host process instead of loading in-process).
+6. **Robustness — now a prerequisite, not an afterthought.** Stage 3 showed a real plugin (Spire) crashing the process, so hosting must
+   be **out of process**: a small child host process loads the plugin and streams audio/MIDI to the engine, so a crash is contained
+   (the engine detects the dead child, marks the track silent, and can relaunch it). Instantiate plugins on a worker thread (never the
+   audio thread). This stage must land before plugins are wired into the live mixer (stage 3 into 5).
 
 ## What exists now
 
-* Stage 1: `pluginScan.ts` + `pluginScan.test.ts` (4 tests). Nothing else is wired, so the DAW behaves exactly as before.
+* Stage 1: `pluginScan.ts` + `pluginScan.test.ts` (4 tests).
+* Stage 3a: `engine/src/PluginHost.{h,cpp}` behind the off-by-default `DAW_ENABLE_VST3` CMake flag, with `daw_engine --plugintest`. The
+  default engine build, self-test and app are unchanged (the flag pulls in `juce_audio_processors` only when on). Verified by hand:
+  Diva plays, Spire crashes in-process, VST2/missing files fail cleanly. The scanner (stage 1) now also finds nested `.vst3` (Spire's layout).
+* Stage 2: `PluginRef` / `track.plugin` / instrument `"plugin"` in `@daw/shared`, the `setPlugin` op (validated, undoable), the snapshot's
+  `pluginPath`/`pluginState`, and the engine-protocol fields. 10 tests. No UI creates a plugin track yet (stage 5), so the DAW behaves as before.
+
+**Installed plugins on the dev machine** (found under `C:\Program Files\Common Files\VST3`): Diva, Spire, Keyscape, Kontakt, LABS, plus
+FabFilter/Valhalla/iZotope effects. Stage 3 will be verified against the VST3 instruments (Diva, Spire). **Nexus here is `Nexus3.4.4.dll`
+— a VST2 plugin, not VST3**; hosting VST2 needs Steinberg's withdrawn VST2 SDK, so Nexus needs its `.vst3` build or stays out of scope.
 
 ## Open questions for when the plugins are on the machine
 

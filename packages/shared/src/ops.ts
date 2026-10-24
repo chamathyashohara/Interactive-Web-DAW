@@ -1,4 +1,4 @@
-import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, Track } from "./model";
+import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, PluginRef, Track } from "./model";
 import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
@@ -38,6 +38,18 @@ export interface UpdateSampleOp extends OpBase {
   type: "updateSample";
   trackId: string;
   changes: { bpm?: number | null; fit?: boolean };
+}
+/** Sets or clears the VST3 instrument of a plugin track (and its saved state); null leaves the track with no plugin chosen. */
+/** Sets the built-in synth preset of a synth track. */
+export interface SetSynthPresetOp extends OpBase {
+  type: "setSynthPreset";
+  trackId: string;
+  preset: string;
+}
+export interface SetPluginOp extends OpBase {
+  type: "setPlugin";
+  trackId: string;
+  plugin: PluginRef | null;
 }
 /** Replaces one automation curve of a track (the whole list of points); null removes the curve. */
 export interface SetAutomationOp extends OpBase {
@@ -119,6 +131,8 @@ export type Op =
   | DeleteTrackOp
   | UpdateTrackOp
   | UpdateSampleOp
+  | SetPluginOp
+  | SetSynthPresetOp
   | SetAutomationOp
   | SetMasterVolumeOp
   | AddClipOp

@@ -1,5 +1,5 @@
 import { ENGINE_MAX_SLOTS, type EngineProjectSnapshot, type EngineTrack } from "@daw/engine-protocol";
-import { PPQ, songTicks, type Project } from "@daw/shared";
+import { PPQ, songTicks, synthParamsFor, type Project } from "@daw/shared";
 
 /** Fader curve: 0..100 -> linear gain. Squared so the lower half of the fader is usable. */
 export const volumeToGain = (volume: number) => (volume / 100) ** 2;
@@ -80,6 +80,11 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
       pan: track.pan / 100,
       notes,
     };
+    if (track.instrument === "synth") et.synth = synthParamsFor(track.synthPreset);
+    if (track.instrument === "plugin" && track.plugin) {
+      et.pluginPath = track.plugin.id;
+      if (track.plugin.state) et.pluginState = track.plugin.state;
+    }
     if (track.instrument === "sample" && track.sample) {
       const file = sampleFile(track.sample.id);
       if (file) et.samplePath = file;

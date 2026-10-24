@@ -4,6 +4,10 @@ project(DawEngine VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# VST3 instrument hosting is optional and OFF by default: the normal build, the self-test, the benchmark and the app
+# never pull in juce_audio_processors or the VST3 SDK. Turn it on with -DDAW_ENABLE_VST3=ON for a build that can host plugins.
+option(DAW_ENABLE_VST3 "Host VST3 instrument plugins (adds juce_audio_processors + the bundled VST3 SDK)" OFF)
+
 include(FetchContent)
 FetchContent_Declare(JUCE
   GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
@@ -35,12 +39,20 @@ target_compile_definitions(daw_engine PRIVATE
   JUCE_ASIO=0
   JUCE_MODAL_LOOPS_PERMITTED=0)
 
+if(DAW_ENABLE_VST3)
+  target_sources(daw_engine PRIVATE src/PluginHost.cpp)
+  # These must be set where juce_audio_processors is compiled (it reads them to enable the VST3 host and addDefaultFormats()).
+  target_compile_definitions(daw_engine PRIVATE JUCE_PLUGINHOST_VST3=1 DAW_ENABLE_VST3=1)
+  message(STATUS "daw_engine: VST3 instrument hosting ENABLED")
+endif()
+
 target_link_libraries(daw_engine PRIVATE
   juce::juce_core
   juce::juce_events
   juce::juce_audio_basics
   juce::juce_audio_formats
   juce::juce_audio_devices
+  $<$<BOOL:${DAW_ENABLE_VST3}>:juce::juce_audio_processors>
   signalsmith-stretch
   juce::juce_recommended_config_flags)
 

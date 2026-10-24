@@ -7,6 +7,9 @@
 #include "Export.h"
 #include "Samples.h"
 #include "SelfTest.h"
+#ifdef DAW_ENABLE_VST3
+#include "PluginHost.h"
+#endif
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <algorithm>
@@ -118,6 +121,29 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
             tm.slot = std::clamp(static_cast<int>(t["slot"]), 0, kMaxSlots - 1);
             const juce::String kind = t["instrument"].toString();
             tm.instrument = kind == "drums" ? kDrums : (kind == "sample" ? kSample : kSynth);
+            if (tm.instrument == kSynth)
+            {
+                if (const auto s = t["synth"]; s.isObject())
+                {
+                    SynthParams& p = tm.synth;
+                    p.model = static_cast<int>(static_cast<double>(s["model"]));
+                    p.sineLevel = static_cast<float>(static_cast<double>(s["sineLevel"]));
+                    p.drive = static_cast<float>(static_cast<double>(s["drive"]));
+                    p.decaySec = s.hasProperty("decaySec") ? static_cast<float>(static_cast<double>(s["decaySec"])) : 5.0f;
+                    p.vibratoHz = static_cast<float>(static_cast<double>(s["vibratoHz"]));
+                    p.vibratoCents = static_cast<float>(static_cast<double>(s["vibratoCents"]));
+                    p.vibratoDelaySec = static_cast<float>(static_cast<double>(s["vibratoDelaySec"]));
+                    p.noiseLevel = static_cast<float>(static_cast<double>(s["noiseLevel"]));
+                    p.attackSec = static_cast<float>(static_cast<double>(s["attackSec"]));
+                    p.releaseSec = static_cast<float>(static_cast<double>(s["releaseSec"]));
+                    p.sawLevel = static_cast<float>(static_cast<double>(s["sawLevel"]));
+                    p.osc2Level = static_cast<float>(static_cast<double>(s["osc2Level"]));
+                    p.detuneCents = static_cast<float>(static_cast<double>(s["detuneCents"]));
+                    p.subLevel = static_cast<float>(static_cast<double>(s["subLevel"]));
+                    p.toneHz = static_cast<float>(static_cast<double>(s["toneHz"]));
+                    p.gain = static_cast<float>(static_cast<double>(s["gain"]));
+                }
+            }
             if (tm.instrument == kSample)
             {
                 tm.gate = static_cast<bool>(t["gate"]);
@@ -208,6 +234,9 @@ int main(int argc, char** argv)
         const std::string a = argv[i];
         if (a == "--selftest") return runSelfTest();
         if (a == "--benchmark") return runBenchmark();
+#ifdef DAW_ENABLE_VST3
+        if (a == "--plugintest" && i + 1 < argc) return runPluginTest(argv[++i]);
+#endif
         if (a == "--buffer" && i + 1 < argc) requestedBuffer = std::atoi(argv[++i]);
     }
 

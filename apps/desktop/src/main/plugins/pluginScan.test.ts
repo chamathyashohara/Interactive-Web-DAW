@@ -36,6 +36,14 @@ describe("scanning for VST3 plugins", () => {
     expect(found.map((p) => p.name)).toEqual(["Massive", "Serum", "Serum"]);
     expect(new Set(found.map((p) => p.id)).size).toBe(3);
   });
+  it("finds a .vst3 nested one level inside a vendor folder (e.g. Spire's layout)", () => {
+    bundleDir(root, "Spire-1.5_x64");
+    file(path.join(root, "Spire-1.5_x64"), "Spire.vst3");
+    file(path.join(root, "Spire-1.5_x64"), "manual.pdf");
+    const found = scanPlugins([root]);
+    expect(found.map((p) => p.name)).toEqual(["Spire"]);
+    expect(found[0]!.id).toBe(path.join(root, "Spire-1.5_x64", "Spire.vst3"));
+  });
   it("skips missing or unreadable folders without throwing", () => {
     file(root, "OnlyOne.vst3");
     expect(scanPlugins([path.join(root, "does-not-exist"), root]).map((p) => p.name)).toEqual(["OnlyOne"]);

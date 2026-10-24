@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createTrack, MAX_BPM, MAX_TRACKS, MIN_BPM, TRACK_COLORS, type InstrumentKind, type Project, type SampleRef, type TrackFields } from "@daw/shared";
+import { createTrack, MAX_BPM, MAX_TRACKS, MIN_BPM, SYNTH_PRESETS, TRACK_COLORS, type InstrumentKind, type Project, type SampleRef, type TrackFields } from "@daw/shared";
 import { useUnlock } from "../unlock/useUnlock";
 import { Fader } from "../controls/Fader";
 import { Meter } from "./Meter";
@@ -143,6 +143,20 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
         </button>
       </div>
       <div className="mt-1 flex items-center gap-2 pl-[1.6rem]">
+        {t.instrument === "synth" && (
+          <select
+            value={t.synthPreset ?? "classic"}
+            onChange={(e) => void window.daw.dispatch({ type: "setSynthPreset", trackId: id, preset: e.target.value })}
+            className="hw-lcd shrink-0 px-1 py-0.5 text-[10px] outline-none"
+            aria-label={`Sound of ${t.name}`}
+            title="The built-in synth sound (preset)"
+            data-testid={`synth-preset-${id}`}
+          >
+            {SYNTH_PRESETS.map((p) => (
+              <option key={p.id} value={p.id} className="bg-[#12151c]">{p.name}</option>
+            ))}
+          </select>
+        )}
         {t.instrument === "sample" && t.sample?.gate && <SampleFit trackId={id} sample={t.sample} projectTempo={project.tempo} />}
         <Fader orientation="horizontal" value={t.volume} min={0} max={100} color={t.color} className="!min-w-0 !flex-1" disabled={!unlock.can("mixer.panel")} title={unlock.reason("mixer.panel") ?? undefined} onChange={(v) => update(id, { volume: v }, `vol-${id}`)} label={`Volume of ${t.name}`} />
         <Meter orientation="horizontal" className="w-14" color={t.color} testId={`meter-list-${id}`} read={(s) => s?.levels[id] ?? 0} />
