@@ -8,6 +8,8 @@ import type { OpBody, Project } from "@daw/shared";
 import { EngineBridge } from "./engine/engineBridge";
 import { SlotAllocator, toEngineSnapshot } from "./engine/snapshot";
 import { LibraryService } from "./library/libraryService";
+import { RecordingService } from "./recording/recordingService";
+import type { RecorderRole } from "./recording/recorderApps";
 import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
@@ -300,6 +302,71 @@ app.whenReady().then(() => {
     engine.send({ t: "exportWav", id, path: target, tailSeconds });
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
+  });
+  // ---- live recording: opens Producer Studio / Performer Client (Component 4) and adds their takes to the project ----
+  const recording = new RecordingService({
+    settingsFile: path.join(app.getPath("userData"), "recording.json"),
+    defaultWatchDir: process.env.DAW_RR_WATCH_DIR ?? path.join(app.getPath("music"), "RemoteRecording"),
+    searchRoots: [path.resolve(app.getAppPath(), "../../components/remote-recording/build"), path.join(process.resourcesPath ?? "", "remote-recording")],
+    env: { producer: process.env.DAW_RR_PRODUCER, performer: process.env.DAW_RR_PERFORMER },
+    onChange: (s) => sendToRenderer("recording:state", s),
+  });
+  recording.start();
+  const asRole = (v: unknown): RecorderRole | null => (v === "producer" || v === "performer" ? v : null);
+  ipcMain.handle("recording:state", () => recording.state());
+  ipcMain.handle("recording:launch", async (_e, role: unknown) => {
+    const r = asRole(role);
+    if (!r) return { ok: false, reason: "unknown role" };
+    const result = await recording.launch(r);
+    telemetry.record("ui.recording", { action: result.ok ? `open-${r}` : `open-${r}-failed` });
+    return result;
+  });
+  ipcMain.handle("recording:locate", async (_e, role: unknown, explicitPath?: unknown) => {
+    const r = asRole(role);
+    if (!r) return { ok: false, reason: "unknown role" };
+    let file = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!file) {
+      const picked = await dialog.showOpenDialog(win!, { title: r === "producer" ? "Locate ProducerStudio.exe" : "Locate PerformerClient.exe", properties: ["openFile"], filters: [{ name: "Program", extensions: ["exe"] }] });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      file = picked.filePaths[0];
+    }
+    recording.locate(r, file);
+    return { ok: true };
+  });
+  ipcMain.handle("recording:chooseFolder", async (_e, explicitPath?: unknown) => {
+    let dir = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!dir) {
+      const picked = await dialog.showOpenDialog(win!, { title: "Folder where the recorder programs save takes", properties: ["openDirectory"], defaultPath: recording.state().watchDir });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      dir = picked.filePaths[0];
+    }
+    recording.setWatchDir(dir);
+    return { ok: true };
+  });
+  ipcMain.handle("recording:openFolder", async () => {
+    const dir = recording.state().watchDir;
+    fs.mkdirSync(dir, { recursive: true });
+    const err = await shell.openPath(dir);
+    return err ? { ok: false, reason: err } : { ok: true };
+  });
+  ipcMain.handle("recording:pollNow", () => (process.env.DAW_E2E === "1" ? (recording.pollNow(), true) : false));
+  // Copies one recording into the sound library and returns its entry; the window then places it on a new track.
+  ipcMain.handle("recording:addTake", async (_e, file?: unknown) => {
+    if (libraryStatus.state !== "ready") return { ok: false, reason: "The sound library is still being prepared." };
+    if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
+    let source = typeof file === "string" ? file : undefined;
+    if (!source) {
+      const picked = await dialog.showOpenDialog(win!, { title: "Add a recording", properties: ["openFile"], defaultPath: recording.state().watchDir, filters: [{ name: "Audio", extensions: ["wav", "aiff", "aif", "flac", "ogg"] }] });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      source = picked.filePaths[0];
+    }
+    const result = await library.importFile(source, (p) => sendToRenderer("library:importProgress", p));
+    sendToRenderer("library:importProgress", { phase: "done", done: 0, total: 0 });
+    if (!result.ok) return result;
+    sendToRenderer("library:update", library.list());
+    recording.dismiss(source);
+    telemetry.record("ui.recording", { action: "addTake" });
+    return result;
   });
   ipcMain.handle("library:get", () => ({ status: libraryStatus, ...library.list() }));
   ipcMain.on("library:preview", (_e, id: unknown) => {
@@ -639,6 +706,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on("before-quit", () => {
+    recording.stop();
     if (collab) { collab.client.close(); void collab.server?.close(); }
     telemetry.recordSummary(service.current);
     engine.stop();

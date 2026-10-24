@@ -61,6 +61,17 @@ export interface CollabUser {
   color: string;
 }
 export type NetSnapshot = ReturnType<InstanceType<typeof import("@daw/collab").NetStats>["snapshot"]>;
+export interface RecordingTake {
+  file: string;
+  name: string;
+  bytes: number;
+  seenAt: number;
+}
+export interface RecordingState {
+  apps: Record<"producer" | "performer", { found: boolean; path: string | null }>;
+  watchDir: string;
+  takes: RecordingTake[];
+}
 export type CollabState =
   | { active: false }
   | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; users: CollabUser[]; me: string };
@@ -100,6 +111,24 @@ const api = {
       const l = (_e: unknown, n: { kind: string; count?: number; name?: string }) => cb(n);
       ipcRenderer.on("collab:note", l);
       return () => ipcRenderer.removeListener("collab:note", l);
+    },
+  },
+  // ---- live recording (Component 4's two programs, started from the DAW) ----
+  recording: {
+    getState: (): Promise<RecordingState> => ipcRenderer.invoke("recording:state"),
+    /** Opens Producer Studio ("producer") or Performer Client ("performer") as its own window. */
+    launch: (role: "producer" | "performer"): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("recording:launch", role),
+    /** Pick the program by hand when it was not found. */
+    locate: (role: "producer" | "performer", explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("recording:locate", role, explicitPath),
+    chooseFolder: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean }> => ipcRenderer.invoke("recording:chooseFolder", explicitPath),
+    openFolder: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("recording:openFolder"),
+    /** Copies a recording into the sound library (asks which file when none is given) and returns the new library entry. */
+    addTake: (file?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; entry?: IndexEntry }> => ipcRenderer.invoke("recording:addTake", file),
+    pollNow: (): Promise<boolean> => ipcRenderer.invoke("recording:pollNow"),
+    onState: (cb: (s: RecordingState) => void) => {
+      const l = (_e: unknown, s: RecordingState) => cb(s);
+      ipcRenderer.on("recording:state", l);
+      return () => ipcRenderer.removeListener("recording:state", l);
     },
   },
   // ---- projects (new / open / save as / rename / delete) ----

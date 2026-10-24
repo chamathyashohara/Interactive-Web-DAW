@@ -7,6 +7,7 @@ import { ExportDialog } from "./components/ExportDialog";
 import { CollabPanel } from "./components/CollabPanel";
 import { CollabPointers } from "./components/CollabPointers";
 import { CollabNetwork } from "./components/CollabNetwork";
+import { RecordingPanel } from "./components/RecordingPanel";
 import { BarBeatReadout, TapTempoButton } from "./components/TransportExtras";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
@@ -288,6 +289,7 @@ export function App() {
         </div>
         <ProjectMenu onExport={() => setExportOpen(true)} />
         <CollabPanel />
+        <RecordingPanel />
         <span className="mx-1 h-5 w-px bg-white/10" />
 
         <div className="flex gap-1">

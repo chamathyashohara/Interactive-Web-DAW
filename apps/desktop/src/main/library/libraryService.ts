@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { categorize, cleanName, detectBrandWord, parseBpm, parseKeyTag, trackNameFor, type IndexEntry, type SampleMeta } from "@daw/sounds";
 import { ensureStarterLibraryAsync } from "@daw/sounds/node";
@@ -253,6 +254,30 @@ export class LibraryService {
     } finally {
       if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
       this.importing = false;
+    }
+  }
+
+  /**
+   * Adds one audio file (a take from the remote recording programs, or any recording) to the library and returns its entry.
+   * It goes through the same import as a folder of samples, so it is analysed, copied (the original is untouched) and de-duplicated.
+   * Each file becomes its own small pack, named "Recording <name>".
+   */
+  async importFile(file: string, onProgress?: (p: ImportProgress) => void): Promise<{ ok: boolean; reason?: string; entry?: IndexEntry }> {
+    const ext = path.extname(file).toLowerCase();
+    if (![".wav", ".aiff", ".aif", ".flac", ".ogg"].includes(ext)) return { ok: false, reason: "Choose a .wav, .aiff, .flac or .ogg recording." };
+    if (!fs.existsSync(file)) return { ok: false, reason: "That recording cannot be found." };
+    const stage = fs.mkdtempSync(path.join(os.tmpdir(), "daw-take-"));
+    try {
+      const folder = path.join(stage, `Recording ${path.basename(file, ext).replace(/[\\/:*?"<>|]/g, " ").trim().slice(0, 40)}`);
+      fs.mkdirSync(folder, { recursive: true });
+      fs.copyFileSync(file, path.join(folder, path.basename(file)));
+      const result = await this.importPath(folder, onProgress);
+      if (!result.ok) return { ok: false, reason: result.reason ?? "The recording could not be added." };
+      if (result.failed.length) return { ok: false, reason: result.failed[0]!.reason };
+      const entry = this.find(`imported/${hashFile(file)}`);
+      return entry ? { ok: true, entry } : { ok: false, reason: "The recording was not added to the library." };
+    } finally {
+      fs.rmSync(stage, { recursive: true, force: true });
     }
   }
 
