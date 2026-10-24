@@ -74,7 +74,7 @@ export interface RecordingState {
 }
 export type CollabState =
   | { active: false }
-  | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; users: CollabUser[]; me: string };
+  | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; lan?: boolean; lanIp?: string; users: CollabUser[]; me: string };
 export interface InitialPayload extends ProjectPayload {
   projects: ProjectListPayload;
   collab: CollabState;
@@ -95,6 +95,13 @@ const api = {
       const l = (_e: unknown, s: CollabState) => cb(s);
       ipcRenderer.on("collab:state", l);
       return () => ipcRenderer.removeListener("collab:state", l);
+    },
+    /** Puts a small note in the room for everyone (null takes it down); people who join later still get it. */
+    share: (topic: string, data: unknown | null): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:share", topic, data),
+    onShare: (cb: (n: { id: string; topic: string; data: unknown | null }) => void) => {
+      const l = (_e: unknown, n: { id: string; topic: string; data: unknown | null }) => cb(n);
+      ipcRenderer.on("collab:share", l);
+      return () => ipcRenderer.removeListener("collab:share", l);
     },
     /** The latest ping / sync delay / traffic numbers for the Network panel (null = not in a session). */
     net: (): Promise<NetSnapshot | null> => ipcRenderer.invoke("collab:net"),

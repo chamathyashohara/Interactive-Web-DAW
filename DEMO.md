@@ -43,6 +43,11 @@ Checks: `node apps/desktop/e2e/collab.mjs` (LAN, two windows) and `node apps/des
 
 ## 4: remote recording
 
+Inside the DAW, the **Live recording** button (next to Collaborate) opens Producer Studio or Performer Client ("I'm the Producer" /
+"I'm the Singer"), lists the takes they save, and adds one to the project as a new sample track. In a same-network collaboration session
+the Producer can share the recording session's address and pairing code with the room. See `docs/recording-integration.md`.
+Checks: `node apps/desktop/e2e/recording.mjs` and `node apps/desktop/e2e/recording-room.mjs`.
+
 It is a separate C++ project (CMake, MSVC and Qt). **No built executables are in the repository.** To show it, build it on a machine
 with the toolchain (`components/remote-recording/docs/build/WINDOWS_BUILD.md`) or use a build from its author. Its README states that
 all its testing so far was done with both applications on one PC; two-PC and wireless-link tests are not yet done.
@@ -51,6 +56,8 @@ all its testing so far was done with both applications on one PC; two-PC and wir
 
 * **Integrated (one codebase, one window):** lessons + DAW.
 * **Integrated (collaboration):** host / join, live pointers and the Network panel are in the DAW window (`packages/collab`).
-* **Side by side (same repository, separate programs):** the standalone collaboration app, remote recording.
-* **Not done:** the collaboration history bar / restore inside the DAW window; recorded audio from remote recording becoming a clip in the DAW; VST3 plugin hosting is
+* **Side by side (same repository, separate programs):** the standalone collaboration app, and the two remote-recording programs themselves.
+* **Integrated (remote recording):** the Live recording tab starts the two programs, adds their takes to the project and carries the room's
+  address/code on a same network. The programs themselves stay separate Qt windows (not built here: needs Qt).
+* **Not done:** the collaboration history bar / restore inside the DAW window; sharing recorded audio with the other people in a session; VST3 plugin hosting is
   partial (stages 1-3a, see `docs/vst3-plan.md`).

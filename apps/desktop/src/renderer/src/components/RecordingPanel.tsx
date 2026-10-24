@@ -3,12 +3,20 @@ import { dropSampleOps } from "@daw/shared";
 import { CATEGORY_COLORS } from "../samples/sampleColors";
 import { canNow } from "../unlock/useUnlock";
 import { lockReason } from "@daw/shared";
-import { progressStore, projectStore, recordingStore, useStore } from "../store";
+import { collabShares, collabStore, progressStore, projectStore, recordingStore, useStore } from "../store";
 
 const uuid = () => crypto.randomUUID();
 const kb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
 type Role = "producer" | "performer";
+/** What the Producer hands to the Singers, as Performer Client asks for it: the producer's address, the TCP port and the pairing code. */
+interface RoomLink {
+  host: string;
+  port: number;
+  code: string;
+}
+const isLink = (v: unknown): v is RoomLink => !!v && typeof v === "object" && typeof (v as RoomLink).host === "string" && typeof (v as RoomLink).port === "number" && typeof (v as RoomLink).code === "string";
+const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(() => {});
 
 /**
  * The "Live recording" lab. Remote recording (Component 4) is two separate programs, so this does not embed them:
@@ -16,6 +24,11 @@ type Role = "producer" | "performer";
  */
 export function RecordingPanel() {
   const state = useStore(recordingStore);
+  const session = useStore(collabStore);
+  const shares = useStore(collabShares);
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("52000");
+  const [code, setCode] = useState("");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -63,6 +76,67 @@ export function RecordingPanel() {
     setMessage(`Added "${entry.name}" on a new track.`);
   };
 
+  const shareLink = async () => {
+    const address = (host.trim() || (session.active ? session.lanIp ?? "" : "")).trim();
+    if (!address || !/^\d{6}$/.test(code.trim()) || !/^\d{2,5}$/.test(port.trim())) return setMessage("Enter the producer address, the port and the 6-digit pairing code shown in Producer Studio.");
+    await window.daw.collab.share("recording", { host: address, port: Number(port), code: code.trim() } satisfies RoomLink);
+    setMessage("");
+  };
+
+  /** The "this room" section: carries the same session over to the recording (same network only). */
+  const roomSection = () => {
+    if (!session.active) return null;
+    if (!session.lan)
+      return (
+        <div className="mt-3" data-testid="rec-room-online">
+          <div className="hw-legend mb-1 !text-[10px]">THIS ROOM</div>
+          <p className="text-[11px] text-slate-400">Live recording needs everyone on the same network, and this session is over the internet. Producer Studio and Performer Client still work on their own.</p>
+        </div>
+      );
+    const note = shares["recording"];
+    const link = note && isLink(note.data) ? note.data : null;
+    const mine = !!note && note.id === session.me;
+    const owner = note ? session.users.find((u) => u.id === note.id)?.name ?? "The producer" : "";
+    return (
+      <div className="mt-3" data-testid="rec-room">
+        <div className="hw-legend mb-1 !text-[10px]">THIS ROOM</div>
+        {link && !mine && (
+          <div className="mb-2 rounded bg-white/5 p-2" data-testid="rec-room-link">
+            <div className="mb-1 text-slate-200">{owner} is recording. In Performer Client, enter:</div>
+            {([["Producer address", link.host], ["TCP port", String(link.port)], ["Pairing code", link.code]] as const).map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-400">{label}</span>
+                <button className="hw-field px-2 py-0.5 font-mono text-[12px]" onClick={() => copy(value)} title="Copy" data-testid={`rec-room-${label.startsWith("Producer") ? "host" : label.startsWith("TCP") ? "port" : "code"}`}>
+                  {value}
+                </button>
+              </div>
+            ))}
+            <p className="mt-1 text-[10px] text-slate-500">A pairing code works once and expires after 10 minutes. Ask for a new one if it does not work.</p>
+          </div>
+        )}
+        {!link && !mine && <p className="mb-2 text-[11px] text-slate-500" data-testid="rec-room-waiting">Nobody has shared a recording session yet. The Producer shares it here once Producer Studio shows a pairing code.</p>}
+        <div className="rounded bg-white/5 p-2">
+          <div className="mb-1 text-slate-300">{mine ? "You are sharing your recording session" : "Producer? Share your session with the room"}</div>
+          <input value={host} onChange={(e) => setHost(e.target.value)} placeholder={`Producer address (${session.lanIp ?? "192.168.1.5"})`} className="hw-field mb-1 w-full px-2 py-1 text-[12px]" data-testid="rec-share-host" />
+          <div className="mb-1 flex gap-1">
+            <input value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="Port" className="hw-field w-[70px] px-2 py-1 text-[12px]" data-testid="rec-share-port" />
+            <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="6-digit pairing code" className="hw-field min-w-0 flex-1 px-2 py-1 font-mono text-[12px]" data-testid="rec-share-code" />
+          </div>
+          <div className="flex gap-1">
+            <button className="hw-btn hw-go flex-1 py-1 text-xs" onClick={() => void shareLink()} data-testid="rec-share">
+              {mine ? "Update" : "Share with the room"}
+            </button>
+            {mine && (
+              <button className="hw-btn px-2 py-1 text-xs" onClick={() => void window.daw.collab.share("recording", null)} data-testid="rec-unshare">
+                Stop sharing
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const roleButton = (role: Role, title: string, hint: string) => {
     const app = state?.apps[role];
     return (
@@ -93,6 +167,7 @@ export function RecordingPanel() {
           {roleButton("producer", "I'm the Producer", "Opens Producer Studio. You start the session and press Record.")}
           {roleButton("performer", "I'm the Singer", "Opens Performer Client. You join the Producer's session.")}
           <p className="mb-2 text-[11px] text-slate-500">These open as their own windows. Everyone must be on the same network.</p>
+          {roomSection()}
 
           <div className="hw-legend mt-3 mb-1 !text-[10px]">RECORDINGS</div>
           {state && state.takes.length > 0 ? (

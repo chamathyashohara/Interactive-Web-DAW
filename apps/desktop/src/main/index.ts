@@ -18,7 +18,7 @@ import { Workspace } from "./project/workspace";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
-import { CollabClient, NetStats, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { CollabClient, NetStats, isLanHost, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
 import { WebSocket as NodeWebSocket } from "ws";
 import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
@@ -154,14 +154,14 @@ app.whenReady().then(() => {
   });
 
   // ---- real-time collaboration session (Component 3) ----
-  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; /** Ping, sync delay and traffic measuring for the Network panel. */ net: NetStats | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  interface CollabState { client: CollabClient; server: SessionServer | null; /** Set when the session lives on a separate (online) server that this app created it on. */ remote: { http: string; hostKey: string } | null; /** Ping, sync delay and traffic measuring for the Network panel. */ net: NetStats | null; /** true when everyone is on one network (the in-app server, or an address like 192.168.x.x), which live recording needs */ lan: boolean; /** Notes this person put in the room, sent again if the connection drops and comes back. */ shares: Map<string, unknown>; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
   let collab: CollabState | null = null;
   const lanIp = () => {
     for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
     return "127.0.0.1";
   };
   const cleanName = (name: unknown) => (typeof name === "string" && name.trim() ? name.trim().slice(0, 24) : os.userInfo().username || "Producer");
-  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, online: collab.remote !== null, users: collab.users, me: collab.client.clientId } : { active: false });
+  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, online: collab.remote !== null, lan: collab.lan, lanIp: lanIp(), users: collab.users, me: collab.client.clientId } : { active: false });
   const publishCollab = () => sendToRenderer("collab:state", collabStateMsg());
   const pushToUi = (project: Project, canUndo: boolean, canRedo: boolean) => {
     pushProjectToEngine(project);
@@ -183,7 +183,12 @@ app.whenReady().then(() => {
       const ok = p && typeof p.x === "number" && typeof p.y === "number" && Number.isFinite(p.x) && Number.isFinite(p.y);
       sendToRenderer("collab:pointer", { id, pointer: ok ? { x: Math.min(1, Math.max(0, p.x as number)), y: Math.min(1, Math.max(0, p.y as number)) } : null });
     });
-    client.on("status", () => publishCollab());
+    client.on("share", (note) => sendToRenderer("collab:share", note));
+    client.on("status", (status) => {
+      // The server drops a person's notes when they disconnect, so put them back after a reconnect.
+      if (status === "connected" && collab) for (const [topic, data] of collab.shares) client.share(topic, data);
+      publishCollab();
+    });
     client.on("users", (users) => { if (collab) collab.users = users; publishCollab(); });
     client.on("dropped", (dropped) => { if (dropped.length) sendToRenderer("collab:note", { kind: "dropped", count: dropped.length }); });
     client.on("ended", ({ reason }) => { void leaveCollab(reason); });
@@ -635,7 +640,7 @@ app.whenReady().then(() => {
         if (!res.ok) return { ok: false, reason: `the server replied ${res.status}` };
         const { code, hostKey } = (await res.json()) as { code: string; hostKey: string };
         const client = new CollabClient({ baseUrl: addr.ws, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-        collab = { client, server: null, remote: { http: addr.http, hostKey }, net: null, hosting: true, users: [], project: null, code, address: addr.http };
+        collab = { client, server: null, remote: { http: addr.http, hostKey }, net: null, lan: isLanHost(addr.ws), shares: new Map(), hosting: true, users: [], project: null, code, address: addr.http };
         wireClient(client, addr.ws);
         client.connect();
         telemetry.record("ui.collab", { action: "hostOnline" });
@@ -649,7 +654,7 @@ app.whenReady().then(() => {
       const server = await startSessionServer(0);
       const code = server.createSession(service.current);
       const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-      collab = { client, server, remote: null, net: null, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      collab = { client, server, remote: null, net: null, lan: true, shares: new Map(), hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
       wireClient(client, `ws://127.0.0.1:${server.port}`);
       client.connect();
       telemetry.record("ui.collab", { action: "host" });
@@ -664,7 +669,7 @@ app.whenReady().then(() => {
     if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
     const baseUrl = parseServerAddress(address).ws; // accepts 192.168.1.5, 192.168.1.5:5000, https://abc.trycloudflare.com ...
     const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
-    collab = { client, server: null, remote: null, net: null, hosting: false, users: [], project: null, code, address: address.trim() };
+    collab = { client, server: null, remote: null, net: null, lan: isLanHost(baseUrl), shares: new Map(), hosting: false, users: [], project: null, code, address: address.trim() };
     wireClient(client, baseUrl);
     client.connect();
     telemetry.record("ui.collab", { action: "join" });
@@ -675,6 +680,15 @@ app.whenReady().then(() => {
     if (!collab || collab.client.status !== "connected") return;
     const q = p as { x?: unknown; y?: unknown } | null;
     collab.client.setPresence(q && typeof q.x === "number" && typeof q.y === "number" ? { pointer: { x: q.x, y: q.y } } : { pointer: null });
+  });
+  // A small note for the whole room (used by Live recording to hand the Producer's address and pairing code to the Singers).
+  ipcMain.handle("collab:share", (_e, topic: unknown, data: unknown) => {
+    if (!collab || typeof topic !== "string") return { ok: false };
+    if (data === null || data === undefined) collab.shares.delete(topic);
+    else collab.shares.set(topic, data);
+    collab.client.share(topic, data ?? null);
+    sendToRenderer("collab:share", { id: collab.client.clientId, topic, data: data ?? null }); // the server does not echo a note to its sender
+    return { ok: true };
   });
   ipcMain.handle("collab:net", () => collab?.net?.snapshot() ?? null);
   ipcMain.handle("collab:netExport", async (_e, explicitPath?: unknown) => {

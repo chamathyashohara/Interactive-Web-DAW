@@ -63,6 +63,14 @@ try {
   check("O8. a guest edit reaches the host through the server", await until(async () => (await notesOf(host)).includes("join-1"), 8000));
   check("O9. both see two people", await until(async () => (await collabState(host)).users?.length === 2 && (await collabState(join)).users?.length === 2, 6000));
 
+  // The server here is on this same PC (a private address), so Live recording treats the room as same-network and offers the room link.
+  // (An address on another network, such as a Cloudflare tunnel, gets the "needs the same network" message instead: see isLanHost's tests.)
+  for (const [who, win] of [["host", host], ["guest", join]]) {
+    await win.evalJs(`document.querySelector('[data-testid=rec-button]').click()`);
+    check(`O9b. the ${who}'s Live recording tab judges the room by the server's address (private = same network)`, await until(async () => await win.evalJs(`!!document.querySelector('[data-testid=rec-share]') && !document.querySelector('[data-testid=rec-room-online]')`), 5000));
+    await win.evalJs(`document.querySelector('[data-testid=rec-button]').click()`);
+  }
+
   await host.evalJs(`window.daw.collab.leave()`);
   check("O10. ending the session removes it from the server", await until(async () => (await fetch(`http://127.0.0.1:${PORT}/sessions/${hosted.code}`).then((r) => r.status)) === 404, 6000));
   check("O11. the guest is told and leaves the session", await until(async () => (await collabState(join)).active === false, 8000));

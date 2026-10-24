@@ -44,6 +44,8 @@ export const projectsStore = createStore<ProjectListPayload>({ projects: [], act
 export const collabStore = createStore<CollabState>({ active: false });
 /** Where each other person's pointer is (fractions of their window), by user id. */
 export const collabPointers = createStore<Record<string, { x: number; y: number }>>({});
+/** Notes people put in the room, by topic (the Producer's live-recording address and code). Cleared when the session ends. */
+export const collabShares = createStore<Record<string, { id: string; data: unknown }>>({});
 /** The Live recording lab: which recorder programs were found and the takes noticed in the watched folder. */
 export const recordingStore = createStore<RecordingState | null>(null);
 /** Whether the Network panel is showing. */
@@ -75,7 +77,16 @@ export async function initStores() {
   projectsStore.set(initial.projects);
   window.daw.projects.onList((p) => projectsStore.set(p));
   collabStore.set(initial.collab);
-  window.daw.collab.onState((s) => collabStore.set(s));
+  window.daw.collab.onState((s) => {
+    collabStore.set(s);
+    if (!s.active && Object.keys(collabShares.get()).length) collabShares.set({});
+  });
+  window.daw.collab.onShare((n) => {
+    const next = { ...collabShares.get() };
+    if (n.data === null) delete next[n.topic];
+    else next[n.topic] = { id: n.id, data: n.data };
+    collabShares.set(next);
+  });
   void window.daw.recording.getState().then((s) => recordingStore.set(s));
   window.daw.recording.onState((s) => recordingStore.set(s));
   window.daw.collab.onPointer(({ id, pointer }) => {
