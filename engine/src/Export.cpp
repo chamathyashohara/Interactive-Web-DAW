@@ -29,6 +29,27 @@ int64_t renderSong(const PlaybackModel& model, double sampleRate, double tailSec
     engine->sequencer.setBpm(model.tempo);
     engine->sequencer.setPlaying(true);
 
+    // Plugin tracks: start a private host per plugin in BLOCKING mode so each block waits for the plugin (exact timing, no latency).
+    // A plugin that fails to start is left silent in the file; the live hosts are never used for an export.
+    engine->setUseModelPlugins(false);
+    std::vector<std::unique_ptr<PluginClient>> exportHosts;
+    const std::string hostExe = findPluginHostExe();
+    for (const auto& tr : model.tracks)
+    {
+        if (tr.instrument != kPlugin || tr.pluginPath.empty() || hostExe.empty()) continue;
+        auto client = std::make_unique<PluginClient>(hostExe, tr.pluginPath, writePluginStateFile(tr.pluginState), sampleRate, true);
+        if (!client->launch()) continue;
+        const auto t0 = juce::Time::getMillisecondCounter();
+        while (client->state() == PluginState::Starting && juce::Time::getMillisecondCounter() - t0 < 60000)
+        {
+            if (cancel != nullptr && cancel->load()) { engine->sequencer.setModel(nullptr); return -1; }
+            client->poll();
+            juce::Thread::sleep(20);
+        }
+        if (client->state() == PluginState::Ready) engine->setPluginOverride(tr.slot, client.get());
+        exportHosts.push_back(std::move(client));
+    }
+
     std::vector<float> left(kBlock), right(kBlock);
     float* out[2] = { left.data(), right.data() };
 
@@ -57,6 +78,7 @@ int64_t renderSong(const PlaybackModel& model, double sampleRate, double tailSec
             progress(static_cast<double>(done) / static_cast<double>(total));
     }
     engine->sequencer.setModel(nullptr);
+    for (auto& h : exportHosts) h->shutdown();
     return done;
 }
 

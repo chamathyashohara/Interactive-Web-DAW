@@ -301,16 +301,7 @@ bool PluginManager::hostAvailable() const { return juce::File(juce::String::from
 
 std::unique_ptr<PluginClient> PluginManager::makeClient(const Wanted& w)
 {
-    std::string stateFile;
-    if (!w.stateB64.empty())
-    {
-        juce::MemoryOutputStream out;
-        if (juce::Base64::convertFromBase64(out, juce::String(w.stateB64)))
-        {
-            const juce::File f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("daw_pluginstate_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".bin");
-            if (f.replaceWithData(out.getData(), out.getDataSize())) stateFile = f.getFullPathName().toStdString();
-        }
-    }
+    const std::string stateFile = writePluginStateFile(w.stateB64);
     auto client = std::make_unique<PluginClient>(hostExe, w.path, stateFile, sr, false);
     client->launch();
     return client;
@@ -406,4 +397,13 @@ std::string findPluginHostExe()
     const juce::File build = config.getParentDirectory().getParentDirectory();
     const juce::File sibling = build.getChildFile("daw_pluginhost_artefacts").getChildFile(config.getFileName()).getChildFile("daw_pluginhost.exe");
     return sibling.existsAsFile() ? sibling.getFullPathName().toStdString() : std::string();
+}
+
+std::string writePluginStateFile(const std::string& stateB64)
+{
+    if (stateB64.empty()) return {};
+    juce::MemoryOutputStream out;
+    if (!juce::Base64::convertFromBase64(out, juce::String(stateB64))) return {};
+    const juce::File f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("daw_pluginstate_" + juce::String(juce::Random::getSystemRandom().nextInt64()) + ".bin");
+    return f.replaceWithData(out.getData(), out.getDataSize()) ? f.getFullPathName().toStdString() : std::string();
 }

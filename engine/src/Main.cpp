@@ -102,8 +102,9 @@ private:
     std::vector<Retired> retired;
 };
 
-PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::vector<std::string>& problems)
+PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, PluginManager& plugins, std::vector<std::string>& problems)
 {
+    std::vector<PluginManager::Wanted> wantedPlugins;
     auto* model = new PlaybackModel();
     model->ppq = std::max(1, static_cast<int>(project["ppq"]));
     model->loopTicks = static_cast<juce::int64>(project["loopTicks"]);
@@ -119,7 +120,13 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
             TrackModel tm;
             tm.slot = std::clamp(static_cast<int>(t["slot"]), 0, kMaxSlots - 1);
             const juce::String kind = t["instrument"].toString();
-            tm.instrument = kind == "drums" ? kDrums : (kind == "sample" ? kSample : kSynth);
+            tm.instrument = kind == "drums" ? kDrums : (kind == "sample" ? kSample : (kind == "plugin" ? kPlugin : kSynth));
+            if (tm.instrument == kPlugin)
+            {
+                tm.pluginPath = t["pluginPath"].toString().toStdString();
+                tm.pluginState = t["pluginState"].toString().toStdString();
+                if (!tm.pluginPath.empty()) wantedPlugins.push_back({ tm.slot, tm.pluginPath, tm.pluginState });
+            }
             if (tm.instrument == kSynth)
             {
                 if (const auto s = t["synth"]; s.isObject())
@@ -196,6 +203,11 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, std::v
             model->tracks.push_back(std::move(tm));
         }
     }
+    // Start/keep/retire plugin host processes to match this project, then point each plugin track at its host.
+    plugins.reconcile(wantedPlugins);
+    for (auto& tr : model->tracks)
+        if (tr.instrument == kPlugin) tr.plugin = plugins.clientFor(tr.slot);
+    if (!wantedPlugins.empty() && !plugins.hostAvailable()) problems.push_back("plugin tracks need daw_pluginhost.exe, which was not found next to the engine");
     return model;
 }
 
@@ -244,6 +256,11 @@ int main(int argc, char** argv)
     engine.setLoopRegionEnabled(true);
     SampleStore samples;
     ModelStore models(engine.sequencer, samples);
+    PluginManager plugins(findPluginHostExe(), [](int slot, PluginState state, const std::string& name, const std::string& message) {
+        static const char* names[] = { "starting", "ready", "crashed", "failed" };
+        sendLine("{\"t\":\"pluginState\",\"slot\":" + std::to_string(slot) + ",\"state\":\"" + names[static_cast<int>(state)] + "\",\"name\":" + jsonEscape(juce::String(name)) +
+                 ",\"message\":" + jsonEscape(juce::String(message)) + "}");
+    });
     juce::AudioDeviceManager deviceManager;
 
     bool audioOk = false;
@@ -275,6 +292,7 @@ int main(int argc, char** argv)
                   "{\"t\":\"ready\",\"device\":%s,\"deviceType\":%s,\"sampleRate\":%.0f,\"bufferSize\":%d,\"version\":\"%s\"}",
                   jsonEscape(deviceName).c_str(), jsonEscape(typeName).c_str(), engine.sampleRate, engine.bufferSize, kVersion);
     sendLine(readyBuf);
+    plugins.setFormat(engine.sampleRate); // plugin hosts are started at the device's sample rate
     if (!audioOk)
         sendLine("{\"t\":\"error\",\"message\":\"no audio output device; running without sound\"}");
 
@@ -377,7 +395,7 @@ int main(int argc, char** argv)
         {
             const auto project = msg["project"];
             std::vector<std::string> problems;
-            models.publish(parseModel(project, samples, problems));
+            models.publish(parseModel(project, samples, plugins, problems));
             for (const auto& p : problems) sendLine("{\"t\":\"error\",\"message\":" + jsonEscape(juce::String(p)) + "}");
             engine.sequencer.setBpm(static_cast<double>(project["tempo"]));
         }
@@ -457,5 +475,6 @@ int main(int argc, char** argv)
     statusThread.join();
     deviceManager.removeAudioCallback(&engine);
     deviceManager.closeAudioDevice();
+    plugins.shutdownAll(); // after the audio thread has stopped using them
     return 0;
 }

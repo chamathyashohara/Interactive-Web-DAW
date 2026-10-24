@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+/** Writes a plugin's saved settings (base64) to a temp file for the host to read; returns its path, or "" if there is none. */
+std::string writePluginStateFile(const std::string& stateB64);
+
 /** Where daw_pluginhost.exe is: DAW_PLUGINHOST_PATH, next to the engine, or in the build's sibling artefacts folder. Empty if not found. */
 std::string findPluginHostExe();
 

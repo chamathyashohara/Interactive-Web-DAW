@@ -1,5 +1,6 @@
 #pragma once
 #include "Synth.h"
+#include <string>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -7,7 +8,8 @@
 struct SampleData;
 
 constexpr int kMaxSlots = 16;
-enum Instrument : int { kSynth = 0, kDrums = 1, kSample = 2 };
+class PluginClient; // a plugin host process (see PluginClient.h); the engine never links plugin code itself
+enum Instrument : int { kSynth = 0, kDrums = 1, kSample = 2, kPlugin = 3 };
 
 /** One note on the absolute timeline, already clipped to the loop. */
 struct NoteEvent
@@ -47,6 +49,9 @@ inline float autoAt(const std::vector<AutoPoint>& p, double tick)
 
 struct TrackModel
 {
+    /** kPlugin tracks: the plugin file (and its saved settings, base64) and the running host process for it (null = none yet). */
+    std::string pluginPath, pluginState;
+    PluginClient* plugin = nullptr;
     SynthParams synth; // kSynth tracks: the preset parameters (default = the original sound)
     int slot = 0;
     int instrument = kSynth;

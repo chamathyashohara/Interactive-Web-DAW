@@ -2,6 +2,7 @@
 #include "Drums.h"
 #include "Samples.h"
 #include "Sequencer.h"
+#include "PluginClient.h"
 #include "Synth.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <algorithm>
@@ -116,6 +117,10 @@ public:
         sampR.assign(n, 0.0f);
         bufL.assign(n, 0.0f);
         bufR.assign(n, 0.0f);
+        plugStride = n;
+        plugL.assign(n * kMaxSlots, 0.0f);
+        plugR.assign(n * kMaxSlots, 0.0f);
+        plugMidi.assign(static_cast<size_t>(kMaxSlots) * plugipc::kMaxMidi, plugipc::MidiEv{});
     }
 
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* out, int numOut, int numSamples,
@@ -144,6 +149,7 @@ public:
         }
 
         const PlaybackModel* m = sequencer.currentModel();
+        for (int s = 0; s < kMaxSlots; ++s) plugMidiCount[s] = 0;
 
         {
             int s1, n1, s2, n2;
@@ -155,7 +161,7 @@ public:
         }
 
         // Which sample each slot plays comes from the current model (the audio thread reads it, never writes it).
-        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; slotVolumeAuto[s] = nullptr; slotFilterAuto[s] = nullptr; }
+        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; slotVolumeAuto[s] = nullptr; slotFilterAuto[s] = nullptr; slotPlugin[s] = pluginOverride[s]; }
         const bool playingNow = sequencer.isPlaying();
         blockTick = sequencer.getTick();
         segTps = playingNow ? sequencer.getBpm() * (m != nullptr ? m->ppq : 960) / (60.0 * sampleRate) : 0.0;
@@ -175,6 +181,7 @@ public:
                 slotVolumeAuto[s] = tr.volumeAuto.empty() ? nullptr : &tr.volumeAuto;
                 slotFilterAuto[s] = tr.filterAuto.empty() ? nullptr : &tr.filterAuto;
                 if (tr.instrument == kSynth) slots[s].synth.setParams(tr.synth); // the track's synth preset
+                if (tr.instrument == kPlugin && slotPlugin[s] == nullptr && useModelPlugins) slotPlugin[s] = tr.plugin;
             }
         const int cut = cutSerial.load(std::memory_order_acquire);
         if (cut != seenCut)
@@ -185,6 +192,7 @@ public:
 
         eventCount = 0;
         sequencer.process(numSamples, *this);
+        runPlugins(numSamples);
 
         float targetGain[kMaxSlots] = {};
         float targetPan[kMaxSlots] = {};
@@ -204,7 +212,7 @@ public:
         // starts at the right level and pan instead of ramping in from zero.
         for (int s = 0; s < kMaxSlots; ++s)
         {
-            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive())
+            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive() && !plugActive[s])
             {
                 slots[s].gain = targetGain[s] * volumeMul(s, blockTick);
                 slots[s].pan = targetPan[s];
@@ -235,6 +243,7 @@ public:
             {
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
                 else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot], &e.note);
+                else if (e.instrument == kPlugin) { /* its MIDI was sent to the plugin host before rendering */ }
                 else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
             }
             else
@@ -290,6 +299,13 @@ public:
 
     /** Metronome click on the quarter notes while playing (off by default; the offline export never has it). */
     void setMetronome(bool on) { sequencer.setClick(on); }
+    /** Offline export: never use the model's live (non-blocking) plugin hosts. */
+    void setUseModelPlugins(bool on) { useModelPlugins = on; }
+    /** Offline export: use these plugin hosts (blocking mode) for these slots instead of the model's live ones. */
+    void setPluginOverride(int slot, PluginClient* client)
+    {
+        if (slot >= 0 && slot < kMaxSlots) pluginOverride[slot] = client;
+    }
     /** Live playback wraps inside the project's loop region. */
     void setLoopRegionEnabled(bool on)
     {
@@ -324,6 +340,43 @@ private:
         }
     };
     bool useRegionNow = false;
+
+    // ---- plugin tracks (the plugin itself runs in a separate host process; see PluginClient.h) ----
+    PluginClient* slotPlugin[kMaxSlots] = {};
+    PluginClient* pluginOverride[kMaxSlots] = {};
+    bool useModelPlugins = true;
+    bool plugActive[kMaxSlots] = {};
+    int plugMidiCount[kMaxSlots] = {};
+    std::vector<plugipc::MidiEv> plugMidi; // kMaxSlots x kMaxMidi, on the heap (the engine object lives on the stack)
+    std::vector<float> plugL, plugR;       // kMaxSlots x plugStride: the audio the hosts returned for this block
+    size_t plugStride = 0;
+
+    void addPluginMidi(int slot, int offset, uint8_t status, int d1, int d2)
+    {
+        if (slot < 0 || slot >= kMaxSlots || plugMidiCount[slot] >= plugipc::kMaxMidi) return;
+        plugMidi[static_cast<size_t>(slot) * plugipc::kMaxMidi + static_cast<size_t>(plugMidiCount[slot]++)] =
+            { offset, status, static_cast<uint8_t>(std::clamp(d1, 0, 127)), static_cast<uint8_t>(std::clamp(d2, 0, 127)), 0 };
+    }
+    /** Builds each plugin track's MIDI for this block from the sequencer's events, hands it to the host and collects the audio. */
+    void runPlugins(int numSamples)
+    {
+        for (int i = 0; i < eventCount; ++i)
+        {
+            const Event& e = events[i];
+            if (slotPlugin[e.slot] == nullptr) continue;
+            if (e.type == 1 && e.instrument == kPlugin) addPluginMidi(e.slot, e.offset, 0x90, e.pitch, e.velocity);
+            else if (e.type == 0) addPluginMidi(e.slot, e.offset, 0x80, e.pitch, 0);
+        }
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            plugActive[s] = false;
+            PluginClient* c = slotPlugin[s];
+            if (c == nullptr) continue;
+            c->process(&plugMidi[static_cast<size_t>(s) * plugipc::kMaxMidi], plugMidiCount[s], numSamples,
+                       plugL.data() + static_cast<size_t>(s) * plugStride, plugR.data() + static_cast<size_t>(s) * plugStride);
+            plugActive[s] = c->state() == PluginState::Ready;
+        }
+    }
     struct Event
     {
         int offset;
@@ -428,6 +481,7 @@ private:
         if (pm.on)
         {
             if (instrument == kDrums) slots[slot].drums.trigger(pm.pitch, pm.velocity);
+            else if (instrument == kPlugin) addPluginMidi(slot, 0, 0x90, pm.pitch, pm.velocity);
             else if (instrument == kSample)
             {
                 const SampleData* d = nullptr;
@@ -443,6 +497,7 @@ private:
         {
             slots[slot].synth.noteOff(pm.pitch);
             slots[slot].samp.release(pm.pitch);
+            addPluginMidi(slot, 0, 0x80, pm.pitch, 0);
         }
     }
 
@@ -453,7 +508,7 @@ private:
         for (int s = 0; s < kMaxSlots; ++s)
         {
             SlotState& st = slots[s];
-            if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive())
+            if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive() && !plugActive[s])
             {
                 st.gain = targetGain[s] * volumeMul(s, segTick); // idle: no ramp needed
                 st.filter.reset();
@@ -479,7 +534,7 @@ private:
             float g = st.gain;
             float* L = bufL.data() + start;
             float* R = bufR.data() + start;
-            const bool hasSamples = st.samp.anyActive();
+            const bool hasSamples = st.samp.anyActive() || plugActive[s];
             float* sl = sampL.data();
             float* sr = sampR.data();
             if (hasSamples)
@@ -487,6 +542,12 @@ private:
                 juce::FloatVectorOperations::clear(sl, len);
                 juce::FloatVectorOperations::clear(sr, len);
                 st.samp.render(sl, sr, len);
+                if (plugActive[s])
+                {
+                    const float* pl = plugL.data() + static_cast<size_t>(s) * plugStride + static_cast<size_t>(start);
+                    const float* pr = plugR.data() + static_cast<size_t>(s) * plugStride + static_cast<size_t>(start);
+                    for (int i = 0; i < len; ++i) { sl[i] += pl[i]; sr[i] += pr[i]; }
+                }
                 if (filtering)
                 {
                     st.filter.run(1, sl, len);
