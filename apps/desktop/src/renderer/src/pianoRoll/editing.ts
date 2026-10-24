@@ -102,3 +102,16 @@ export function fixOutOfKeyOps(clip: NoteClip, notes: Note[], key: ProjectKey): 
   }
   return ops;
 }
+
+/**
+ * Transpose: shift every given note by `semitones` (negative = down). Moves as a group so chords stay intact: the shift
+ * is clamped so no note leaves 0-127, and nothing moves if the group cannot shift that way at all. One undo step.
+ */
+export function transposeOps(clip: NoteClip, notes: Note[], semitones: number): OpBody[] {
+  if (notes.length === 0 || semitones === 0) return [];
+  const minPitch = Math.min(...notes.map((n) => n.pitch));
+  const maxPitch = Math.max(...notes.map((n) => n.pitch));
+  const d = Math.min(127 - maxPitch, Math.max(-minPitch, semitones));
+  if (d === 0) return [];
+  return notes.map((n) => ({ type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: n.id, changes: { pitch: n.pitch + d } }));
+}
