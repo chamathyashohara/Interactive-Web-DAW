@@ -4,8 +4,8 @@ import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
 import type { ProjectMeta } from "../main/project/workspace";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../main/telemetry/telemetryStore";
-import type { LiveState, NetIface } from "../main/recording/liveRecording";
-export type { TelemetryState, LiveState, NetIface };
+import type { LiveState, NetIface, SessionTake, BackingStatus } from "../main/recording/liveRecording";
+export type { TelemetryState, LiveState, NetIface, SessionTake, BackingStatus };
 
 export interface EngineState {
   connected: boolean;
@@ -143,7 +143,7 @@ const api = {
       return () => ipcRenderer.removeListener("live:state", l);
     },
     interfaces: (): Promise<NetIface[]> => ipcRenderer.invoke("live:interfaces"),
-    createSession: (o: { bind: string; port: number; name?: string }): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:create", o),
+    createSession: (o: { bind: string; port: number; name?: string; mode?: "both" | "vocal" }): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:create", o),
     join: (o: { host: string; port: number; code: string; name?: string }): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:join", o),
     leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:leave"),
     setConsent: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:consent", on),
@@ -155,6 +155,28 @@ const api = {
     setAutoTransfer: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:autoTransfer", on),
     requestTransfer: (take: number): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("live:transfer", take),
     cancelTransfer: (take: number): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:cancelTransfer", take),
+    setSyncPlay: (on: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:syncPlay", on),
+    // -- backing track (vocal over the producer's song): the window decodes and plays what the main process downloaded --
+    onBackingFile: (cb: (f: { id: string; path: string }) => void) => {
+      const l = (_e: unknown, f: { id: string; path: string }) => cb(f);
+      ipcRenderer.on("live:backingFile", l);
+      return () => ipcRenderer.removeListener("live:backingFile", l);
+    },
+    readBacking: (file: string): Promise<Uint8Array | null> => ipcRenderer.invoke("live:readBacking", file),
+    backingReady: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:backingReady", id),
+    backingFailed: (id: string, why: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:backingFailed", id, why),
+    onPlayBacking: (cb: (p: { startFrame: number; offsetSec: number; takeId: number; id: string }) => void) => {
+      const l = (_e: unknown, p: { startFrame: number; offsetSec: number; takeId: number; id: string }) => cb(p);
+      ipcRenderer.on("live:playBacking", l);
+      return () => ipcRenderer.removeListener("live:playBacking", l);
+    },
+    onStopBacking: (cb: () => void) => {
+      const l = () => cb();
+      ipcRenderer.on("live:stopBacking", l);
+      return () => ipcRenderer.removeListener("live:stopBacking", l);
+    },
+    /** The speaker-to-microphone round trip of this PC (microseconds), measured or estimated, used to line the vocal up with the music. */
+    setLatency: (us: number): void => ipcRenderer.send("live:latency", us),
     setTalkback: (send: boolean, hear: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("live:talkback", send, hear),
     // -- audio plumbing: microphone blocks and Opus packets go to the main process, which owns the files and sockets --
     captureState: (s: { open: boolean; deviceName?: string; sampleRate?: number; channels?: number; failed?: string }): void => ipcRenderer.send("live:captureState", s),

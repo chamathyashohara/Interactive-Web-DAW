@@ -50,6 +50,8 @@ export const collabShares = createStore<Record<string, { id: string; data: unkno
 export const recordingStore = createStore<RecordingState | null>(null);
 /** The remote-recording session as the main process sees it (null until the first state arrives). */
 export const liveStore = createStore<LiveState | null>(null);
+/** A one-line message about the last vocal take put on the timeline (or why it could not be). */
+export const recNoteStore = createStore<string>("");
 /** Whether the Network panel is showing. */
 export const collabNetOpen = createStore<boolean>(false);
 /** A short message about the session (it ended, a copy was saved...). null = none showing. */

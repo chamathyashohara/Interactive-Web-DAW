@@ -26,6 +26,53 @@ the recordings never depend on it.
 
 Beginner mode still applies: adding a sound is locked until its lesson, and the panel names the lesson.
 
+## Vocal over the producer's song (the default mode)
+
+The producer arranges a song; a singer in another place sings over it; the take lands on its own track, in the right place, ready to edit.
+
+1. **Playhead.** The producer puts the playhead where the take should start. The panel shows it ("Recording will start from bar 3, beat 3").
+2. **Play.** With a singer connected, the producer's **Play** also starts the song on the singer's PC at the same planned moment (and **Stop** stops it).
+   "The singer hears the song when I press Play" can be switched off.
+3. **Record.** The song plays from the playhead on the singer's PC while the singer's microphone is recorded; the producer's own arrangement plays too.
+   Only the singer is recorded. The producer needs no microphone.
+4. **Stop.** The take is sent back to the producer (verified, as before) and appears on a **new track "Vocal take N"**, as a waveform clip, at the
+   position it was recorded from, trimmed for the singer's sound-card delay.
+5. **More takes.** Every take gets a new track, so nothing is ever overwritten. Replay, edit, mute or delete them like any other clip. Recording again from the
+   same place is one click: the playhead goes back to where the take began.
+
+**How it stays in sync.** The network is never part of the timing of the music:
+
+- The producer's DAW renders the arrangement (the vocal take tracks are left out, so the singer never hears earlier takes) with the DAW's own offline export,
+  fingerprints it (SHA-256), and the singer **downloads and verifies it** before anything can start (HTTP on the control port + 3, resumable, only to the joined singer,
+  with a one-time token). When the arrangement changes it is re-rendered and re-sent; Record is refused with a plain message until the singer has the current one.
+- The singer **plays that file from its own disk** on the same audio-clock as its microphone. The take is told "start on audio frame S", and the backing track is
+  scheduled to start on the same frame S. So file sample 0 and music sample 0 are the same instant by construction; nothing depends on the network, so there are no
+  dropouts or jitter in the music. If the start frame was already missed, the music skips ahead by exactly the lost time, so it still lines up.
+- The two PCs' clocks only have to agree on *roughly when* to start (the producer's lead of at least 300 ms, sized for the link). An error there moves
+  when the take begins, not where the vocal sits against the music.
+- **Sound-card delay.** What the singer hears is late by the output delay, and what the microphone delivers is late by the input delay. The singer's PC knows or
+  measures that round trip (an estimate from the browser, or **Measure it**: five clicks through the speakers timed by the microphone, or typed in), sends it with the
+  take, and the producer's DAW cuts that much off the start of the recording. The result: the vocal sits on the music it answers.
+- Microphone and backing track are **separate paths**. Echo cancellation, noise suppression and auto-gain are off; the backing track never enters the recording.
+  Use headphones, or the music leaks into the microphone acoustically (nothing in software can prevent that).
+
+### What was wrong or missing before (found by reading the code and the first version)
+
+| # | Finding | What was done |
+|---|---|---|
+| 1 | No backing track reached the singer at all (both PCs only recorded their microphones) | Rendered, delivered, hash-verified, played locally in sync |
+| 2 | A recorded take was always dropped at the start of the song, untrimmed | Placed at the playhead position the take began from, trimmed for latency |
+| 3 | The existing "add a sound" path caps a clip at 32 bars, so a long vocal would have been cut | Vocal clips are as long as the recording; the song is lengthened if needed |
+| 4 | **Stop** sends the playhead back to bar 1, so a retake from the same place was impossible | The position the producer chose is remembered and restored after each take |
+| 5 | The producer's microphone was required, though only the singer matters | Not needed in this mode |
+| 6 | The capture frame counter started at an arbitrary point, so the music could not be scheduled on the take's first sample | The counter is now the audio context's own frame count |
+| 7 | No round-trip latency compensation | Estimated / measured / typed, applied at placement |
+| 8 | Record was blocked while the previous take's copy was still moving, which on a slow link blocked retakes | Takes are local; the copy continues in the background and is re-requested if the singer was busy |
+| 9 | Pressing Stop during the short lead before a synchronized Play still started the engine afterwards | Pending starts are cancelled by Stop |
+| 10 | The engine's reported playhead can lag a seek it was just given (seen intermittently with a Bluetooth output) | Recording uses the position the producer asked for |
+| 11 | Earlier vocal takes would have been in the next backing track | Tracks named "Vocal take N" are never part of the backing track |
+| 12 | A song is limited to 16 tracks | Each take uses one; at the limit the panel says to delete an old take |
+
 ## How it is built
 
 ```
@@ -50,7 +97,7 @@ it to its clock. The lead is sized for the measured link (`min = margin + 2 RTT 
 the panel shows the estimated difference between the two recording starts with its uncertainty. This is **not** an acoustic alignment
 measurement: it does not include the sound cards' own input delay.
 
-**Wire compatibility.** The control protocol (1.2), the media packet header and the transfer protocol are byte-for-byte the C++ ones, so a
+**Wire compatibility.** The control protocol (1.3 here; 1.2 is what the C++ recorder speaks, and the new messages are never sent to a 1.2 peer), the media packet header and the transfer protocol are byte-for-byte the C++ ones, so a
 DAW can in principle talk to the original Producer Studio / Performer Client. This is tested against the real C++ library (below).
 
 ## Differences from the Qt programs (honest list)
@@ -63,6 +110,8 @@ DAW can in principle talk to the original Producer Studio / Performer Client. Th
   of the two recording streams, not of the sound in the room.
 - **Echo/noise processing is off** on the microphone (browser echo cancellation, noise suppression and auto-gain would alter the recording).
 - **Not ported:** the C++ audio probe tools, the stage-by-stage test protocol documents, the live-audio impairment simulator.
+- **Distance.** Everything runs over direct TCP/UDP between the two PCs. Across the internet it works when the producer's ports (control, +1 talkback, +2 copy, +3 backing track)
+  are reachable (a VPN such as Tailscale, or port forwarding); there is no relay or NAT traversal. The separate collaboration server is not used for recording.
 - **Security** is unchanged: a trusted private LAN only, unencrypted; the pairing code prevents accidents, not attacks (ADR-012 of Component 4).
 
 ## Network
@@ -79,6 +128,8 @@ outgoing connections. Two PCs on the same network are needed for the real use; o
 | `RR_PROBE=<rr_session_probe.exe> npx vitest run --root packages/recording interop` | the TypeScript session against the **real C++ library**: TS producer + C++ performer, C++ producer + TS performer (a coordinated take each), and live Opus both ways (CRC, header, reports) |
 | `npm test -w @daw/desktop` | the main-process service with two instances and synthetic microphones: full session, verified copy, microphone off, leaving |
 | `node apps/desktop/e2e/remote-recording.mjs` | **two real DAW windows** with Chromium's fake microphone: connect, consent, talkback (real WebCodecs Opus over UDP), a coordinated take, both WAVs checked, verified copy byte-identical, Add to project, the engine plays it (`RR_SHOT_DIR=<folder>` saves screenshots) |
+| `node apps/desktop/e2e/vocal-over-backing.mjs` | **the whole vocal workflow with two real DAW windows**: render + verified delivery of the backing track, Play/Stop heard by the singer, Record from the playhead, the take on its own track at the right tick, **the recorded samples equal the backing track at lag 0 (sample-exact, correlation 1.0)**, a second take on a new track with the first untouched, an arrangement edit refreshes the backing track, the project reopens with the vocal tracks. `RR_DELAY_MS=80` puts a delaying, jittering link between the two (passes at 80 ms each way) |
+| `npx vitest run --root packages/recording vocal` | the same workflow at protocol level with the singer behind a 40 ms +/- 15 ms jittery proxy: delivery, a take recorded against a simulated microphone that hears the backing late by a known latency, and the placement maths landing every click back on the backing click within one sample |
 | `node apps/desktop/e2e/recording-room.mjs` | the Producer's session reaches the collaboration room and the Singer joins in one click |
 | `node apps/desktop/e2e/recording.mjs` | new WAVs in the recordings folder are listed; Add to project; beginner-mode lock |
 
@@ -86,7 +137,7 @@ outgoing connections. Two PCs on the same network are needed for the real use; o
 
 Verified on the development PC (both sides on one PC, loopback and the PC's own LAN address): everything in the table above.
 
-**Not verified:** two physical PCs, a Wi-Fi link, the Windows Firewall prompt, a real sound card or headphones (all end-to-end runs used a fake
+**Not verified:** two physical PCs, real sound-card latency (the end-to-end alignment test feeds the take from the backing track's own output, which proves the schedule, not the browser's latency estimate or the click measurement on real hardware), a Wi-Fi link, the Windows Firewall prompt, a real sound card or headphones (all end-to-end runs used a fake
 microphone and no audible playback), clock drift between two PCs over a long take, and any listening test of the Opus talkback quality.
 Component 4's own `SESSION_TEST_PROTOCOL` describes the tests that still need two PCs.
 

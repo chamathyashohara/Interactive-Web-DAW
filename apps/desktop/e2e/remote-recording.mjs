@@ -64,6 +64,7 @@ try {
   // ---- producer creates the session on the loopback address ----
   await prod.click("rec-open-producer");
   await until(() => prod.exists("rec-network"), 5000);
+  await prod.click("rec-mode-both"); // this test is about the original mode: each PC records its own microphone
   await prod.select("rec-network", "127.0.0.1");
   await prod.type("rec-port-in", String(port));
   await prod.click("rec-create");

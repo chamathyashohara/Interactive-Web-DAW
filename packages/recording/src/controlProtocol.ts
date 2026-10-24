@@ -8,7 +8,10 @@
 import { beBytes, concat, readBe, readU16, readU32, toText, utf8, writeU32 } from "./bytes";
 
 export const PROTOCOL_MAJOR = 1;
-export const PROTOCOL_MINOR = 2;
+/** 1.3 (this app): adds the backing-track messages and the optional vocal-over-backing tags. A 1.2 peer (the C++ recorder) is never sent them. */
+export const PROTOCOL_MINOR = 3;
+export const MINOR_TRANSFER = 2;
+export const MINOR_BACKING = 3;
 export const HEADER_BYTES = 12;
 export const MAX_FRAME_BYTES = 16384;
 export const MAX_STRING_BYTES = 256;
@@ -35,6 +38,11 @@ export const MsgType = {
   SessionClosed: 0x0050,
   TransferRequest: 0x0060,
   TransferAck: 0x0061,
+  BackingOffer: 0x0070,
+  BackingAck: 0x0071,
+  PlayBacking: 0x0072,
+  PlayAck: 0x0073,
+  StopBacking: 0x0074,
 } as const;
 export type MsgType = (typeof MsgType)[keyof typeof MsgType];
 
@@ -81,20 +89,28 @@ export const Tag = {
   TransferPort: 34,
   TransferToken: 35,
   DeliveryConsent: 36,
+  BackingId: 37, // str, sha-256 hex of the rendered backing track
+  BackingPort: 38, // u16, producer HTTP port serving it
+  BackingToken: 39, // str (32 hex), one-time download token, never logged
+  BackingBytes: 40, // u64
+  OffsetUs: 41, // u64, song position the take / playback starts at, microseconds
+  LatencyUs: 42, // u32, singer: measured speaker-to-microphone round trip used for this take
+  Mode: 43, // u8, ARM: 1 = vocal over backing track (the singer records, the producer does not)
+  BackingHave: 44, // str, READY_STATUS: the backing id this PC holds (empty = none)
 } as const;
 export type Tag = (typeof Tag)[keyof typeof Tag];
 
 /** Width in bytes of a fixed-size tag; 0 = string. */
 function tagWidth(tag: number): number {
   switch (tag) {
-    case Tag.Role: case Tag.Ready: case Tag.State: case Tag.Status: case Tag.Consent: case Tag.Accepted: case Tag.DeliveryConsent:
+    case Tag.Role: case Tag.Ready: case Tag.State: case Tag.Status: case Tag.Consent: case Tag.Accepted: case Tag.DeliveryConsent: case Tag.Mode:
       return 1;
-    case Tag.ProtoMajor: case Tag.ProtoMinor: case Tag.ErrorCode: case Tag.TransferPort:
+    case Tag.ProtoMajor: case Tag.ProtoMinor: case Tag.ErrorCode: case Tag.TransferPort: case Tag.BackingPort:
       return 2;
-    case Tag.TakeId: case Tag.MaxTakeSeconds:
+    case Tag.TakeId: case Tag.MaxTakeSeconds: case Tag.LatencyUs:
       return 4;
     case Tag.SentNs: case Tag.StartAtNs: case Tag.StopAtNs: case Tag.PlannedLocalNs: case Tag.ThetaNs: case Tag.UncertaintyNs:
-    case Tag.EchoSentNs: case Tag.RecvNs: case Tag.FirstFrame: case Tag.Frames: case Tag.FirstSampleNs: case Tag.LateFrames:
+    case Tag.EchoSentNs: case Tag.RecvNs: case Tag.FirstFrame: case Tag.Frames: case Tag.FirstSampleNs: case Tag.LateFrames: case Tag.BackingBytes: case Tag.OffsetUs:
       return 8;
     default:
       return 0;
@@ -169,6 +185,9 @@ export function requiredTags(type: number): number[] {
     case MsgType.TakeFinalised: r.push(Tag.TakeId, Tag.Status, Tag.Frames); break;
     case MsgType.SessionClosed: r.push(Tag.ErrorCode); break;
     case MsgType.TransferRequest: r.push(Tag.TakeId, Tag.TransferPort, Tag.TransferToken); break;
+    case MsgType.BackingOffer: r.push(Tag.BackingId, Tag.BackingPort, Tag.BackingToken, Tag.BackingBytes); break;
+    case MsgType.BackingAck: case MsgType.PlayAck: r.push(Tag.Accepted); break;
+    case MsgType.PlayBacking: r.push(Tag.StartAtNs, Tag.OffsetUs, Tag.BackingId); break;
   }
   return r;
 }

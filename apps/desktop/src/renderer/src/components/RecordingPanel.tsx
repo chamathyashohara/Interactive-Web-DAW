@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { dropSampleOps, lockReason } from "@daw/shared";
+import { PPQ, TICKS_PER_BAR, TRACK_COLORS, dropSampleOps, lockReason, vocalTakeOps } from "@daw/shared";
 import { LinkState, SessionState, readyItemLabel, sessionStatusText, takeStatusName } from "@daw/recording";
 import { CATEGORY_COLORS } from "../samples/sampleColors";
 import { canNow } from "../unlock/useUnlock";
-import { collabShares, collabStore, liveStore, progressStore, projectStore, recordingStore, useStore } from "../store";
+import { collabShares, collabStore, liveStore, progressStore, projectStore, recNoteStore, recordingStore, useStore } from "../store";
 import { liveAudio, type DeviceList } from "../recording/liveAudio";
-import type { NetIface } from "../../../preload/index";
+import type { NetIface, SessionTake } from "../../../preload/index";
 
 const uuid = () => crypto.randomUUID();
 const kb = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
@@ -59,12 +59,68 @@ function useRoomShare() {
   }, [shareable, code, host, port]);
 }
 
+/** Vocal takes already put on the timeline (session + take), so a take is never placed twice. */
+const placedTakes = new Set<string>();
+/** Takes that could not be put on the timeline automatically: they get a button to try again. */
+const failedTakes = new Set<string>();
+
+/** The bar and beat of a song position, for plain-English messages. */
+const barBeat = (tick: number) => `bar ${Math.floor(tick / TICKS_PER_BAR) + 1}, beat ${Math.floor((tick % TICKS_PER_BAR) / PPQ) + 1}`;
+
+/**
+ * When the singer's verified recording of a vocal take reaches the producer, it goes into the library and onto its own new track
+ * ("Vocal take N") at the song position it was recorded from, trimmed for the singer's latency. Earlier takes are never touched.
+ */
+async function placeVocalTake(t: SessionTake): Promise<void> {
+  const r = await window.daw.recording.addTake(t.file);
+  if (!r.ok || !r.entry) {
+    failedTakes.add(t.key);
+    recNoteStore.set(`Vocal take ${t.takeId} could not be added: ${r.reason ?? "unknown reason"}`);
+    return;
+  }
+  const project = projectStore.get().project;
+  if (!project) {
+    failedTakes.add(t.key);
+    return;
+  }
+  const ids = { trackId: `track-${uuid()}`, clipId: `clip-${uuid()}`, noteId: `note-${uuid()}` };
+  const plan = vocalTakeOps(
+    project,
+    { id: r.entry.id, name: r.entry.name },
+    { startTick: t.startTick, tempo: project.tempo, durationSec: r.entry.durationSec, latencySec: t.latencyUs / 1e6, lateSec: t.lateFrames / 48000 },
+    t.takeId,
+    ids,
+    TRACK_COLORS[(t.takeId - 1) % TRACK_COLORS.length] ?? "#22d3ee",
+  );
+  if (!plan.ok) {
+    failedTakes.add(t.key);
+    recNoteStore.set(`Vocal take ${t.takeId}: ${plan.reason} It is saved in the recordings folder.`);
+    return;
+  }
+  failedTakes.delete(t.key);
+  const res = await window.daw.dispatchBatch(plan.ops, `vocal-${t.key}`);
+  recNoteStore.set(res && (res as { ok?: boolean }).ok === false ? `Vocal take ${t.takeId} could not be placed.` : `Vocal take ${t.takeId} is on its own track, from ${barBeat(plan.placement.startTick)}${plan.placement.trimSec > 0 ? ` (the first ${(plan.placement.trimSec * 1000).toFixed(0)} ms trimmed for the singer's sound-card delay)` : ""}.`);
+}
+
+function useAutoPlaceVocals() {
+  const live = useStore(liveStore);
+  useEffect(() => {
+    for (const t of live?.takes ?? []) {
+      if (t.kind !== "singer-copy" || !t.vocal || placedTakes.has(t.key)) continue;
+      placedTakes.add(t.key);
+      void placeVocalTake(t);
+    }
+  }, [live?.takes]);
+}
+
 /**
  * Remote recording, inside the DAW (Component 4). One panel walks through four steps: microphone, connect, record, takes.
  * Nothing here decides timing or writes files: the main process owns the session, the sockets and the master recordings.
  */
 export function RecordingPanel() {
   useRoomShare();
+  useAutoPlaceVocals();
+  const vocalNote = useStore(recNoteStore);
   const live = useStore(liveStore);
   const rec = useStore(recordingStore);
   const session = useStore(collabStore);
@@ -80,6 +136,8 @@ export function RecordingPanel() {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [code, setCode] = useState("");
+  const [mode, setMode] = useState<"vocal" | "both">("vocal");
+  const [latencyMs, setLatencyMs] = useState("");
   const [talk, setTalk] = useState(false);
   const [muted, setMuted] = useState(false);
   const [busy, setBusy] = useState("");
@@ -92,6 +150,8 @@ export function RecordingPanel() {
   const connected = snap?.link === LinkState.Connected;
   const state = snap?.session ?? SessionState.NotReady;
   const recording = state === SessionState.Recording;
+  const vocal = live?.mode === "vocal";
+  const backing = live?.backing;
   const takeBusy = state === SessionState.Armed || state === SessionState.Scheduled || state === SessionState.Recording || state === SessionState.Stopping || state === SessionState.Finalising;
 
   useEffect(() => {
@@ -148,7 +208,7 @@ export function RecordingPanel() {
   const createSession = async () => {
     setMessage("");
     setBusy("create");
-    const r = await window.daw.live.createSession({ bind, port: Number(port), name: name.trim() || undefined });
+    const r = await window.daw.live.createSession({ bind, port: Number(port), name: name.trim() || undefined, mode });
     setBusy("");
     if (!r.ok) setMessage(r.reason ?? "The session could not be created.");
   };
@@ -204,7 +264,8 @@ export function RecordingPanel() {
 
   // ---- step 1: microphone ----
   const micStep = (
-    <Step n={1} title="Your microphone" ok={mic.open} status={mic.open ? "On" : "Off"}>
+    <Step n={1} title={role === "producer" && vocal ? "Your microphone (optional)" : "Your microphone"} ok={mic.open || (role === "producer" && vocal)} status={mic.open ? "On" : role === "producer" && vocal ? "Not needed" : "Off"}>
+      {role === "producer" && vocal && !mic.open && <p className="mb-1 text-[11px] text-slate-400" data-testid="rec-mic-optional">You play the song and the singer is recorded, so you do not need a microphone. Turn it on only to talk to the singer.</p>}
       {mic.open ? (
         <>
           <div className="mb-1 flex items-center gap-2">
@@ -269,6 +330,13 @@ export function RecordingPanel() {
               You are the <b className="text-slate-200">Singer</b>, joined to {snap.bindAddress}:{snap.port}
             </div>
           )}
+          {vocal && backing && backing.phase !== "off" && (
+            <div className={`mt-1 text-[11px] ${backing.phase === "error" ? "text-amber-200" : backing.phase === "ready" ? "text-emerald-300" : "text-slate-400"}`} data-testid="rec-backing">
+              <b>Backing track:</b> {backing.detail}
+              {backing.phase === "downloading" && backing.bytes > 0 && ` ${Math.round(backing.progress * 100)}%`}
+              {backing.phase === "ready" && backing.seconds > 0 ? ` (${mmss(backing.seconds)} long)` : ""}
+            </div>
+          )}
           {connected && (
             <div className="mt-1 text-[12px] text-emerald-300" data-testid="rec-peer">
               {snap.peerName || "The other person"} is connected ({snap.peerAddress})
@@ -295,6 +363,16 @@ export function RecordingPanel() {
         {choice && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name (shown to the other person)" className="hw-field mb-1.5 w-full px-2 py-1 text-[12px]" data-testid="rec-name" />}
         {choice === "producer" && (
           <>
+            <div className="mb-1.5 space-y-0.5" data-testid="rec-mode">
+              <label className="flex items-start gap-1.5 text-[12px] text-slate-200">
+                <input type="radio" name="rec-mode" className="mt-0.5" checked={mode === "vocal"} onChange={() => setMode("vocal")} data-testid="rec-mode-vocal" />
+                <span>The singer sings over my song <span className="text-slate-500">(only the singer is recorded)</span></span>
+              </label>
+              <label className="flex items-start gap-1.5 text-[12px] text-slate-200">
+                <input type="radio" name="rec-mode" className="mt-0.5" checked={mode === "both"} onChange={() => setMode("both")} data-testid="rec-mode-both" />
+                <span>Both of us record our own microphone</span>
+              </label>
+            </div>
             <div className="mb-1 flex gap-1.5">
               <select className="hw-field min-w-0 flex-1 px-1 py-1 text-[12px]" value={bind} onChange={(e) => setBind(e.target.value)} data-testid="rec-network">
                 {ifaces.map((i) => (
@@ -384,10 +462,19 @@ export function RecordingPanel() {
             Not ready yet: {snap.notReadyReasons.join("; ")}
           </div>
         )}
+        {role === "producer" && vocal && (
+          <div className="mb-1.5 rounded bg-black/20 p-1.5 text-[11px] text-slate-300" data-testid="rec-position">
+            Recording will start from <b data-testid="rec-start-pos">{barBeat(live?.startTick ?? 0)}</b> of your song. Move the playhead to change it.
+            <label className="mt-1 flex items-center gap-1.5 text-slate-300">
+              <input type="checkbox" checked={live?.syncPlay ?? true} onChange={(e) => void window.daw.live.setSyncPlay(e.target.checked)} data-testid="rec-syncplay" />
+              The singer hears the song when I press Play
+            </label>
+          </div>
+        )}
         {role === "producer" ? (
           <div className="flex gap-1.5">
             <button className="hw-btn hw-go flex-1 py-2 text-sm" disabled={!ready} onClick={() => void doRecord()} data-testid="rec-record" title={ready ? "Both PCs start recording at the same planned moment" : "Not ready yet (see above)"}>
-              ● Record
+              ● Record{vocal ? " vocal" : ""}
             </button>
             <button className="hw-btn flex-1 py-2 text-sm" disabled={!takeBusy} onClick={() => void doStop()} data-testid="rec-stop">
               ■ Stop
@@ -409,7 +496,9 @@ export function RecordingPanel() {
             Take {snap.take.takeId}:{" "}
             {snap.take.cancelled
               ? `cancelled (${snap.take.cancelReason})`
-              : [
+              : snap.take.vocal
+                ? [role === "producer" ? (snap.take.peerFinalised ? `singer's vocal ${takeStatusName(snap.take.peerStatus)}, ${mmss(snap.take.peerFrames / 48000)}` : snap.take.peerStarted ? "singer is recording" : "singer is getting ready") : snap.take.localFinalised ? `your vocal ${takeStatusName(snap.take.localStatus)}, ${mmss(snap.take.localFrames / 48000)}` : snap.take.localStarted ? "recording your vocal" : "getting ready"].join("")
+                : [
                   snap.take.localFinalised ? `yours ${takeStatusName(snap.take.localStatus)}, ${mmss(snap.take.localFrames / 48000)}` : snap.take.localStarted ? "yours recording" : "yours waiting",
                   role === "producer" ? (snap.take.peerFinalised ? `singer's ${takeStatusName(snap.take.peerStatus)}, ${mmss(snap.take.peerFrames / 48000)}` : snap.take.peerStarted ? "singer's recording" : "singer's waiting") : "",
                 ]
@@ -464,6 +553,42 @@ export function RecordingPanel() {
     </section>
   );
 
+  // ---- the singer's side of the backing track: volume and the sound card's delay ----
+  const singerBlock = role === "performer" && snap && (
+    <section className="mb-2 rounded bg-white/5 p-2" data-testid="rec-singer-audio">
+      <div className="mb-1 text-[13px] font-semibold text-slate-100">Backing track and timing</div>
+      {backing && backing.phase !== "off" ? (
+        <div className={`mb-1 text-[11px] ${backing.phase === "error" ? "text-amber-200" : backing.phase === "ready" ? "text-emerald-300" : "text-slate-400"}`} data-testid="rec-backing">
+          {backing.detail}
+          {backing.phase === "downloading" && backing.bytes > 0 && ` ${Math.round(backing.progress * 100)}%`}
+        </div>
+      ) : (
+        <div className="mb-1 text-[11px] text-slate-500" data-testid="rec-backing">The producer's song will arrive here when they choose "the singer sings over my song".</div>
+      )}
+      {backing && backing.phase === "downloading" && (
+        <div className="mb-1 h-1.5 overflow-hidden rounded bg-black/40"><div className="h-full bg-sky-400" style={{ width: `${Math.round(backing.progress * 100)}%` }} /></div>
+      )}
+      <label className="mb-1 flex items-center gap-2 text-[11px] text-slate-300">
+        Song volume
+        <input type="range" min={0} max={100} value={Math.round(mic.backingVolume * 100)} onChange={(e) => liveAudio.setBackingVolume(Number(e.target.value) / 100)} className="min-w-0 flex-1" data-testid="rec-backing-volume" />
+      </label>
+      <div className="text-[11px] text-slate-400" data-testid="rec-latency">
+        Sound-card delay used to line your voice up with the song: <b className="text-slate-200">{(mic.latencyUs / 1000).toFixed(1)} ms</b>{" "}
+        ({mic.latencySource === "auto" ? "estimated by the computer" : mic.latencySource === "measured" ? "measured" : "typed in"})
+      </div>
+      <div className="mt-1 flex items-center gap-1.5">
+        <button className="hw-btn px-2 py-0.5 text-[11px]" disabled={!mic.open || mic.calibrating || takeBusy} onClick={() => void liveAudio.calibrate()} data-testid="rec-calibrate" title="Plays five clicks through the speakers and times when the microphone hears them">
+          {mic.calibrating ? "Measuring…" : "Measure it"}
+        </button>
+        <input value={latencyMs} onChange={(e) => setLatencyMs(e.target.value.replace(/[^0-9.]/g, "").slice(0, 6))} placeholder="or type ms" className="hw-field w-[78px] px-1 py-0.5 text-[11px]" data-testid="rec-latency-in" />
+        <button className="hw-btn px-2 py-0.5 text-[11px]" disabled={latencyMs === ""} onClick={() => { liveAudio.setLatencyMs(Number(latencyMs)); setLatencyMs(""); }} data-testid="rec-latency-set">Use</button>
+        <button className="underline text-[11px] text-slate-400 hover:text-slate-200" onClick={() => liveAudio.setLatencyMs(null)}>Auto</button>
+      </div>
+      {mic.calibNote && <div className="mt-1 text-[11px] text-slate-400" data-testid="rec-calib-note">{mic.calibNote}</div>}
+      <p className="mt-1 text-[10px] text-slate-500">Use headphones while recording so the song is not picked up by the microphone. To measure the delay, use speakers once and keep the microphone close to them.</p>
+    </section>
+  );
+
   // ---- step 4: takes ----
   const transferRows = snap?.transfers ?? [];
   const takes = live?.takes ?? [];
@@ -478,12 +603,16 @@ export function RecordingPanel() {
                 <span className="block truncate text-slate-200" title={t.file}>{t.label}</span>
                 <span className="text-[10px] text-slate-500">
                   {mmss(t.seconds)}
-                  {t.kind === "singer-copy" ? " · verified copy" : " · recorded on this PC"}
+                  {t.kind === "singer-copy" ? (t.vocal ? ` · vocal, from ${barBeat(t.startTick)}${placedTakes.has(t.key) ? " · on its own track" : ""}` : " · verified copy") : " · recorded on this PC"}
                 </span>
               </span>
-              <button className="hw-btn hw-teal shrink-0 px-2 py-0.5 text-[11px]" disabled={busy === t.file} onClick={() => void addTake(t.file)} data-testid="rec-add-take">
-                Add to project
-              </button>
+              {t.vocal && !failedTakes.has(t.key) ? (
+                <span className="shrink-0 text-[11px] text-emerald-300" data-testid="rec-take-placed">{placedTakes.has(t.key) ? "On the timeline" : ""}</span>
+              ) : (
+                <button className="hw-btn hw-teal shrink-0 px-2 py-0.5 text-[11px]" disabled={busy === t.file} onClick={() => (t.vocal ? void placeVocalTake(t) : void addTake(t.file))} data-testid="rec-add-take">
+                  {t.vocal ? "Put on the timeline" : "Add to project"}
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -531,6 +660,7 @@ export function RecordingPanel() {
           Get the singer's take automatically after each recording (needs their permission)
         </label>
       )}
+      {vocalNote && <div className="mb-1 rounded bg-emerald-500/10 px-1.5 py-1 text-[11px] text-emerald-200" data-testid="rec-vocal-note">{vocalNote}</div>}
       {takes.length === 0 && transferRows.length === 0 && <p className="mb-1 text-[11px] text-slate-500">Your recordings appear here when a take ends.</p>}
       <div className="hw-legend mt-1 mb-1 !text-[9px]">OTHER RECORDINGS IN THE FOLDER</div>
       {rec && rec.takes.length > 0 ? (
@@ -604,6 +734,7 @@ export function RecordingPanel() {
           {micStep}
           {connectStep}
           {recordStep}
+          {singerBlock}
           {talkbackBlock}
           {takesStep}
           {details}

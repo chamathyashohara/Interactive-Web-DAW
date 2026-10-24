@@ -8,3 +8,4 @@ export * from "./features";
 export * from "./samples";
 export * from "./transport";
 export * from "./research";
+export * from "./vocal";

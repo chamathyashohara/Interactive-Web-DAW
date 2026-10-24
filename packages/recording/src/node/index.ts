@@ -7,3 +7,5 @@ export * from "./sessionController";
 export * from "./takeTransfer";
 export * from "./captureRecorder";
 export * from "./mediaEndpoint";
+export * from "./backing";
+export * from "./vocalProducerPort";

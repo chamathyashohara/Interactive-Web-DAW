@@ -17,6 +17,8 @@ export interface PortTakeSpec {
   maxTakeSeconds: number;
   /** local monotonic time of the first sample */
   startAtNs: number;
+  /** vocal over a backing track: the singer plays the backing from `offsetUs` into the song while recording */
+  vocal?: { offsetUs: number; backingId: string };
 }
 
 export interface PortEvent {
@@ -39,11 +41,13 @@ export interface PortEvent {
   error: string;
   /** full path of the WAV (or .partial) */
   file: string;
+  /** vocal takes: the speaker-to-microphone round trip the recording was made with, microseconds */
+  latencyUs: number;
 }
 
 export const blankEvent = (kind: PortEvent["kind"], takeId: number): PortEvent => ({
   kind, takeId, eventNs: 0, firstFrame: 0, devicePeriodFrames: 0, devicePeriods: 0, firstSampleNs: 0, lateFrames: 0,
-  status: TakeStatus.Complete, finalised: false, frames: 0, sampleRate: 0, stopReason: "", error: "", file: "",
+  status: TakeStatus.Complete, finalised: false, frames: 0, sampleRate: 0, stopReason: "", error: "", file: "", latencyUs: 0,
 });
 
 export interface RecorderPort {
@@ -62,22 +66,22 @@ export interface RecorderPort {
 
 /** No audio: "starts" when its clock reaches the scheduled time, counts frames at a nominal 48 kHz, "finalises" on stop. */
 export class TestRecorderPort implements RecorderPort {
-  private ready = true;
-  private notReadyReason = "";
+  protected ready = true;
+  protected notReadyReason = "";
   private failNext = "";
   private fault = false;
-  private active = false;
+  protected active = false;
   private started = false;
   private stopping = false;
   private remoteStop = false;
-  private spec: PortTakeSpec | null = null;
+  protected spec: PortTakeSpec | null = null;
   private stopAtNs = 0;
-  private events: PortEvent[] = [];
+  protected events: PortEvent[] = [];
   private startedAtNs = 0;
   /** TEST ONLY: returns the path of a file the test wrote for a finalised take. */
   reportFile: ((takeId: number, frames: number) => string) | null = null;
 
-  constructor(private clock: Clock = systemClock) {}
+  constructor(protected clock: Clock = systemClock) {}
 
   setReady(ready: boolean, reason = "test: not ready"): void {
     this.ready = ready;

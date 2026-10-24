@@ -12,7 +12,7 @@
  */
 import path from "node:path";
 import { ErrorCode, TakeStatus, type Role, errorCodeName, takeStatusName } from "../errors";
-import { Frame, MsgType, Tag, msgTypeName } from "../controlProtocol";
+import { Frame, MINOR_BACKING, MsgType, Tag, msgTypeName } from "../controlProtocol";
 import {
   LinkState, type LocalReadiness, ReadyItem, type ReadinessCheck, SessionEvent, SessionState, decodeChecks, encodeChecks, isTakeRunning, linkStateName,
   sessionStateName, sessionTransition,
@@ -36,8 +36,28 @@ export const DEFAULT_TIMING: SessionTimingConfig = {
   startLeadMs: 1000, autoStartLead: true, armAckMarginMs: 100, stopLeadMs: 300, finaliseReportWaitMs: 10000, maxTakeSeconds: 1800,
 };
 
+/** What the application around the controller does for the backing-track features (all optional). */
+export interface ControllerHooks {
+  /** performer: the producer announced a backing track; download it from `host`. */
+  onBackingOffer?(o: { id: string; host: string; port: number; token: string; bytes: number }): void;
+  /** performer: the id of the backing track this PC holds ("" = none). */
+  backingHave?(): string;
+  /** performer: play the backing track from `offsetUs` at `startLocalNs` (this PC's clock). Returns "" or why it cannot. */
+  onPlayBacking?(startLocalNs: number, offsetUs: number): string;
+  /** performer: stop the backing track now. */
+  onStopBacking?(): void;
+}
+
+export interface BackingOffer {
+  id: string;
+  port: number;
+  token: string;
+  bytes: number;
+}
+
 export interface ControllerConfig {
   role: Role;
+  hooks?: ControllerHooks;
   timing?: Partial<SessionTimingConfig>;
   link?: Partial<LinkTimings>;
   appVersion: string;
@@ -110,6 +130,10 @@ export interface TakeView {
   startLeadMs: number;
   cancelled: boolean;
   cancelReason: string;
+  /** vocal over a backing track: song position (microseconds) the take plays and records from, and the singer's measured round trip */
+  vocal: boolean;
+  offsetUs: number;
+  peerLatencyUs: number;
 }
 export const newTakeView = (): TakeView => ({
   takeId: 0, armSent: false, peerArmAck: false, scheduleSent: false, peerStartAck: false, startAtLocalNs: 0, peerPlannedStartNs: 0, localStarted: false,
@@ -118,7 +142,7 @@ export const newTakeView = (): TakeView => ({
   peerStatus: TakeStatus.Complete, peerFrames: 0, hasStartOffset: false, startOffsetMs: 0, startOffsetUncMs: 0, armSentNs: 0, armAckRxNs: 0, scheduleSentNs: 0,
   startAckRxNs: 0, armRxNs: 0, scheduleRxNs: 0, startAckSentNs: 0, peerStartedRxNs: 0, peerFinalisedRxNs: 0, stopCmdNs: 0, stopAtLocalNs: 0, stopAckRxNs: 0,
   localStartedSeenNs: 0, localFinalisedNs: 0, localFirstFrame: 0, peerFirstFrame: 0, devicePeriodFrames: 0, devicePeriods: 0, thetaNs: 0, thetaUncNs: 0,
-  offsetSamples: 0, startLeadMs: 0, cancelled: false, cancelReason: "",
+  offsetSamples: 0, startLeadMs: 0, cancelled: false, cancelReason: "", vocal: false, offsetUs: 0, peerLatencyUs: 0,
 });
 
 export interface ControllerSnapshot {
@@ -156,17 +180,21 @@ export interface ControllerSnapshot {
   autoTransfer: boolean;
   protocolMinor: number;
   transferPort: number;
+  /** "vocal": only the singer is recorded, over a backing track the producer plays; "both": each PC records its own microphone */
+  mode: "both" | "vocal";
+  /** producer: the backing track on offer and the id the singer holds; performer: what the producer offered and what is held */
+  backing: { offeredId: string; haveId: string; bytes: number; playing: boolean };
 }
 
 const carriesSession = (t: number): boolean =>
-  [MsgType.Arm, MsgType.ArmAck, MsgType.ScheduleStart, MsgType.StartAck, MsgType.TakeStarted, MsgType.Cancel, MsgType.StopSchedule, MsgType.StopAck, MsgType.LocalStop, MsgType.TakeFinalised, MsgType.TransferRequest, MsgType.TransferAck].includes(t as never);
+  [MsgType.PlayAck, MsgType.Arm, MsgType.ArmAck, MsgType.ScheduleStart, MsgType.StartAck, MsgType.TakeStarted, MsgType.Cancel, MsgType.StopSchedule, MsgType.StopAck, MsgType.LocalStop, MsgType.TakeFinalised, MsgType.TransferRequest, MsgType.TransferAck].includes(t as never);
 
 const AUTO_START_LEAD_HEADROOM_MS = 250;
 const msBetween = (from: number, to: number): string => (from === 0 || to === 0 ? "n/a" : ((to - from) / 1e6).toFixed(3));
 
 export class SessionController {
   readonly role: Role;
-  private cfg: Required<Omit<ControllerConfig, "timing" | "link" | "transferSender" | "clock" | "receivedRoot">> & { timing: SessionTimingConfig; link: Partial<LinkTimings>; transferSender: SenderParams; receivedRoot: string };
+  private cfg: Required<Omit<ControllerConfig, "timing" | "link" | "transferSender" | "clock" | "receivedRoot" | "hooks">> & { timing: SessionTimingConfig; link: Partial<LinkTimings>; transferSender: SenderParams; receivedRoot: string };
   private clock: Clock;
   private link: ControlLink | null = null;
   private linkState: LinkState = LinkState.Disconnected;
@@ -208,10 +236,19 @@ export class SessionController {
   private autoQueue: number[] = [];
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private listeners = new Set<() => void>();
-  private releasedAfterEnd = false;
+  private mode: "both" | "vocal" = "both";
+  private offered: BackingOffer | null = null;
+  private peerBackingHave = "";
+  private incomingOffer: BackingOffer | null = null;
+  private backingPlaying = false;
+  private hooks: ControllerHooks;
+  private singerHearing = false;
+  private vocalBackingId = "";
+  private previewStartNs = 0;
 
   constructor(config: ControllerConfig, private port: RecorderPort, private log: Logger = nullLogger) {
     this.role = config.role;
+    this.hooks = config.hooks ?? {};
     this.clock = config.clock ?? systemClock;
     this.cfg = {
       role: config.role,
@@ -403,13 +440,17 @@ export class SessionController {
 
   private sendStatus(force: boolean): void {
     if (!this.link || this.linkState !== LinkState.Connected) return;
-    const payload = `${+this.localReady}${+this.consent}${+this.deliveryConsent}${this.state}${this.reasons.join("; ")}${encodeChecks(this.localChecks)}`;
+    const have = this.role === "performer" ? (this.hooks.backingHave?.() ?? "") : "";
+    const payload = `${+this.localReady}${+this.consent}${+this.deliveryConsent}${this.state}${this.reasons.join("; ")}${encodeChecks(this.localChecks)}${have}`;
     const now = this.now();
     if (!force && payload === this.lastStatusPayload && now - this.lastStatusNs < msToNs(this.cfg.statusIntervalMs)) return;
     const f = new Frame(MsgType.ReadyStatus);
     f.setU8(Tag.Ready, this.localReady ? 1 : 0).setU8(Tag.Consent, this.consent ? 1 : 0).setU8(Tag.State, this.state);
     f.setStr(Tag.Reasons, this.reasons.join("; ")).setStr(Tag.ReadyChecks, encodeChecks(this.localChecks));
-    if (this.role === "performer") f.setU8(Tag.DeliveryConsent, this.deliveryConsent ? 1 : 0);
+    if (this.role === "performer") {
+      f.setU8(Tag.DeliveryConsent, this.deliveryConsent ? 1 : 0);
+      if (have) f.setStr(Tag.BackingHave, have);
+    }
     if (this.send(f)) {
       this.lastStatusPayload = payload;
       this.lastStatusNs = now;
@@ -428,8 +469,21 @@ export class SessionController {
       const n = stats?.offsetSamples ?? 0;
       this.localChecks.push({ item: ReadyItem.ClockOffset, ok: n >= this.cfg.minOffsetSamples, mandatory: true, detail: `${n} of ${this.cfg.minOffsetSamples} samples, +/- ${((stats?.thetaUncertaintyNs ?? 0) / 1e6).toFixed(3)} ms` });
     }
+    if (this.role === "performer" && this.incomingOffer) {
+      const have = this.hooks.backingHave?.() ?? "";
+      const ok = have === this.incomingOffer.id;
+      this.localChecks.push({ item: ReadyItem.Backing, ok, mandatory: true, detail: ok ? "received and verified" : "downloading" });
+      if (!ok) this.reasons.push("the backing track has not arrived yet");
+    }
+    if (this.role === "producer" && this.mode === "vocal" && up) {
+      const ok = !!this.offered && this.peerBackingHave === this.offered.id;
+      this.localChecks.push({ item: ReadyItem.Backing, ok, mandatory: true, detail: ok ? "the singer has it" : this.offered ? "sending to the singer" : "being prepared" });
+      if (!ok) this.reasons.push(this.offered ? "the backing track has not reached the singer yet" : "the backing track is still being prepared");
+    }
     if (!this.consent) this.reasons.push("recording consent not given");
-    const transferring = !!(this.receiver?.anyActive() || this.sender?.busy);
+    // Vocal over a backing track: a take is recorded on the singer's own PC, so a copy of the previous take moving over a slow link must not hold up the next one.
+    const vocalMode = this.mode === "vocal" || !!this.incomingOffer;
+    const transferring = !vocalMode && !!(this.receiver?.anyActive() || this.sender?.busy);
     if (transferring) this.reasons.push(this.role === "producer" ? "a take transfer is running (Record is available when it ends)" : "sending a take to the producer");
     if (!this.link) {
       this.reasons.push(this.role === "producer" ? "no session created" : "not joined to a session");
@@ -474,10 +528,12 @@ export class SessionController {
   }
 
   /** Producer: Record. Returns "" or why not. */
-  startTake(): string {
+  startTake(opts: { offsetUs?: number } = {}): string {
     if (this.role !== "producer") return "only the producer starts takes";
     this.updateReadiness();
     if (this.state !== SessionState.Ready) return `not ready: ${this.reasons.join("; ")}`;
+    const vocal = this.mode === "vocal";
+    if (vocal && (!this.offered || this.peerBackingHave !== this.offered.id || (this.link?.joinInfo().protocolMinor ?? 0) < MINOR_BACKING)) return "the singer does not have the backing track yet";
     const lead = this.effectiveStartLeadMs();
     if (lead < this.minStartLeadMs()) return `start lead ${lead} ms is below the minimum ${this.minStartLeadMs()} ms for the measured link`;
     if (!this.apply(SessionEvent.UserRecord, "producer pressed Record")) return "Record is not allowed in this state";
@@ -487,8 +543,11 @@ export class SessionController {
     this.take.takeId = ++this.lastTakeId;
     this.stopAfterStart = false;
     this.take.startLeadMs = lead; // fixed for the whole take
+    this.take.vocal = vocal;
+    this.take.offsetUs = vocal ? Math.max(0, Math.round(opts.offsetUs ?? 0)) : 0;
     this.take.armSentNs = this.now();
     const f = new Frame(MsgType.Arm).setU32(Tag.TakeId, this.take.takeId).setU32(Tag.MaxTakeSeconds, this.cfg.timing.maxTakeSeconds);
+    if (vocal) f.setU8(Tag.Mode, 1).setU64(Tag.OffsetUs, this.take.offsetUs).setStr(Tag.BackingId, this.offered!.id);
     this.take.armSent = this.send(f);
     this.armAckDeadline = this.now() + msToNs(2000);
     this.history(`take ${this.take.takeId}: ARM sent (waiting for the performer's ARM_ACK)`);
@@ -590,6 +649,7 @@ export class SessionController {
           this.history(`take ${this.take.takeId}: STOP_SCHEDULE ${sent ? "re-sent after reconnecting (the performer's take ends later than the producer's)" : "still could not be sent"}`);
           this.log.log("warn", "session", "stop_resent", "STOP_SCHEDULE re-sent after reconnecting", { take: this.take.takeId, sent });
         }
+        if (this.role === "producer" && this.offered) this.sendOffer();
         while (this.reportQueue.length) {
           if (!this.send(this.reportQueue[0]!)) break;
           this.reportQueue.shift();
@@ -628,6 +688,7 @@ export class SessionController {
       this.peerReasons = f.str(Tag.Reasons) ?? "";
       this.peerChecks = decodeChecks(f.str(Tag.ReadyChecks) ?? "");
       this.peerDeliveryConsent = (f.u8(Tag.DeliveryConsent) ?? 0) !== 0;
+      this.peerBackingHave = f.str(Tag.BackingHave) ?? "";
       return;
     }
     if (carriesSession(f.type) && this.sessionId) {
@@ -701,7 +762,7 @@ export class SessionController {
         t.peerStartAck = true;
         t.startAckRxNs = this.now();
         t.peerPlannedStartNs = f.i64(Tag.PlannedLocalNs) ?? 0;
-        const spec: PortTakeSpec = { takeId: t.takeId, sessionId: this.sessionId, role: "producer", maxTakeSeconds: this.cfg.timing.maxTakeSeconds, startAtNs: t.startAtLocalNs };
+        const spec: PortTakeSpec = { takeId: t.takeId, sessionId: this.sessionId, role: "producer", maxTakeSeconds: this.cfg.timing.maxTakeSeconds, startAtNs: t.startAtLocalNs, ...(t.vocal ? { vocal: { offsetUs: t.offsetUs, backingId: this.offered?.id ?? "" } } : {}) };
         const error = this.port.scheduleTake(spec);
         if (error) {
           this.send(new Frame(MsgType.Cancel).setU32(Tag.TakeId, t.takeId).setU16(Tag.ErrorCode, ErrorCode.DiskWrite));
@@ -750,10 +811,19 @@ export class SessionController {
         this.stopOwed = false;
         t.peerStatus = (f.u8(Tag.Status) ?? 0) as TakeStatus;
         t.peerFrames = f.u64(Tag.Frames) ?? 0;
+        t.peerLatencyUs = f.u32(Tag.LatencyUs) ?? 0;
         this.finished.set(take, { status: t.peerStatus, frames: t.peerFrames, file: "" });
         if (this.cfg.autoTransfer) this.autoQueue.push(take); // requested once this take has ended on both PCs
         this.history(`${tag}performer's take ${takeStatusName(t.peerStatus)}, ${t.peerFrames} frames`);
         this.maybeComplete();
+        return;
+      case MsgType.BackingAck:
+        this.history((f.u8(Tag.Accepted) ?? 0) !== 0 ? "singer accepted the backing track and is downloading it" : `singer cannot take the backing track: ${f.str(Tag.ErrorText) ?? ""}`);
+        return;
+      case MsgType.PlayAck:
+        this.singerHearing = (f.u8(Tag.Accepted) ?? 0) !== 0;
+        this.history(this.singerHearing ? "singer is playing the backing track" : `singer cannot play the backing track: ${f.str(Tag.ErrorText) ?? ""}`);
+        if (!this.singerHearing) this.lastError = `the singer cannot play the backing track: ${f.str(Tag.ErrorText) ?? ""}`;
         return;
       case MsgType.TransferAck:
         if ((f.u8(Tag.Accepted) ?? 0) !== 0) {
@@ -763,6 +833,11 @@ export class SessionController {
           const why = `performer refused: ${errorCodeName(code)}: ${f.str(Tag.ErrorText) ?? ""}`;
           this.history(`${tag}transfer ${why}`);
           this.receiver?.cancel(take, why);
+          if (code === ErrorCode.Busy && this.cfg.autoTransfer) {
+            // The singer is still sending an earlier take or recording the next one: ask again in a moment.
+            this.history(`${tag}will ask again in a moment`);
+            setTimeout(() => { if (this.link) this.autoQueue.push(take); }, 2000);
+          }
         }
         return;
       default:
@@ -782,6 +857,14 @@ export class SessionController {
           this.reply(MsgType.ArmAck, f.msgId, take, false, ErrorCode.TakeIdConflict, "take id already used (duplicate or delayed ARM)");
           return this.refuse(f, ErrorCode.TakeIdConflict, "duplicate or delayed ARM");
         }
+        const vocalArm = f.u8(Tag.Mode) === 1;
+        if (vocalArm) {
+          const want = f.str(Tag.BackingId) ?? "";
+          if (!want || (this.hooks.backingHave?.() ?? "") !== want) {
+            this.reply(MsgType.ArmAck, f.msgId, take, false, ErrorCode.NotReady, "the backing track has not arrived on this PC");
+            return this.refuse(f, ErrorCode.NotReady, "backing track not received");
+          }
+        }
         this.updateReadiness();
         if (sessionTransition("performer", this.state, SessionEvent.ArmReceived) === null) {
           const code = !this.consent ? ErrorCode.NoConsent : this.state === SessionState.NotReady ? ErrorCode.NotReady : ErrorCode.Busy;
@@ -796,6 +879,9 @@ export class SessionController {
         this.takeOpen = true;
         this.take.takeId = take;
         this.take.armRxNs = now;
+        this.take.vocal = vocalArm;
+        this.take.offsetUs = vocalArm ? (f.u64(Tag.OffsetUs) ?? 0) : 0;
+        this.vocalBackingId = vocalArm ? (f.str(Tag.BackingId) ?? "") : "";
         this.lastTakeId = take;
         this.scheduleDeadline = now + msToNs(this.cfg.armToScheduleTimeoutMs);
         this.reply(MsgType.ArmAck, f.msgId, take, true, ErrorCode.Ok, "");
@@ -834,7 +920,7 @@ export class SessionController {
           this.takeOpen = false;
           return;
         }
-        const spec: PortTakeSpec = { takeId: take, sessionId: this.sessionId, role: "performer", maxTakeSeconds: this.cfg.timing.maxTakeSeconds, startAtNs: startLocal };
+        const spec: PortTakeSpec = { takeId: take, sessionId: this.sessionId, role: "performer", maxTakeSeconds: this.cfg.timing.maxTakeSeconds, startAtNs: startLocal, ...(t.vocal ? { vocal: { offsetUs: t.offsetUs, backingId: this.vocalBackingId } } : {}) };
         const error = this.port.scheduleTake(spec);
         if (error) {
           this.reply(MsgType.StartAck, f.msgId, take, false, ErrorCode.DiskWrite, error);
@@ -899,6 +985,50 @@ export class SessionController {
         this.history(`take ${take}: stop scheduled by the producer`);
         return;
       }
+      case MsgType.BackingOffer: {
+        const offer: BackingOffer = { id: f.str(Tag.BackingId) ?? "", port: f.u16(Tag.BackingPort) ?? 0, token: f.str(Tag.BackingToken) ?? "", bytes: f.u64(Tag.BackingBytes) ?? 0 };
+        if (!/^[0-9a-f]{64}$/.test(offer.id) || !/^[0-9a-f]{32}$/.test(offer.token) || !offer.port || !offer.bytes || !this.link) {
+          const r = new Frame(MsgType.BackingAck).setU8(Tag.Accepted, 0).setStr(Tag.ErrorText, "malformed backing track offer");
+          r.refId = f.msgId;
+          this.send(r);
+          return this.refuse(f, ErrorCode.ProtocolMalformed, "malformed backing track offer");
+        }
+        const same = this.incomingOffer?.id === offer.id;
+        this.incomingOffer = offer;
+        const r = new Frame(MsgType.BackingAck).setU8(Tag.Accepted, 1);
+        r.refId = f.msgId;
+        this.send(r);
+        this.history(same ? "producer re-announced the backing track" : `producer announced a backing track (${(offer.bytes / 1048576).toFixed(1)} MB)`);
+        this.hooks.onBackingOffer?.({ ...offer, host: this.link.joinInfo().peerAddress });
+        return;
+      }
+      case MsgType.PlayBacking: {
+        const id = f.str(Tag.BackingId) ?? "";
+        const no = (text: string) => {
+          const r = new Frame(MsgType.PlayAck).setU8(Tag.Accepted, 0).setStr(Tag.ErrorText, text);
+          r.refId = f.msgId;
+          this.send(r);
+          this.refuse(f, ErrorCode.NotReady, text);
+        };
+        if (isTakeRunning(this.state) || this.state === SessionState.Armed || this.state === SessionState.Scheduled) return no("a take is being recorded");
+        if (!id || (this.hooks.backingHave?.() ?? "") !== id) return no("the backing track has not arrived on this PC");
+        if ((this.link?.stats().offsetSamples ?? 0) < this.cfg.minOffsetSamples) return no("the clock offset has not been measured yet");
+        const startLocal = (f.i64(Tag.StartAtNs) ?? 0) - this.link!.stats().thetaNs;
+        if (startLocal - now < msToNs(this.cfg.timing.armAckMarginMs)) return no("the start time is too close");
+        const why = this.hooks.onPlayBacking?.(startLocal, f.u64(Tag.OffsetUs) ?? 0) ?? "playing the backing track is not available";
+        if (why) return no(why);
+        this.backingPlaying = true;
+        const r = new Frame(MsgType.PlayAck).setU8(Tag.Accepted, 1);
+        r.refId = f.msgId;
+        this.send(r);
+        this.history(`playing the backing track from ${((f.u64(Tag.OffsetUs) ?? 0) / 1e6).toFixed(2)} s in ${Math.trunc((startLocal - now) / 1e6)} ms`);
+        return;
+      }
+      case MsgType.StopBacking:
+        this.backingPlaying = false;
+        this.hooks.onStopBacking?.();
+        this.history("the producer stopped the backing track");
+        return;
       case MsgType.TransferRequest:
         return this.performerTransferRequest(f);
       default:
@@ -973,6 +1103,7 @@ export class SessionController {
     if (this.role === "performer" && e.finalised) this.finished.set(e.takeId, { status: e.status, frames: e.frames, file: e.file }); // candidate for transfer
     if (this.role === "performer") {
       const f = new Frame(MsgType.TakeFinalised).setU32(Tag.TakeId, e.takeId).setU8(Tag.Status, e.status).setU64(Tag.Frames, e.frames).setStr(Tag.StopReason, e.stopReason);
+      if (t.vocal) f.setU32(Tag.LatencyUs, e.latencyUs);
       this.sendOrQueue(f);
       this.takeOpen = false;
       this.logTakeTiming(takeStatusName(e.status));
@@ -1089,6 +1220,59 @@ export class SessionController {
   // Take transfer (Stage 11): the control link carries only the request and its answer; the file moves on its own TCP connection.
 
   setAutoTransfer(on: boolean): void { this.cfg.autoTransfer = on; }
+
+  // ---- vocal over a backing track ----
+
+  /** Producer: "vocal": only the singer is recorded, over the backing track; "both": each PC records its own microphone (the original behaviour). */
+  setMode(mode: "both" | "vocal"): void {
+    if (this.role === "producer") this.mode = mode;
+  }
+  get currentMode(): "both" | "vocal" { return this.mode; }
+
+  private sendOffer(): boolean {
+    const o = this.offered;
+    if (!o || !this.link || this.linkState !== LinkState.Connected || (this.link.joinInfo().protocolMinor ?? 0) < MINOR_BACKING) return false;
+    const f = new Frame(MsgType.BackingOffer).setStr(Tag.BackingId, o.id).setU16(Tag.BackingPort, o.port).setStr(Tag.BackingToken, o.token).setU64(Tag.BackingBytes, o.bytes);
+    return this.send(f);
+  }
+
+  /** Producer: announce a rendered backing track the singer should download (the token is never logged). */
+  offerBacking(o: BackingOffer): boolean {
+    if (this.role !== "producer") return false;
+    this.offered = o;
+    this.log.log("info", "backing", "offered", "backing track offered", { id: o.id, bytes: o.bytes, token: "<redacted>" });
+    const sent = this.sendOffer();
+    if (sent) this.history(`backing track announced to the singer (${(o.bytes / 1048576).toFixed(1)} MB)`);
+    return sent;
+  }
+  withdrawBacking(): void { this.offered = null; }
+  get peerHasBacking(): boolean { return !!this.offered && this.peerBackingHave === this.offered.id; }
+  get peerSupportsBacking(): boolean { return (this.link?.joinInfo().protocolMinor ?? 0) >= MINOR_BACKING; }
+
+  /**
+   * Producer: let the singer hear the backing track from `offsetUs` (the producer's Play button). The singer starts at `startAtNs` on this PC's
+   * clock; the caller starts the producer's own playback at the same moment. Returns the start time, or why not.
+   */
+  playBacking(offsetUs: number): { error: string; startAtNs: number } {
+    if (this.role !== "producer") return { error: "only the producer plays the backing track", startAtNs: 0 };
+    if (!this.link || this.linkState !== LinkState.Connected) return { error: "the singer is not connected", startAtNs: 0 };
+    if (!this.peerSupportsBacking) return { error: "the singer's app is older and cannot play a backing track", startAtNs: 0 };
+    if (!this.peerHasBacking) return { error: "the singer does not have the backing track yet", startAtNs: 0 };
+    if (isTakeRunning(this.state) || this.state === SessionState.Armed || this.state === SessionState.Scheduled) return { error: "a take is running", startAtNs: 0 };
+    const startAt = this.now() + msToNs(this.effectiveStartLeadMs());
+    const f = new Frame(MsgType.PlayBacking).setI64(Tag.StartAtNs, startAt).setU64(Tag.OffsetUs, Math.max(0, Math.round(offsetUs))).setStr(Tag.BackingId, this.offered!.id);
+    if (!this.send(f)) return { error: "the singer could not be reached", startAtNs: 0 };
+    this.previewStartNs = startAt;
+    this.backingPlaying = true;
+    return { error: "", startAtNs: startAt };
+  }
+  stopBacking(): void {
+    if (this.role !== "producer" || !this.backingPlaying) return;
+    this.backingPlaying = false;
+    this.singerHearing = false;
+    this.send(new Frame(MsgType.StopBacking));
+  }
+  get singerIsHearing(): boolean { return this.singerHearing; }
 
   setDeliveryConsent(given: boolean): void {
     if (this.deliveryConsent === given) return;
@@ -1232,6 +1416,10 @@ export class SessionController {
       autoTransfer: this.cfg.autoTransfer,
       protocolMinor: info?.protocolMinor ?? 0,
       transferPort: this.receiver?.port ?? 0,
+      mode: this.mode,
+      backing: this.role === "producer"
+        ? { offeredId: this.offered?.id ?? "", haveId: this.peerBackingHave, bytes: this.offered?.bytes ?? 0, playing: this.backingPlaying && this.singerHearing }
+        : { offeredId: this.incomingOffer?.id ?? "", haveId: this.hooks.backingHave?.() ?? "", bytes: this.incomingOffer?.bytes ?? 0, playing: this.backingPlaying },
     };
   }
 }

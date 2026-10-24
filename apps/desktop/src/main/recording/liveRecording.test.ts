@@ -36,6 +36,7 @@ function makeService(label: string) {
   const svc = new LiveRecordingService({
     recordingsRoot: path.join(root, "takes"),
     logFile: path.join(root, "log.jsonl"),
+    backingDir: path.join(root, "backing"),
     appVersion: "test",
     onState: (s) => states.push(s),
     toRenderer: (c, p) => toRenderer.push([c, p]),

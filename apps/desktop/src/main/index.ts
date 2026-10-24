@@ -20,7 +20,8 @@ import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
 import { CollabClient, NetStats, isLanHost, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
 import { WebSocket as NodeWebSocket } from "ws";
-import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
+import { eventsToCsv, metricsToCsv, migrateProject, isVocalTrackName } from "@daw/shared";
+import { createHash } from "node:crypto";
 
 interface EngineState {
   connected: boolean;
@@ -147,7 +148,9 @@ app.whenReady().then(() => {
     engineState.lastError = message;
     sendToRenderer("engine:state", engineState);
   });
+  const exportWaiters = new Map<string, (e: { t: string; message?: string; seconds?: number }) => void>();
   engine.on("exportEvent", (e) => {
+    if (e.t !== "exportProgress") exportWaiters.get(e.id)?.(e);
     if (e.t === "exportProgress") sendToRenderer("export:status", { state: "running", id: e.id, fraction: e.fraction });
     else if (e.t === "exportDone") sendToRenderer("export:status", { state: "done", id: e.id, path: e.path, seconds: e.seconds, frames: e.frames, peak: e.peak });
     else sendToRenderer("export:status", { state: "error", id: e.id, message: e.message });
@@ -160,6 +163,7 @@ app.whenReady().then(() => {
       const id = slots.trackFor(slot);
       if (id) levels[id] = peak;
     });
+    if (status.playing) intendedTick = null; // while playing, the engine's own position is the truth
     lastStatus = { ...status, levels };
     sendToRenderer("engine:status", lastStatus);
   });
@@ -288,13 +292,14 @@ app.whenReady().then(() => {
     if (ok) telemetry.record("history", { kind: "redo" });
     return ok;
   });
-  ipcMain.on("transport:play", () => engine.send({ t: "play" }));
-  ipcMain.on("transport:stop", () => engine.send({ t: "stop" }));
+  // With a singer connected (vocal mode) Play also starts the song on the singer's PC at the same planned moment; the engine then starts a moment later.
+  ipcMain.on("transport:play", () => { if (!live.syncPlay()) engine.send({ t: "play" }); });
+  ipcMain.on("transport:stop", () => { live.syncStop(); liveHost.stop(); });
   ipcMain.on("transport:metronome", (_e, on: boolean) => {
     metronomeOn = !!on;
     engine.send({ t: "setMetronome", on: metronomeOn });
   });
-  ipcMain.on("transport:seek", (_e, tick: number) => engine.send({ t: "seek", tick }));
+  ipcMain.on("transport:seek", (_e, tick: number) => { liveHost.seek(tick); live.syncSeek(); });
   ipcMain.on("engine:preview", (_e, p: { trackId: string; pitch: number; velocity: number; on: boolean }) => {
     const slot = slots.slotFor(p.trackId);
     if (slot !== undefined) engine.send({ t: "preview", slot, pitch: p.pitch, velocity: p.velocity, on: p.on });
@@ -327,7 +332,55 @@ app.whenReady().then(() => {
     onChange: (s) => sendToRenderer("recording:state", s),
   });
   recording.start();
+  // What the remote-recording service needs from the project and the transport. The backing track is the arrangement without the recorded
+  // "Vocal take" tracks (the singer must not hear earlier takes unless the producer unmutes... they are never part of it).
+  const activeProject = () => (collab ? (collab.project ?? service.current) : service.current);
+  const withoutVocals = (p: Project): Project => {
+    if (!Object.values(p.tracks).some((t) => isVocalTrackName(t.name))) return p;
+    const tracks = Object.fromEntries(Object.entries(p.tracks).filter(([, t]) => !isVocalTrackName(t.name)));
+    return { ...p, tracks, trackOrder: p.trackOrder.filter((id) => tracks[id]) };
+  };
+  // Where the producer last put the playhead. While nothing plays this is what Record starts from, so a take lands where it was asked for
+  // even if the audio engine is slow to report a position it was just told to go to (it is the producer's intention, not a measurement).
+  let intendedTick: number | null = null;
+  const liveHost = {
+    engineReady: () => engineState.connected,
+    fingerprint: () => {
+      const snap = toEngineSnapshot(withoutVocals(activeProject()), slots, (id) => library.pathOf(id));
+      return createHash("sha1").update(JSON.stringify(snap)).digest("hex");
+    },
+    tick: () => (lastStatus?.playing ? lastStatus.tick : (intendedTick ?? lastStatus?.tick ?? 0)),
+    playing: () => lastStatus?.playing ?? false,
+    tempo: () => activeProject().tempo,
+    play: () => engine.send({ t: "play" }),
+    stop: () => { intendedTick = 0; engine.send({ t: "stop" }); },
+    seek: (tick: number) => { intendedTick = tick; engine.send({ t: "seek", tick }); },
+    renderBacking: async () => {
+      if (!engineState.connected) return { ok: false as const, reason: "the audio engine is not running" };
+      const project = activeProject();
+      const stripped = withoutVocals(project);
+      const id = randomUUID();
+      const target = path.join(app.getPath("temp"), `daw-backing-${id}.wav`);
+      const done = new Promise<{ t: string; message?: string; seconds?: number }>((resolve) => {
+        exportWaiters.set(id, resolve);
+        setTimeout(() => resolve({ t: "exportError", message: "the render took too long" }), 10 * 60_000);
+      });
+      try {
+        if (stripped !== project) engine.send({ t: "loadProject", project: toEngineSnapshot(stripped, slots, (sid) => library.pathOf(sid)) });
+        else pushProjectToEngine(project);
+        engine.send({ t: "exportWav", id, path: target, tailSeconds: 0 });
+        const e = await done;
+        if (e.t !== "exportDone") return { ok: false as const, reason: e.message ?? "the export failed" };
+        return { ok: true as const, file: target, seconds: e.seconds ?? 0 };
+      } finally {
+        exportWaiters.delete(id);
+        if (stripped !== project) pushProjectToEngine(activeProject()); // the engine goes back to the real arrangement
+      }
+    },
+  };
   const live = new LiveRecordingService({
+    host: liveHost,
+    backingDir: path.join(app.getPath("userData"), "backing"),
     recordingsRoot: recording.folder,
     logFile: path.join(app.getPath("userData"), "recording-logs", `live-${new Date().toISOString().slice(0, 10)}.jsonl`),
     appVersion: app.getVersion(),
@@ -377,10 +430,15 @@ app.whenReady().then(() => {
   const num = (v: unknown, min: number, max: number, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.trunc(v))) : fallback);
   ipcMain.handle("live:state", () => live.state());
   ipcMain.handle("live:interfaces", () => listInterfaces());
-  ipcMain.handle("live:create", async (_e, o: { bind?: unknown; port?: unknown; name?: unknown }) => {
+  ipcMain.handle("live:create", async (_e, o: { bind?: unknown; port?: unknown; name?: unknown; mode?: unknown }) => {
     telemetry.record("ui.recording", { action: "create-session" });
-    return live.createSession({ bind: text(o?.bind, 45), port: num(o?.port, 1024, 65533, 52000), name: text(o?.name, 40) });
+    return live.createSession({ bind: text(o?.bind, 45), port: num(o?.port, 1024, 65531, 52000), name: text(o?.name, 40), mode: o?.mode === "vocal" ? "vocal" : "both" });
   });
+  ipcMain.handle("live:syncPlay", (_e, on: unknown) => (live.setSyncPlay(on === true), { ok: true }));
+  ipcMain.handle("live:backingReady", (_e, id: unknown) => (typeof id === "string" && live.backingReady(id), { ok: true }));
+  ipcMain.handle("live:backingFailed", (_e, id: unknown, why: unknown) => (typeof id === "string" && live.backingFailed(id, text(why, 200)), { ok: true }));
+  ipcMain.handle("live:readBacking", (_e, file: unknown) => (typeof file === "string" ? live.readBacking(file) : null));
+  ipcMain.on("live:latency", (_e, us: unknown) => { if (typeof us === "number" && Number.isFinite(us)) live.setLatencyUs(Math.min(2_000_000, Math.max(0, us))); });
   ipcMain.handle("live:join", async (_e, o: { host?: unknown; port?: unknown; code?: unknown; name?: unknown }) => {
     telemetry.record("ui.recording", { action: "join-session" });
     return live.join({ host: text(o?.host, 45), port: num(o?.port, 1, 65535, 52000), code: text(o?.code, 6), name: text(o?.name, 40) });
@@ -509,7 +567,7 @@ app.whenReady().then(() => {
     service.load(workspace.storeFor(meta.id));
     activeProjectId = meta.id;
     workspace.touch(meta.id);
-    engine.send({ t: "stop" });
+    liveHost.stop();
     telemetry.record("ui.project", { action: "new" });
     publishProjects();
     return { ok: true, id: meta.id };
@@ -519,7 +577,7 @@ app.whenReady().then(() => {
     service.load(workspace.storeFor(id));
     activeProjectId = id;
     workspace.touch(id);
-    engine.send({ t: "stop" });
+    liveHost.stop();
     telemetry.record("ui.project", { action: "open" });
     publishProjects();
     return { ok: true };
@@ -557,7 +615,7 @@ app.whenReady().then(() => {
       service.load(workspace.storeFor(nextId));
       activeProjectId = nextId;
       workspace.touch(nextId);
-      engine.send({ t: "stop" });
+      liveHost.stop();
     }
     workspace.delete(id);
     publishProjects();
@@ -620,7 +678,7 @@ app.whenReady().then(() => {
     service.load(workspace.storeFor(meta.id));
     activeProjectId = meta.id;
     workspace.touch(meta.id);
-    engine.send({ t: "stop" });
+    liveHost.stop();
     telemetry.record("ui.project", { action: "openFile" });
     publishProjects();
     return { ok: true, id: meta.id };
@@ -651,7 +709,7 @@ app.whenReady().then(() => {
     service.load(workspace.storeFor(meta.id));
     activeProjectId = meta.id;
     workspace.touch(meta.id);
-    engine.send({ t: "stop" });
+    liveHost.stop();
     telemetry.record("ui.project", { action: "importMidi", tracks: trackCount });
     publishProjects();
     return { ok: true, id: meta.id, tracks: trackCount };
