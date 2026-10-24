@@ -34,6 +34,8 @@ let lastStatus: (EngineStatus & { levels: Record<string, number> }) | null = nul
 
 function resolveEnginePath(): string {
   if (process.env.DAW_ENGINE_PATH) return process.env.DAW_ENGINE_PATH;
+  // The installed / portable app carries the engine beside it (see `build.extraResources` in apps/desktop/package.json).
+  if (app.isPackaged) return path.join(process.resourcesPath, "engine", "daw_engine.exe");
   return path.resolve(app.getAppPath(), "../../engine/build/daw_engine_artefacts/Release/daw_engine.exe");
 }
 

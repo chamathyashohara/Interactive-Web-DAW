@@ -16,7 +16,8 @@
     "dev": "npm run dev -w apps/desktop",
     "server": "npm run server -w @daw/collab",
     "start": "electron apps/desktop",
-    "engine:benchmark": "node scripts/engine-selftest.mjs --benchmark"
+    "engine:benchmark": "node scripts/engine-selftest.mjs --benchmark",
+    "dist": "node scripts/stage-runtime.mjs && npm run build -w apps/desktop && npm run dist -w apps/desktop"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

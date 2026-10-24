@@ -53,7 +53,9 @@ export function launch(port, dataDir, extraEnv = {}) {
   const env = { ...process.env, DAW_DATA_DIR: dataDir, DAW_PROGRESS_DIR: dataDir, DAW_LIBRARY_DIR: path.join(dataDir, "library"), DAW_STARTER_DIR: starterCache, DAW_USER_DATA: path.join(dataDir, "user"), DAW_E2E: "1", ...extraEnv };
   delete env.ELECTRON_RUN_AS_NODE;
   for (const [k, v] of Object.entries(extraEnv)) if (v === null) delete env[k]; // allow a test to unset a default (e.g. DAW_DATA_DIR for workspace mode)
-  return spawn(electronExe, [appDir, `--remote-debugging-port=${port}`], {
+  // DAW_E2E_EXE: run the tests against a packaged build (release/win-unpacked/Collab DAW.exe) instead of Electron + the source folder.
+  const args = process.env.DAW_E2E_EXE ? [`--remote-debugging-port=${port}`] : [appDir, `--remote-debugging-port=${port}`];
+  return spawn(process.env.DAW_E2E_EXE || electronExe, args, {
     env,
     stdio: ["ignore", "ignore", "inherit"],
   });

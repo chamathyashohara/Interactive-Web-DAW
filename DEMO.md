@@ -52,6 +52,10 @@ It is a separate C++ project (CMake, MSVC and Qt). **No built executables are in
 with the toolchain (`components/remote-recording/docs/build/WINDOWS_BUILD.md`) or use a build from its author. Its README states that
 all its testing so far was done with both applications on one PC; two-PC and wireless-link tests are not yet done.
 
+## Installer / portable exe
+
+`npm run dist` builds `release/Collab-DAW-setup-*.exe` and `release/Collab-DAW-portable-*.exe`: the DAW, the audio engine and the two remote-recording programs in one package, with nothing else to install. See `docs/packaging.md`.
+
 ## What is and is not integrated
 
 * **Integrated (one codebase, one window):** lessons + DAW.
