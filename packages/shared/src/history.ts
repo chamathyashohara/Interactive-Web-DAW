@@ -38,6 +38,11 @@ export class History {
   pushUndoKeepRedo(entry: HistoryEntry): void {
     this.undoStack.push(entry);
   }
+  /** Forget all undo/redo (used when the editor switches to a different project). */
+  clear(): void {
+    this.undoStack = [];
+    this.redoStack = [];
+  }
   get canUndo(): boolean {
     return this.undoStack.length > 0;
   }

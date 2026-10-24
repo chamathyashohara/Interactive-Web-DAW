@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { ALL_KEYS, MAX_BPM, MIN_BPM, TICKS_PER_BAR, keyLabel, songTicks, sortedClips, type FeatureId } from "@daw/shared";
 import { Arrangement } from "./components/Arrangement";
 import { Mixer } from "./components/Mixer";
+import { ProjectMenu } from "./components/ProjectMenu";
+import { ExportDialog } from "./components/ExportDialog";
+import { CollabPanel } from "./components/CollabPanel";
 import { BarBeatReadout, TapTempoButton } from "./components/TransportExtras";
 import { TRACK_ROW_H } from "./components/TrackHeader";
 import { Knob } from "./controls/Knob";
@@ -152,6 +155,7 @@ export function App() {
   const [tool, setTool] = useState<Tool>("draw");
   const [snap, setSnap] = useState(true);
   const [metronome, setMetronome] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   useEffect(() => window.daw.setMetronome(false), []); // the click always starts off (the main process remembers it across a reload)
   const [gridTicks, setGridTicks] = useState<number>(GRID_OPTIONS.find((g) => g.label === "1/16")!.ticks);
   const [pxPerBeat, setPxPerBeat] = useState(120);
@@ -217,7 +221,17 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA");
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (e.shiftKey) void window.daw.projects.saveAsFile();
+        else void window.daw.projects.save();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && !typing) {
+        e.preventDefault();
+        void window.daw.projects.openFile();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e" && !typing) {
+        e.preventDefault();
+        setExportOpen(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) void window.daw.redo();
         else void window.daw.undo();
@@ -265,9 +279,12 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <header className="hw-panel flex flex-wrap items-center gap-2 border-b border-black px-3 py-2">
-        <div className="mr-2 text-sm font-semibold text-amber-300">
+        <div className="mr-1 text-sm font-semibold text-amber-300">
           Collab<span className="text-slate-200">DAW</span>
         </div>
+        <ProjectMenu onExport={() => setExportOpen(true)} />
+        <CollabPanel />
+        <span className="mx-1 h-5 w-px bg-white/10" />
 
         <div className="flex gap-1">
           <button className={`${btn} hw-go`} data-lit={status?.playing ? "true" : undefined} onClick={() => window.daw.play()} title="Play (Space)">
@@ -378,7 +395,7 @@ export function App() {
           <button
             className={`${btn} ${idle} ${!unlock.can("export.wav") ? "cursor-not-allowed opacity-50" : ""}`}
             disabled={!unlock.can("export.wav")}
-            onClick={() => void exportWav()}
+            onClick={() => setExportOpen(true)}
             title={unlock.reason("export.wav") ?? "Render the whole song to a WAV file"}
             data-testid="export-wav"
           >
@@ -486,6 +503,7 @@ export function App() {
       {mixerOpen && <Mixer project={project} selectedId={track.id} onSelect={setSelectedTrackId} />}
       <StatusBar />
       {featuresOpen && <FeaturesPanel onClose={() => setFeaturesOpen(false)} />}
+      {exportOpen && project && <ExportDialog project={project} onClose={() => setExportOpen(false)} />}
       <UnlockToast />
     </div>
   );

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
 import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
+import type { ProjectMeta } from "../main/project/workspace";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../main/telemetry/telemetryStore";
 export type { TelemetryState };
@@ -49,13 +50,64 @@ export interface ImportResult {
   brandRemoved: string | null;
 }
 export type StatusPayload = EngineStatus & { levels: Record<string, number> };
+export interface ProjectListPayload {
+  projects: ProjectMeta[];
+  activeId: string;
+}
+export type { ProjectMeta };
+export interface CollabUser {
+  id: string;
+  name: string;
+  color: string;
+}
+export type CollabState =
+  | { active: false }
+  | { active: true; hosting: boolean; status: string; code: string; address: string; users: CollabUser[]; me: string };
 export interface InitialPayload extends ProjectPayload {
+  projects: ProjectListPayload;
+  collab: CollabState;
   engine: EngineState;
   status: StatusPayload | null;
 }
 
 const api = {
   getInitial: (): Promise<InitialPayload> => ipcRenderer.invoke("project:get"),
+  // ---- real-time collaboration (host / join a live session) ----
+  collab: {
+    getState: (): Promise<CollabState> => ipcRenderer.invoke("collab:state"),
+    host: (name?: string): Promise<{ ok: boolean; code?: string; address?: string; reason?: string }> => ipcRenderer.invoke("collab:host", name),
+    join: (address: string, code: string, name?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("collab:join", address, code, name),
+    leave: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("collab:leave"),
+    onState: (cb: (s: CollabState) => void) => {
+      const l = (_e: unknown, s: CollabState) => cb(s);
+      ipcRenderer.on("collab:state", l);
+      return () => ipcRenderer.removeListener("collab:state", l);
+    },
+    onNote: (cb: (n: { kind: string; count?: number }) => void) => {
+      const l = (_e: unknown, n: { kind: string; count?: number }) => cb(n);
+      ipcRenderer.on("collab:note", l);
+      return () => ipcRenderer.removeListener("collab:note", l);
+    },
+  },
+  // ---- projects (new / open / save as / rename / delete) ----
+  projects: {
+    list: (): Promise<ProjectListPayload> => ipcRenderer.invoke("project:list"),
+    new: (name?: string): Promise<{ ok: boolean; id?: string }> => ipcRenderer.invoke("project:new", name),
+    open: (id: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:open", id),
+    saveAs: (name?: string): Promise<{ ok: boolean; id?: string; reason?: string }> => ipcRenderer.invoke("project:saveAs", name),
+    rename: (id: string, name: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:rename", id, name),
+    delete: (id: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("project:delete", id),
+    /** Save the current project to its linked file (prompting the first time). */
+    save: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFile", explicitPath),
+    saveAsFile: (explicitPath?: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:saveFileAs", explicitPath),
+    openFile: (explicitPath?: string): Promise<{ ok: boolean; id?: string; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:openFile", explicitPath),
+    importMidi: (explicitPath?: string): Promise<{ ok: boolean; id?: string; tracks?: number; canceled?: boolean; reason?: string }> => ipcRenderer.invoke("project:importMidi", explicitPath),
+    onList: (cb: (p: ProjectListPayload) => void) => {
+      const l = (_e: unknown, p: ProjectListPayload) => cb(p);
+      ipcRenderer.on("project:list", l);
+      return () => ipcRenderer.removeListener("project:list", l);
+    },
+  },
   dispatch: (body: OpBody, group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:dispatch", body, group),
   dispatchBatch: (bodies: OpBody[], group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:batch", bodies, group),
   undo: (): Promise<boolean> => ipcRenderer.invoke("history:undo"),
@@ -65,7 +117,7 @@ const api = {
   seek: (tick: number) => ipcRenderer.send("transport:seek", tick),
   setMetronome: (on: boolean) => ipcRenderer.send("transport:metronome", on),
   preview: (trackId: string, pitch: number, velocity: number, on: boolean) => ipcRenderer.send("engine:preview", { trackId, pitch, velocity, on }),
-  exportWav: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath),
+  exportWav: (explicitPath?: string, options?: { tailSeconds?: number }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath, options),
   showInFolder: (filePath: string) => ipcRenderer.send("shell:show", filePath),
   // ---- evaluation data: nothing is recorded until the participant agrees ----
   telemetry: {

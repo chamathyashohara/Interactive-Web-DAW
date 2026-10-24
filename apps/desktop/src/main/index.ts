@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
@@ -11,8 +12,13 @@ import { SampleAnalyzer } from "./library/sampleAnalyzer";
 import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
+import { Workspace } from "./project/workspace";
+import { parseMidi } from "./midi/parseMidi";
+import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
-import { eventsToCsv, metricsToCsv } from "@daw/shared";
+import { CollabClient, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
+import { WebSocket as NodeWebSocket } from "ws";
+import { eventsToCsv, metricsToCsv, migrateProject } from "@daw/shared";
 
 interface EngineState {
   connected: boolean;
@@ -57,9 +63,28 @@ function createWindow() {
 if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
 
 app.whenReady().then(() => {
-  const dataDir = process.env.DAW_DATA_DIR ?? path.join(app.getPath("userData"), "projects", "default");
-  fs.mkdirSync(dataDir, { recursive: true });
-  const service = new ProjectService(new LocalStore(dataDir));
+  // Projects live under <userData>/projects, each in its own folder, managed by the Workspace.
+  const workspace = new Workspace(process.env.DAW_PROJECTS_DIR ?? path.join(app.getPath("userData"), "projects"));
+  let activeProjectId: string;
+  let service: ProjectService;
+  if (process.env.DAW_DATA_DIR) {
+    // A fixed single-project directory (end-to-end tests, or an explicit override): unchanged behaviour.
+    fs.mkdirSync(process.env.DAW_DATA_DIR, { recursive: true });
+    service = new ProjectService(new LocalStore(process.env.DAW_DATA_DIR));
+    activeProjectId = path.basename(process.env.DAW_DATA_DIR);
+  } else {
+    const first = workspace.ensureAtLeastOne();
+    service = new ProjectService(workspace.storeFor(first.id));
+    activeProjectId = first.id;
+    workspace.touch(first.id);
+  }
+  // The project list for the UI; the active project is always present even when it is a fixed dir outside the workspace (tests).
+  const projectList = () => {
+    const projects = workspace.list();
+    if (!projects.some((p) => p.id === activeProjectId)) projects.unshift({ id: activeProjectId, name: service.current.name, createdAt: 0, modifiedAt: 0 });
+    return { projects, activeId: activeProjectId };
+  };
+  const publishProjects = () => sendToRenderer("project:list", projectList());
 
   // Learner progress (which lessons are done, whether features are gated). Per user, never part of a project.
   const progressDir = process.env.DAW_PROGRESS_DIR ?? app.getPath("userData");
@@ -126,36 +151,100 @@ app.whenReady().then(() => {
     sendToRenderer("engine:status", lastStatus);
   });
 
+  // ---- real-time collaboration session (Component 3) ----
+  interface CollabState { client: CollabClient; server: SessionServer | null; hosting: boolean; users: UserInfo[]; project: Project | null; code: string; address: string; }
+  let collab: CollabState | null = null;
+  const lanIp = () => {
+    for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs ?? []) if (i.family === "IPv4" && !i.internal) return i.address;
+    return "127.0.0.1";
+  };
+  const cleanName = (name: unknown) => (typeof name === "string" && name.trim() ? name.trim().slice(0, 24) : os.userInfo().username || "Producer");
+  const collabStateMsg = () => (collab ? { active: true, hosting: collab.hosting, status: collab.client.status, code: collab.code, address: collab.address, users: collab.users, me: collab.client.clientId } : { active: false });
+  const publishCollab = () => sendToRenderer("collab:state", collabStateMsg());
+  const pushToUi = (project: Project, canUndo: boolean, canRedo: boolean) => {
+    pushProjectToEngine(project);
+    sendToRenderer("project:update", { project, canUndo, canRedo });
+  };
+  const wireClient = (client: CollabClient) => {
+    client.on("change", (project) => {
+      if (!collab) return;
+      collab.project = project;
+      try {
+        pushToUi(project, false, false); // option A: no local undo during a session (the session has a shared restore)
+      } catch (err) {
+        console.error("collab change push failed:", err); // never let a sync update crash the app
+      }
+    });
+    client.on("status", () => publishCollab());
+    client.on("users", (users) => { if (collab) collab.users = users; publishCollab(); });
+    client.on("dropped", (dropped) => { if (dropped.length) sendToRenderer("collab:note", { kind: "dropped", count: dropped.length }); });
+    client.on("ended", ({ reason }) => { void leaveCollab(reason); });
+  };
+  const leaveCollab = async (reason?: string) => {
+    if (!collab) return;
+    const c = collab;
+    const finalProject = c.project;
+    collab = null;
+    c.client.close();
+    if (c.server) {
+      c.server.endSession(c.code); // tell the others it ended (closes their sockets with the SESSION_ENDED code) before shutting the server
+      await new Promise((r) => setTimeout(r, 200)); // let the close frames flush so joiners see "host ended" rather than a dropped link
+      await c.server.close();
+    }
+    if (finalProject) service.adopt(finalProject); // keep the result of the session in the local project
+    else pushToUi(service.current, service.canUndo, service.canRedo);
+    publishCollab();
+    if (reason === "host-ended") sendToRenderer("collab:note", { kind: "host-ended" });
+    if (reason === "cannot-join") sendToRenderer("collab:note", { kind: "cannot-join" });
+  };
+
   service.subscribe((project, meta) => {
+    if (collab) return; // during a session the shared project drives the UI and engine
     pushProjectToEngine(project);
     sendToRenderer("project:update", { project, ...meta });
   });
 
   ipcMain.handle("project:get", () => ({
-    project: service.current,
+    project: collab ? (collab.project ?? service.current) : service.current,
+    projects: projectList(),
+    collab: collabStateMsg(),
     canUndo: service.canUndo,
     canRedo: service.canRedo,
     engine: engineState,
     status: lastStatus,
   }));
   ipcMain.handle("op:dispatch", (_e, body: OpBody, group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatch(body);
+      if (result.ok && before) telemetry.recordOps(before, [body]);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatch(body, group);
     if (result.ok) telemetry.recordOps(before, [body]);
     return result;
   });
   ipcMain.handle("op:batch", (_e, bodies: OpBody[], group?: string) => {
+    if (collab) {
+      const before = collab.project;
+      const result = collab.client.dispatchBatch(bodies);
+      if (result.ok && before) telemetry.recordOps(before, bodies);
+      return result;
+    }
     const before = service.current;
     const result = service.dispatchBatch(bodies, group);
     if (result.ok) telemetry.recordOps(before, bodies);
     return result;
   });
   ipcMain.handle("history:undo", () => {
+    if (collab) return false; // local undo is off during a session; use the shared restore instead
     const ok = service.undo();
     if (ok) telemetry.record("history", { kind: "undo" });
     return ok;
   });
   ipcMain.handle("history:redo", () => {
+    if (collab) return false;
     const ok = service.redo();
     if (ok) telemetry.record("history", { kind: "redo" });
     return ok;
@@ -171,7 +260,7 @@ app.whenReady().then(() => {
     const slot = slots.slotFor(p.trackId);
     if (slot !== undefined) engine.send({ t: "preview", slot, pitch: p.pitch, velocity: p.velocity, on: p.on });
   });
-  ipcMain.handle("export:wav", async (_e, explicitPath?: string) => {
+  ipcMain.handle("export:wav", async (_e, explicitPath?: string, options?: { tailSeconds?: number }) => {
     if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
     let target: string | undefined;
     if (explicitPath && process.env.DAW_E2E === "1") target = explicitPath; // test hook: skip the dialog (never enabled in normal use)
@@ -186,7 +275,8 @@ app.whenReady().then(() => {
     }
     const id = randomUUID();
     pushProjectToEngine(service.current); // make sure the engine renders exactly the saved state
-    engine.send({ t: "exportWav", id, path: target, tailSeconds: 2 });
+    const tailSeconds = typeof options?.tailSeconds === "number" ? Math.max(0, Math.min(10, options.tailSeconds)) : 2;
+    engine.send({ t: "exportWav", id, path: target, tailSeconds });
     sendToRenderer("export:status", { state: "running", id, fraction: 0, path: target });
     return { ok: true, id };
   });
@@ -283,6 +373,195 @@ app.whenReady().then(() => {
       return { ok: false, reason: String(err) };
     }
   });
+  // ---- projects (new / open / save as / rename / delete) ----
+  ipcMain.handle("project:list", () => projectList());
+  ipcMain.handle("project:new", (_e, name?: unknown) => {
+    const meta = workspace.create(typeof name === "string" ? name : undefined);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "new" });
+    publishProjects();
+    return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:open", (_e, id: unknown) => {
+    if (typeof id !== "string" || !workspace.exists(id)) return { ok: false, reason: "unknown project" };
+    service.load(workspace.storeFor(id));
+    activeProjectId = id;
+    workspace.touch(id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "open" });
+    publishProjects();
+    return { ok: true };
+  });
+  ipcMain.handle("project:saveAs", (_e, name?: unknown) => {
+    if (!workspace.exists(activeProjectId)) return { ok: false, reason: "the current project cannot be copied here" };
+    service.flush(); // make sure the copy includes the latest edits
+    const meta = workspace.duplicate(activeProjectId, typeof name === "string" ? name : undefined);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    telemetry.record("ui.project", { action: "saveAs" });
+    publishProjects();
+    return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:rename", (_e, id: unknown, name: unknown) => {
+    if (typeof id !== "string" || typeof name !== "string") return { ok: false, reason: "bad arguments" };
+    if (!workspace.exists(id)) {
+      if (id === activeProjectId) service.setName(name.slice(0, 80).trim() || service.current.name);
+    } else if (id === activeProjectId) {
+      service.setName(name.slice(0, 80).trim() || service.current.name);
+      workspace.renameIndexOnly(id, name);
+    } else {
+      workspace.rename(id, name);
+    }
+    publishProjects();
+    return { ok: true };
+  });
+  ipcMain.handle("project:delete", (_e, id: unknown) => {
+    if (typeof id !== "string") return { ok: false, reason: "bad arguments" };
+    if (id === activeProjectId) {
+      // Switch to another project first so this one's journal file is closed before its folder is removed.
+      const other = workspace.list().find((p) => p.id !== id);
+      const nextId = other ? other.id : workspace.create("My first project").id;
+      service.load(workspace.storeFor(nextId));
+      activeProjectId = nextId;
+      workspace.touch(nextId);
+      engine.send({ t: "stop" });
+    }
+    workspace.delete(id);
+    publishProjects();
+    return { ok: true };
+  });
+  // ---- project files (Save / Save as / Open to a real file the user picks) ----
+  const PROJECT_EXT = "daw";
+  const writeProjectFile = (filePath: string, project: Project) => fs.writeFileSync(filePath, JSON.stringify({ format: "collab-daw-project", version: 1, project }, null, 2));
+  const doSave = async (forceDialog: boolean, explicitPath?: string) => {
+    const linked = workspace.meta(activeProjectId)?.filePath;
+    let target = explicitPath && process.env.DAW_E2E === "1" ? explicitPath : forceDialog ? undefined : linked;
+    if (!target) {
+      const picked = await dialog.showSaveDialog(win!, {
+        title: forceDialog ? "Save project as" : "Save project",
+        defaultPath: path.join(app.getPath("documents"), `${service.current.name}.${PROJECT_EXT}`),
+        filters: [{ name: "DAW project", extensions: [PROJECT_EXT] }],
+      });
+      if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+      target = picked.filePath;
+    }
+    try {
+      writeProjectFile(target, service.current);
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+    const base = path.basename(target, path.extname(target));
+    if (workspace.exists(activeProjectId)) {
+      workspace.setFilePath(activeProjectId, target);
+      workspace.renameIndexOnly(activeProjectId, base);
+    }
+    service.setName(base); // the project takes the file's name
+    telemetry.record("ui.project", { action: forceDialog ? "saveAs" : "save" });
+    publishProjects();
+    return { ok: true, path: target };
+  };
+  ipcMain.handle("project:saveFile", (_e, explicitPath?: unknown) => doSave(false, typeof explicitPath === "string" ? explicitPath : undefined));
+  ipcMain.handle("project:saveFileAs", (_e, explicitPath?: unknown) => doSave(true, typeof explicitPath === "string" ? explicitPath : undefined));
+  ipcMain.handle("project:openFile", async (_e, explicitPath?: unknown) => {
+    let filePath = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!filePath) {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: "Open project",
+        properties: ["openFile"],
+        filters: [{ name: "DAW project", extensions: [PROJECT_EXT] }, { name: "All files", extensions: ["*"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      filePath = picked.filePaths[0];
+    }
+    let project: Project;
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as { project?: Project } & Partial<Project>;
+      const body = (raw.project ?? raw) as Project;
+      if (!body || typeof body !== "object" || typeof body.tracks !== "object") throw new Error("not a project file");
+      project = migrateProject(body);
+    } catch {
+      return { ok: false, reason: "That file is not a valid project." };
+    }
+    const name = path.basename(filePath, path.extname(filePath));
+    const meta = workspace.importProject(name, project, filePath);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "openFile" });
+    publishProjects();
+    return { ok: true, id: meta.id };
+  });
+  ipcMain.handle("project:importMidi", async (_e, explicitPath?: unknown) => {
+    let filePath = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!filePath) {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: "Import MIDI",
+        properties: ["openFile"],
+        filters: [{ name: "MIDI file", extensions: ["mid", "midi"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      filePath = picked.filePaths[0];
+    }
+    let project: Project;
+    let trackCount = 0;
+    try {
+      const parsed = parseMidi(new Uint8Array(fs.readFileSync(filePath)));
+      const base = path.basename(filePath, path.extname(filePath));
+      project = midiToProject(parsed, randomUUID(), base);
+      trackCount = project.trackOrder.length;
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : "That MIDI file could not be read." };
+    }
+    const name = path.basename(filePath, path.extname(filePath));
+    const meta = workspace.importProject(name, project);
+    service.load(workspace.storeFor(meta.id));
+    activeProjectId = meta.id;
+    workspace.touch(meta.id);
+    engine.send({ t: "stop" });
+    telemetry.record("ui.project", { action: "importMidi", tracks: trackCount });
+    publishProjects();
+    return { ok: true, id: meta.id, tracks: trackCount };
+  });
+  // ---- collaboration: host / join / leave ----
+  ipcMain.handle("collab:state", () => collabStateMsg());
+  ipcMain.handle("collab:host", async (_e, name?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    try {
+      const server = await startSessionServer(0);
+      const code = server.createSession(service.current);
+      const client = new CollabClient({ baseUrl: `ws://127.0.0.1:${server.port}`, code, name: cleanName(name), color: "#22d3ee", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+      collab = { client, server, hosting: true, users: [], project: null, code, address: `${lanIp()}:${server.port}` };
+      wireClient(client);
+      client.connect();
+      telemetry.record("ui.collab", { action: "host" });
+      publishCollab();
+      return { ok: true, code, address: collab.address };
+    } catch (err) {
+      return { ok: false, reason: String(err) };
+    }
+  });
+  ipcMain.handle("collab:join", (_e, address: unknown, code: unknown, name?: unknown) => {
+    if (collab) return { ok: false, reason: "already in a session" };
+    if (typeof address !== "string" || !address.trim() || typeof code !== "string" || !/\d{6}/.test(code)) return { ok: false, reason: "enter the host address and the 6-digit code" };
+    const baseUrl = /^wss?:\/\//.test(address) ? address.replace(/\/+/, "") : `ws://${address.trim()}`;
+    const client = new CollabClient({ baseUrl, code, name: cleanName(name), color: "#f472b6", WebSocketImpl: NodeWebSocket as unknown as typeof globalThis.WebSocket });
+    collab = { client, server: null, hosting: false, users: [], project: null, code, address: address.trim() };
+    wireClient(client);
+    client.connect();
+    telemetry.record("ui.collab", { action: "join" });
+    publishCollab();
+    return { ok: true };
+  });
+  ipcMain.handle("collab:leave", async () => {
+    await leaveCollab();
+    telemetry.record("ui.collab", { action: "leave" });
+    return { ok: true };
+  });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
@@ -291,6 +570,7 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on("before-quit", () => {
+    if (collab) { collab.client.close(); void collab.server?.close(); }
     telemetry.recordSummary(service.current);
     engine.stop();
     service.close();

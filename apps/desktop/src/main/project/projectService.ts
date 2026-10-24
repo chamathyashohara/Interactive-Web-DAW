@@ -18,12 +18,42 @@ export class ProjectService {
   private listeners: ProjectListener[] = [];
 
   constructor(
-    private readonly store: LocalStore,
+    private store: LocalStore,
     readonly clientId: string = randomUUID(),
-    projectId: string = "default",
+    private readonly projectId: string = "default",
     private readonly now: () => number = () => Date.now(),
   ) {
     this.project = store.open(projectId);
+  }
+
+  /** Switches the editor to a different project's store: closes the current one, opens the new, and clears undo/redo. */
+  load(store: LocalStore): void {
+    this.store.close();
+    this.store = store;
+    this.project = store.open(this.projectId);
+    this.history.clear();
+    this.publish();
+  }
+
+  /** Writes the current state to disk immediately (so a copy/Save As sees the latest edits). */
+  flush(): void {
+    this.store.snapshot(this.project);
+  }
+
+  /** Replaces the whole project (e.g. with the result of a collaboration session); persists, clears undo, publishes. */
+  adopt(project: Project): void {
+    this.project = project;
+    this.store.snapshot(this.project);
+    this.history.clear();
+    this.publish();
+  }
+
+  /** Renames the project (not a musical edit: not journalled, not undoable); persists and publishes at once. */
+  setName(name: string): void {
+    if (name === this.project.name) return;
+    this.project = { ...this.project, name };
+    this.store.snapshot(this.project);
+    this.publish();
   }
 
   get current(): Project {
