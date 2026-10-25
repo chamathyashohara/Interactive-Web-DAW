@@ -3,6 +3,7 @@ import { PPQ, TICKS_PER_BAR, createTrack, type Project } from "@daw/shared";
 import type { PianoRollGuide } from "../../pianoRoll/PianoRoll";
 import { notesToEvents, playEvents, type Preview, type PreviewEvent } from "./audio";
 import { BeatCounter } from "./BeatCounter";
+import { MODULES } from "./curriculum";
 import { lessonEvents } from "./events";
 import { lessonState, needsFreshClip, type WorkStage } from "./lessonState";
 import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerIcon } from "./Icons";
@@ -41,7 +42,11 @@ function Card({ children, tone = "plain" }: { children: React.ReactNode; tone?: 
 }
 
 /** One sub-lesson as a guided flow: Hook, Watch, Try, Practice (feedback inside), Quick check, Done. */
+/** The "Where your notes go" bar counter teaches beats and bars: it shows only in L1's first three lessons. */
+const BEAT_COUNTER_LESSONS = new Set(MODULES[0]!.items.slice(0, 3).map((it) => it.id));
+
 export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, moduleCode, next: nextSub, voice, canSpeak }: SubLessonPageProps) {
+  const showBeats = BEAT_COUNTER_LESSONS.has(sub.id);
   // Where the learner was in this sub-lesson (kept when they visit the studio, another lesson, or restart the app).
   const [saved] = useState(() => lessonState.sub(sub.id));
   const tryXs = useExercise(sub, tryStep(sub), project, onOpenClip, false, WORKSPACE);
@@ -344,7 +349,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 Start over
               </button>
             </div>
-            <BeatCounter targets={tryTargets} bars={sub.bars} />
+            {showBeats && <BeatCounter targets={tryTargets} bars={sub.bars} />}
             {tryXs.error && <p className="text-sm text-rose-300">{tryXs.error}</p>}
             {tryXs.result && <ResultCard result={tryXs.result} />}
             <ul className="list-disc space-y-1 pl-6 text-sm text-slate-400">
@@ -382,7 +387,7 @@ export function SubLessonPage({ sub, project, onOpenClip, onExit, onBackToPath, 
                 Reset
               </button>
             </div>
-            <BeatCounter targets={practiceTargets} bars={sub.bars} />
+            {showBeats && <BeatCounter targets={practiceTargets} bars={sub.bars} />}
             {practiceXs.error && <p className="text-sm text-rose-300">{practiceXs.error}</p>}
             {practiceXs.result && <ResultCard result={practiceXs.result} />}
             {practiceXs.hintsShown > 0 && (

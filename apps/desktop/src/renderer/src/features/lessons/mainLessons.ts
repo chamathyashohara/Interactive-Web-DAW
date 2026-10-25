@@ -6,11 +6,11 @@ import { MODULES } from "./curriculum";
  * page that links to the related lessons that do exist.
  */
 
-export type MainLessonId = "piano" | "kick" | "sequencer" | "mixing" | "daw";
-export type Accent = "teal" | "purple" | "rose" | "blue" | "amber";
+export type MainLessonId = "piano" | "kick" | "sequencer" | "mixing" | "daw" | "final";
+export type Accent = "teal" | "purple" | "rose" | "cyan" | "blue" | "amber";
 
 export interface RelatedLesson {
-  kind: "sub" | "earlier";
+  kind: "sub" | "earlier" | "studio";
   id: string;
   title: string;
   why: string;
@@ -62,10 +62,10 @@ export const MAIN_LESSONS: MainLesson[] = [
   {
     id: "mixing",
     title: "Mixing",
-    description: "Get your tracks sounding professional. Learn balance, EQ, compression and more.",
-    topics: ["Gain staging", "EQ", "Compression", "Reverb and delay", "Automation", "Final mix"],
+    description: "Mix your song: one channel per element, gain staging from the low end, EQ and compression, pan and stereo width, and master headroom.",
+    topics: ["One channel per element", "Gain staging", "EQ and compression", "Pan and stereo width", "Master headroom"],
     accent: "blue",
-    available: false,
+    available: true,
     related: [],
   },
   {
@@ -78,7 +78,18 @@ export const MAIN_LESSONS: MainLesson[] = [
     related: [
       { kind: "sub", id: "m0-what-you-see", title: "L1 · Meet the piano roll", why: "Find your way around the piano roll and its tools." },
       { kind: "earlier", id: "midi-editing-1", title: "MIDI editing", why: "Fix timing, length and loudness of recorded notes." },
+      { kind: "studio", id: "M30.1", title: "0.1 · Tour the DAW and set up the song project", why: "Transport, BPM, arrangement, piano roll and mixer." },
+      { kind: "studio", id: "M41.1", title: "11.1 · Final review and export", why: "Save and export your song as an audio file." },
     ],
+  },
+  {
+    id: "final",
+    title: "Build the whole song",
+    description: "Every course ends with a Special task that makes one part of the same song. Here you put all the parts together in your song: arrange, mix and export.",
+    topics: ["Chords, pads and melody (Piano)", "Bass and arp (Piano)", "The drum beat (Drum sequencer)", "Transitions (Kick Drums)", "The mix (Mixing)", "Arrange and export"],
+    accent: "cyan",
+    available: true,
+    related: [],
   },
 ];
 

@@ -29,8 +29,10 @@ describe("every sub-lesson on the path", () => {
   });
 
   it("every outline item on the path has content (the whole course is written)", () => {
-    for (const m of MODULES) for (const item of m.items) expect(BUILT[item.id], item.id).toBeDefined();
-    expect(subs).toHaveLength(MODULES.reduce((sum, m) => sum + m.items.length, 0));
+    // Items with an "M" id are workspace lessons (studio/pianoExtras.ts), tested with the studio lessons.
+    const written = MODULES.flatMap((m) => m.items).filter((i) => !/^M\d/.test(i.id));
+    for (const item of written) expect(BUILT[item.id], item.id).toBeDefined();
+    expect(subs).toHaveLength(written.length);
   });
 
   for (const sub of subs) {

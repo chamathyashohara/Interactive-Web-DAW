@@ -4,6 +4,7 @@ import { libraryStore, previewIdStore } from "../../../store";
 import { lessonEvents } from "../events";
 import { browserStore, readJson, writeJson, type KeyValueStore } from "../storage";
 import type { StageId } from "../subLesson";
+import { currentPeaks } from "./meters";
 import type { StudioCtx } from "./types";
 
 /**
@@ -39,6 +40,8 @@ interface Saved {
   owner: string | null;
   /** Library ids heard since the current stage was set up (most recent last, bounded). */
   heard: string[];
+  /** The mix saved by the Mixing Special task: level and pan per element ("kick", "bass"...). */
+  mix?: Record<string, { volume: number; pan: number }>;
 }
 const KEY = "lessons.studio.v2";
 const MAX_HEARD = 200;
@@ -97,6 +100,10 @@ export function createStudioState(store: KeyValueStore) {
       if (!state.active) return;
       set({ ...state, spaces: { ...state.spaces, [state.active]: { tracks: currentTracks, owner: state.owner, heard: state.heard } }, active: null, owner: null, heard: [] });
     },
+    mix: () => state.mix,
+    saveMix(mix: Record<string, { volume: number; pan: number }>) {
+      set({ ...state, mix });
+    },
     owner: () => state.owner,
     /** The workspace now belongs to this lesson stage; listening starts again from nothing. */
     setOwner(owner: string) {
@@ -121,7 +128,7 @@ previewIdStore.subscribe(() => {
 /** What the checks need from outside the project: the library's categories and the sounds heard. */
 export function studioCtx(): StudioCtx {
   const byId = new Map(libraryStore.get().entries.map((e) => [e.id, { category: e.category, sub: e.sub }]));
-  return { soundOf: (id) => byId.get(id), auditioned: studioState.heard() };
+  return { soundOf: (id) => byId.get(id), auditioned: studioState.heard(), peaks: currentPeaks() };
 }
 
 /**

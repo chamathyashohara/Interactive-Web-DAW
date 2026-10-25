@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { MODULES, moduleProgress } from "./curriculum";
 import { lessonEvents } from "./events";
-import { ArrowRight, CheckIcon, DrumIcon, FadersIcon, GridIcon, PadsIcon, PianoKeysIcon } from "./Icons";
+import { ArrowRight, CheckIcon, DrumIcon, FadersIcon, GridIcon, MusicIcon, PadsIcon, PianoKeysIcon } from "./Icons";
 import { coursePath } from "./studio/CoursePath";
+import { SPECIALS } from "./studio/specials";
 import { MAIN_LESSONS, type Accent, type MainLesson, type MainLessonId } from "./mainLessons";
 
 /** Colour sets for the four cards (full class names, so Tailwind keeps them). */
@@ -22,6 +23,14 @@ export const ACCENTS: Record<Accent, { card: string; tile: string; check: string
     button: "bg-violet-500 text-white hover:bg-violet-400 focus-visible:ring-violet-300",
     text: "text-violet-300",
     bar: "bg-violet-400",
+  },
+  cyan: {
+    card: "border-cyan-300/40 bg-gradient-to-br from-cyan-400/[0.14] via-[#0d1619] to-[#0b0f14] shadow-[0_0_44px_-14px_rgba(34,211,238,0.5)] hover:border-cyan-300/70",
+    tile: "bg-cyan-400/20 text-cyan-100 ring-1 ring-cyan-300/30",
+    check: "bg-cyan-300 text-slate-900",
+    button: "bg-cyan-300 text-slate-900 hover:bg-cyan-200 focus-visible:ring-cyan-200",
+    text: "text-cyan-300",
+    bar: "bg-cyan-300",
   },
   rose: {
     card: "border-rose-400/40 bg-gradient-to-br from-rose-500/[0.14] via-[#1a1016] to-[#100c10] shadow-[0_0_44px_-14px_rgba(251,113,133,0.5)] hover:border-rose-400/70",
@@ -49,7 +58,7 @@ export const ACCENTS: Record<Accent, { card: string; tile: string; check: string
   },
 };
 
-const ICONS: Record<MainLessonId, (p: { size?: number }) => ReactNode> = { piano: PianoKeysIcon, kick: DrumIcon, sequencer: PadsIcon, mixing: FadersIcon, daw: GridIcon };
+const ICONS: Record<MainLessonId, (p: { size?: number }) => ReactNode> = { piano: PianoKeysIcon, kick: DrumIcon, sequencer: PadsIcon, mixing: FadersIcon, daw: GridIcon, final: MusicIcon };
 
 /** Decorative pictures in each card's top-right corner (hidden from screen readers). */
 function Illustration({ id }: { id: MainLessonId }) {
@@ -94,6 +103,22 @@ function Illustration({ id }: { id: MainLessonId }) {
             }),
           )}
           <circle cx="79" cy="14" r="3" fill="#fcd34d" />
+        </svg>
+      );
+    case "final":
+      return (
+        <svg className={common} viewBox="0 0 224 160" aria-hidden="true">
+          {([
+            [40, 18, 2],
+            [76, 24, 3],
+            [112, 38, 2],
+            [150, 34, 5],
+            [188, 20, 1],
+          ] as [number, number, number][]).map(([x, w, h], i) => (
+            <rect key={i} x={x} y={120 - h * 18} width={w + 10} height={h * 18} rx="3" fill="#22d3ee" fillOpacity={0.25 + h * 0.12} />
+          ))}
+          <path d="M30 128 L214 128" stroke="#22d3ee" strokeOpacity="0.5" strokeWidth="1.5" />
+          <path d="M40 92 C 80 70, 110 80, 150 30 S 200 90, 214 110" fill="none" stroke="#67e8f9" strokeOpacity="0.8" strokeWidth="2" />
         </svg>
       );
     case "mixing":
@@ -167,7 +192,7 @@ export function MainLessonCard({ lesson, onOpen, progress }: MainLessonCardProps
           <div className="flex justify-between text-xs text-slate-400">
             <span>Your progress</span>
             <span>
-              {progress.done} of {progress.total} sub-lessons done
+              {progress.done} of {progress.total} {lesson.id === "final" ? "song parts" : "sub-lessons"} done
             </span>
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -212,7 +237,7 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
     },
     { done: 0, total: 0 },
   );
-  const courseProgress = (id: "kick" | "sequencer") =>
+  const courseProgress = (id: "kick" | "sequencer" | "mixing") =>
     coursePath(id).reduce(
       (acc, m) => {
         const p = moduleProgress(m, lessonEvents.isCompleted, () => true);
@@ -221,11 +246,13 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
       { done: 0, total: 0 },
     );
   const kick = courseProgress("kick");
+  /** The last card: the song parts made in the Special tasks, and the whole song. */
+  const songParts = { done: SPECIALS.filter((t) => lessonEvents.isCompleted(t.id)).length, total: SPECIALS.length };
   return (
     <div className="relative" data-testid="lessons-home">
       <WaveBackdrop />
       <div className="relative mx-auto max-w-5xl px-2 pt-6 pb-4 text-center">
-        <div className="text-xs font-medium tracking-[0.45em] text-slate-400 uppercase">Welcome to Waveform / Studio</div>
+        <div className="text-xs font-medium tracking-[0.45em] text-slate-400 uppercase">Welcome to CollabDAW</div>
         <h1 className="mt-4 text-4xl font-bold text-white md:text-5xl">
           What would you like to{" "}
           <span className="bg-gradient-to-r from-emerald-300 via-sky-400 to-violet-400 bg-clip-text text-transparent">learn?</span>
@@ -234,7 +261,7 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
       </div>
       <div className="relative mx-auto mt-8 grid max-w-5xl grid-cols-1 gap-6 md:grid-cols-2" data-testid="main-lessons-grid">
         {MAIN_LESSONS.map((l) => (
-          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : l.id === "kick" ? kick : l.id === "sequencer" ? courseProgress("sequencer") : undefined} />
+          <MainLessonCard key={l.id} lesson={l} onOpen={() => onOpen(l.id)} progress={l.id === "piano" ? piano : l.id === "kick" ? kick : l.id === "sequencer" || l.id === "mixing" ? courseProgress(l.id) : l.id === "final" ? songParts : undefined} />
         ))}
       </div>
       <div className="relative mt-8 flex items-center justify-center gap-4 text-sm text-slate-400">

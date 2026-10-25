@@ -149,7 +149,11 @@ export const m3MajorTriad: SubLesson = {
   bars: 4,
   hook: {
     headline: "The happy chord",
-    text: ["A major triad has three notes: the root, the note 4 rows above it, and the note 7 rows above it.", "Press Play example: C major. Bright and happy."],
+    text: [
+      "A major triad has three notes: the root, the note 4 rows above it, and the note 7 rows above it.",
+      "Easy way to remember it: play the root, skip 3 keys and play the next one, then skip 2 keys and play the next one. Count every key, black keys too.",
+      "Press Play example: C major. Bright and happy.",
+    ],
     notes: chordAt(1, 1, 2, ["C4", "E4", "G4"], { root: true }),
   },
   watch: {
@@ -159,11 +163,12 @@ export const m3MajorTriad: SubLesson = {
       { caption: "Count 7 rows up from the root and add that note: G. Root, +4, +7: C major.", notes: MAJOR_LABELS("root", "+4", "+7", ["C4", "E4", "G4"]) },
       { caption: "The recipe works from any root. From F: 4 rows up is A, 7 rows up is C. That is F major.", notes: MAJOR_LABELS("F", "+4", "+7", ["F4", "A4", "C5"]) },
       { caption: "From D, 4 rows up lands on a black key, F#. That is fine: D major is D, F#, A.", notes: MAJOR_LABELS("D", "+4", "+7", ["D4", "F#4", "A4"]) },
+      { caption: "The easy way to remember it: root, skip 3 keys, play; skip 2 keys, play. From C: skip C#, D, D# and play E; skip F, F# and play G.", notes: MAJOR_LABELS("root", "skip 3", "skip 2", ["C4", "E4", "G4"]) },
     ],
   },
   tryIt: {
     instruction: "Build G major on beat 1 with the recipe: the root G4, the note 4 rows above it, and the note 7 rows above G4. Follow the ghost notes.",
-    tips: ["Count every row, black keys included.", "The root is marked in amber.", "A red note is not part of G major."],
+    tips: ["Count every row, black keys included.", "Quick way: from the root skip 3 keys for the second note, then skip 2 keys for the third.", "The root is marked in amber.", "A red note is not part of G major."],
     ghost: chordAt(1, 1, 2, ["G4", "B4", "D5"], { root: true }),
     allowedPitchClasses: ["G", "B", "D"],
     check: { kind: "chordsPerBar", chords: [chord("G major", "G", "B", "D")] },
@@ -177,13 +182,13 @@ export const m3MajorTriad: SubLesson = {
     tools,
     commands: true,
     hints: {
-      reminder: "Recipe: the root, then count 4 rows up, then 7 rows up from the root. D major and A major each need one black key.",
+      reminder: "Recipe: the root, then skip 3 keys and play the next one, then skip 2 keys and play the next one (4 rows up, then 7 rows up from the root). D major and A major each need one black key.",
       rows: rows("C4", "E4", "G4", "F4", "A4", "C5", "D4", "F#4", "A3", "C#4"),
       answer: [...chordAt(1, 1, 2, ["C4", "E4", "G4"]), ...chordAt(2, 1, 2, ["F4", "A4", "C5"]), ...chordAt(3, 1, 2, ["D4", "F#4", "A4"]), ...chordAt(4, 1, 2, ["A3", "C#4", "E4"])],
     },
   },
   quickCheck: quick("Which three notes make C major?", ["C, E, G", "C, D, E", "C, F, A", "C, E♭, G"], 0, "C major is the root C, E (4 rows up) and G (7 rows up). C, E♭, G is C minor."),
-  recap: ["Major triad recipe: root, +4 rows, +7 rows.", "It sounds bright and happy.", "The recipe works from any root; some roots need a black key (D major: D, F#, A)."],
+  recap: ["Major triad recipe: root, +4 rows, +7 rows.", "Easy way: root, skip 3 keys, play; skip 2 keys, play.", "It sounds bright and happy.", "The recipe works from any root; some roots need a black key (D major: D, F#, A)."],
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

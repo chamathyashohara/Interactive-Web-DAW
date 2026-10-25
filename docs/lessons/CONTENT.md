@@ -267,10 +267,12 @@ Create your sound."
 
 | Card | Description | Topics | Status |
 | --- | --- | --- | --- |
-| Piano | Learn the piano roll, notes, scales, chords, progressions and melody. Build your musical foundation step by step. | The six L1-L6 module titles | Opens the learning path |
-| Kick Drums | Learn how to create, program and shape powerful kick drums for your tracks. | Kick drum basics, Sound design, Punch and attack, Layering, EQ and compression, Build your own kick | Coming soon (related: Rhythm) |
-| Mixing | Get your tracks sounding professional. Learn balance, EQ, compression and more. | Gain staging, EQ, Compression, Reverb and delay, Automation, Final mix | Coming soon |
+| Piano | Learn the piano roll, notes, scales, chords, progressions and melody. Build your musical foundation step by step. | The L1-L6 module titles | Live: L1-L7, then 2 Special tasks |
+| Kick Drums | Learn how to create, program and shape powerful kick drums for your tracks. | Kick drum basics, Sound design, Punch and attack, Layering, EQ and compression, Build your own kick | Live: K1-K4, then 1 Special task |
+| Mixing | Get your tracks sounding professional. Learn balance, EQ, compression and more. | Gain staging, EQ, Compression, Reverb and delay, Automation, Final mix | Live: X1, then 1 Special task |
+| Drum sequencer | Program beats on the step sequencer. | Kick basics, Hats, clap and snare, Shaping the beat | Live: S1-S3, then 1 Special task |
 | DAW Features | Master the tools and workflow of your DAW. Work faster, stay organised and be more creative. | Navigation and workspace, Recording, Editing, Plug-ins and instruments, Automation, Project management | Coming soon (related: L1 What you see, MIDI editing) |
+| Build the whole song | Put every part from the Special tasks together in the DAW. | Parts, arrangement, mix, export | Live: Special task M51.1 |
 
 ## Kick Drums course (six stages; practical work in the lesson's own workspace)
 
@@ -303,3 +305,58 @@ Create your sound."
 | M14.8 | Make it four bars | Copy to all bars | Copy to all bars, then a kick on pad 16 of bar 4 | All four bars have kicks; bar 4 differs from bar 1 | Use Copy to all bars first, then open bar 4 with the bar buttons. |
 | M14.9 | Loop just the kick | Press Loop | Drag the LOOP strip over two bars | A loop region at least 2 bars long | Drag in the thin LOOP strip above the numbers. |
 | M14.10 | A kick that builds | Kick row, Ramp, Build up (1 bar) | The same over 4 bars | Kick velocities rise first to last by at least 40 | Click the Kick name first, so Ramp changes only the kick. |
+
+## Song-making lessons (from the Song-Making Learning Workflow, 124 BPM, Am-F-C-G, one chord per bar)
+
+| Id | Lesson | Course / module | Practice (the plan's activity) |
+| --- | --- | --- | --- |
+| M30.1 | Tour the DAW and set up the song project | Kick K1 | BPM 124, Loop on, Play (tick) |
+| M31.3 | Repeat and transpose the progression | Piano L5 | 16 bars; octave up and back (tick) |
+| M31.4 | Layer the chords on pads or strings | Piano L5 | Layer bars 1-16; compare (tick) |
+| M32.2 | Hi-hats between the kicks | Sequencer S2 | Hats on 3, 7, 11, 15 with the kicks |
+| M32.3 | Clap on every second kick | Sequencer S2 | Kick, hats and clap on 5 and 13 |
+| M33.1 | Clips, tracks and sections | Kick K2 | Put the five sections in order |
+| M33.2 | Build the 16-bar intro | Kick K2 | No kick in 1-8, kick in every bar 9-16 |
+| M34.1 | Sweep up into the kick | Kick K2 | Sweep ends exactly on bar 9 |
+| M34.2 | Down filter after the kick | Kick K2 | The pair at bar 9 |
+| M36.2 | Close the section with a transition | Kick K2 | The pair at bar 33 |
+| M37.1 | Strip back to two elements | Kick K3 | At most two elements, no kick, in 33-48 |
+| M37.2 | Low-pass filter automation | Kick K3 | Filter at about 1000 Hz on bar 33 |
+| M37.3 | Bring the kick back and build tension into the drop | Kick K3 | Filter opens 49-65, kick in 49-64, sweep ends on 65 |
+| M38.4 | Arrange the drop | Kick K4 | Every element in every 8 bars of 65-96 |
+| M39.1 | Fade the song out with FX and low-pass | Kick K4 | One element fewer every 4 bars (97-112), filter closing |
+| M38.2 | Melody theory | Piano L6 | Chord tone on the downbeat of bar 4 |
+| M38.3 | The four melody patterns | Piano L6 | A-B-A-C in bars 65-80 |
+| M35.1 | Bass from the root notes | Piano L7 | One root per bar 9-16, in the bass range |
+| M35.2 | Chop the bass with the piano roll chopper | Piano L7 | Bars 9-16 chopped; three settings tried (tick) |
+| M36.1 | Add an arp preset | Piano L7 | Arp in bars 17-32; three presets tried (tick) |
+| M40.1-M40.5 | One channel per element, Gain staging, EQ and compression, Pan, Master headroom | Mixing X1 | As in the plan (levels measured with the engine's meters) |
+
+## Special tasks: "Moonwing's Theme" (one song, built part by part)
+
+The Special tasks build one original song, written for these lessons: **Moonwing's Theme**, a magical theme in E minor
+inspired by the feel of film-score fantasy themes (it does not copy any existing melody). 128 BPM, 32 bars = 60
+seconds. Chords, one per bar: **Em - C - Am - B** (the B major chord's D#, from the harmonic minor, pulls back to Em).
+Sounds: Piano (Piano preset), Strings (Violin), Melody (Pluck, celesta-like), Arp (Piano, high: a music box), Bass.
+
+Melody (bar.beat, length in beats; C5 = middle C's octave up):
+
+| Phrase | Bar 1 (Em) | Bar 2 (C) | Bar 3 (Am) | Bar 4 (B) |
+| --- | --- | --- | --- | --- |
+| A, the question | E5 1.5, D#5 0.5, E5 1, G5 1 | G5 1.5, F#5 0.5, E5 1, C5 1 | A4 1, C5 1, E5 1.5, D5 0.5 | D#5 2, F#5 1, B4 1 |
+| B, the answer | E5 1, G5 1, B5 1.5, A5 0.5 | G5 1.5, E5 0.5, C5 1, E5 1 | A5 2, G5 0.5, E5 0.5, C5 1 | B4 1, D#5 1, F#5 2 |
+| C, the ending | as A | as A | as A | F#5 1, D#5 1, B4 2 |
+
+Song map: intro 1-8 (piano, strings, melody A-B), theme 9-16 (+ half-time drums, bass; melody A-C), climax 17-24
+(everything + the music-box arp), outro 25-32 (one element fewer every 4 bars, a filter closing).
+
+| Id | Card at the end of | Steps (each checked) | Apply |
+| --- | --- | --- | --- |
+| M50.1 | Piano | Em-C-Am-B over ghost notes; repeat to 16 bars; Strings layer; phrase A over ghost notes; melody A-B-A-C | Song · Piano, Song · Strings, Song · Melody |
+| M50.2 | Piano | Bass from the chords in bars 9-16; roots only (E, C, A, B), two octaves down; chopped (1/4 or 1/8); Arp in bars 17-24 with a preset | Song · Bass, Song · Arp |
+| M50.3 | Drum sequencer | Half-time kick on pads 1 and 9 only; hats on 3, 7, 11, 15; clap on 5 and 13; four bars with a kick on pad 16 of bar 4 | Song · Drums |
+| M50.4 | Kick Drums | Sweep + down filter at bar 9; sweep and Impact into the climax on 17; down filter from 25 | Song · FX tracks |
+| M50.5 | Mixing | Gain staging (kick about -9 dB), pan hats and arp apart, master -6 to -3 dB | Save my mix |
+| M51.1 | Main page, last card "Build the whole song" | All parts there; 128 BPM and 32 bars; intro and theme (kick from bar 9); full climax 17-24; outro 25-32 with a closing filter; transitions; headroom; export (tick) | (the learner's own song) |
+
+Applying a part also sets the song to 128 BPM.

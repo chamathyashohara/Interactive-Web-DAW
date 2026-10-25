@@ -31,6 +31,7 @@ import {
 } from "./model";
 import type { ClipFields, Op, OpBody, TrackFields } from "./ops";
 import { isValidKey } from "./theory";
+import { isSynthPreset } from "./synth";
 
 export type ApplyResult =
   | { ok: true; project: Project; applied: boolean }
@@ -287,6 +288,12 @@ export function applyOp(project: Project, op: Op): ApplyResult {
       if (fit !== undefined) sample.fit = fit;
       return done(withTrack(project, op.trackId, { ...track, sample }), op.opId);
     }
+    case "setSynthPreset": {
+      const track = project.tracks[op.trackId];
+      if (!track || track.instrument !== "synth") return { ok: false, reason: "not a synth track" };
+      if (!isSynthPreset(op.preset)) return { ok: false, reason: "unknown synth preset" };
+      return done(withTrack(project, op.trackId, { ...track, synthPreset: op.preset }), op.opId);
+    }
     case "setPlugin": {
       const track = project.tracks[op.trackId];
       if (!track || track.instrument !== "plugin") return { ok: false, reason: "not a plugin track" };
@@ -400,6 +407,10 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
     case "setPlugin": {
       const track = before.tracks[op.trackId];
       return track ? { ...base, type: "setPlugin", trackId: op.trackId, plugin: track.plugin ? { ...track.plugin } : null } : null;
+    }
+    case "setSynthPreset": {
+      const track = before.tracks[op.trackId];
+      return track ? { ...base, type: "setSynthPreset", trackId: op.trackId, preset: track.synthPreset ?? "classic" } : null;
     }
     case "setLoop":
       return { ...base, type: "setLoop", loop: before.loop ? { ...before.loop } : null };

@@ -1,4 +1,5 @@
 import { MAX_TRACKS, PPQ, TICKS_PER_BAR, createTrack, dropSampleOps, type Clip, type DroppedSample, type Note, type OpBody, type Project, type Track } from "@daw/shared";
+import { songPartsOps } from "./songParts";
 import type { Setup, SongSetup } from "./types";
 
 /**
@@ -126,7 +127,7 @@ const MIN_BARS = 8;
  * `loop` is the library sound to use for "loop".
  */
 export function stageSetupOps(project: Project, setup: Setup, newId: () => string, loop?: DroppedSample): { ok: true; ops: OpBody[] } | { ok: false; reason: string } {
-  if (typeof setup === "object") return seqSetupOps(project, setup);
+  if (typeof setup === "object") return "seq" in setup ? seqSetupOps(project, setup) : songPartsOps(project, setup.song);
   const song = setup !== "clear" && setup !== "loop";
   const remove = project.trackOrder.filter((id) => isWorkspaceTrack(id) || (!song && Object.values(SONG).includes(id as never)));
   // The project must keep at least one track: never delete the last one.

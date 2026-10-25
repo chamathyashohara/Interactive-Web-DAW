@@ -6,6 +6,7 @@ import { BarBeatReadout, TapTempoButton } from "../../../components/TransportExt
 import { DRUM_NAMES } from "../../../pianoRoll/geometry";
 import { StepSequencer } from "../../../pianoRoll/StepSequencer";
 import { statusStore, useStore } from "../../../store";
+import { playLesson } from "../lessonPlay";
 import { lessonView } from "./checks";
 import { SEQ_TRACK } from "./exampleSong";
 import type { PadDemo } from "./types";
@@ -104,7 +105,7 @@ export function SequencerPane({ project, guide, ready = true }: { project: Proje
   return (
     <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#11141c]" data-testid="sequencer-pane">
       <div className="flex flex-wrap items-center gap-2.5 border-b border-white/10 px-4 py-2.5">
-        <button onClick={() => (playing ? window.daw.stop() : window.daw.play())} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/15" aria-label={playing ? "Stop" : "Play"} data-testid="kplay">
+        <button onClick={() => (playing ? window.daw.stop() : void playLesson())} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/15" aria-label={playing ? "Stop" : "Play"} data-testid="kplay">
           {playing ? "■" : "▶"}
         </button>
         <BarBeatReadout ppq={project.ppq} />
