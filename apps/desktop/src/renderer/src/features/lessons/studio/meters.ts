@@ -40,7 +40,9 @@ let mixSignature = "";
 projectStore.subscribe(() => {
   const p = projectStore.get().project;
   if (!p) return;
-  const sig = `${p.masterVolume}|${p.trackOrder.map((id) => `${id}:${p.tracks[id]!.volume}:${p.tracks[id]!.pan}:${p.tracks[id]!.mute}:${p.tracks[id]!.solo}`).join(",")}`;
+  // A lesson track's solo is left out: lesson Play solos the lesson tracks and Stop takes it off (lessonPlay.ts), which
+  // changes nothing the lesson hears, so it must not throw away what was just measured.
+  const sig = `${p.masterVolume}|${p.trackOrder.map((id) => `${id}:${p.tracks[id]!.volume}:${p.tracks[id]!.pan}:${p.tracks[id]!.mute}:${id.startsWith("lesson-") ? "" : p.tracks[id]!.solo}`).join(",")}`;
   if (sig !== mixSignature) {
     if (mixSignature) reset();
     mixSignature = sig;

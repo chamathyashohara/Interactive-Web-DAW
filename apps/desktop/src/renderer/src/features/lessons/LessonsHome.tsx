@@ -252,7 +252,7 @@ export function LessonsHome({ onOpen }: { onOpen: (id: MainLessonId) => void }) 
     <div className="relative" data-testid="lessons-home">
       <WaveBackdrop />
       <div className="relative mx-auto max-w-5xl px-2 pt-6 pb-4 text-center">
-        <div className="text-xs font-medium tracking-[0.45em] text-slate-400 uppercase">Welcome to Waveform / Studio</div>
+        <div className="text-xs font-medium tracking-[0.45em] text-slate-400 uppercase">Welcome to CollabDAW</div>
         <h1 className="mt-4 text-4xl font-bold text-white md:text-5xl">
           What would you like to{" "}
           <span className="bg-gradient-to-r from-emerald-300 via-sky-400 to-violet-400 bg-clip-text text-transparent">learn?</span>

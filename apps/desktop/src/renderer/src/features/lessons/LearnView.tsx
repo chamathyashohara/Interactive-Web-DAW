@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import type { Project } from "@daw/shared";
 import { LESSONS } from "./content";
 import { BUILT, MODULES, PIANO_STUDIO_IDS, nextBuilt, searchPath, type PathHit } from "./curriculum";
+import { statusStore } from "../../store";
 import { lessonEvents } from "./events";
 import { CollectionPage } from "./CollectionPage";
-import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, PadsIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
+import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, HomeIcon, MusicIcon, PadsIcon, SearchIcon, SpeakerIcon, UsersIcon } from "./Icons";
 import { overallProgress } from "./learnModel";
 import { LearningPath } from "./LearningPath";
 import { LessonPage } from "./LessonPage";
 import { LessonsHome } from "./LessonsHome";
+import { playLesson, releaseLessonSolo } from "./lessonPlay";
 import { mainLesson, type MainLessonId, type RelatedLesson } from "./mainLessons";
 import { onVoicesReady, speechAvailable, stopSpeaking } from "./speech";
 import { browserStore, readJson, writeJson } from "./storage";
@@ -17,6 +19,7 @@ import { StudySection } from "./StudySection";
 import { studyLog } from "./studyLog";
 import { CoursePath } from "./studio/CoursePath";
 import { applyCopiesOps, applyPartOps, parkLessonWork } from "./studio/park";
+import { MOONWING } from "./studio/songParts";
 import { COURSES, STUDIO_LESSONS, courseOf, nextStudioLesson, studioModuleOf, type CourseId } from "./studio/courses";
 import { SPECIAL_TASKS } from "./studio/specials";
 import { SpecialTaskPage } from "./studio/SpecialTaskPage";
@@ -150,15 +153,48 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   const [canSpeak, setCanSpeak] = useState(speechAvailable);
   useEffect(() => onVoicesReady(() => setCanSpeak(speechAvailable())), []);
   useEffect(() => () => stopSpeaking(), []);
+  // Lesson Play solos the lesson's tracks; the solo comes off when playback stops and when the lessons close.
+  useEffect(() => {
+    let was = statusStore.get()?.playing ?? false;
+    const off = statusStore.subscribe(() => {
+      const now = statusStore.get()?.playing ?? false;
+      if (was && !now) void releaseLessonSolo();
+      was = now;
+    });
+    return () => {
+      off();
+      void releaseLessonSolo();
+    };
+  }, []);
+  // Space plays only the lesson too (it runs before the Studio's own Space shortcut, which would play everything).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+      if (e.code !== "Space" || typing || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (statusStore.get()?.playing) window.daw.stop();
+      else void playLesson();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
+  /** Leaving a lesson (to another page, or to the Studio) stops anything still playing. */
+  const stopPlayback = () => {
+    if (statusStore.get()?.playing) window.daw.stop();
+  };
   const show = (v: View) => {
     stopSpeaking();
+    stopPlayback();
     setView(v);
     lessonState.setView(v);
   };
   /** To the Studio. A Kick / Drum sequencer lesson's tracks stay with the lesson (saved), never in the song by themselves. */
   const exit = () => {
     stopSpeaking();
+    stopPlayback();
     void parkLessonWork().then(() => onExit());
   };
   /** "Apply it in the studio" (Kick / Drum sequencer): copies of the lesson's tracks become the learner's own tracks. */
@@ -172,7 +208,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
   /** "Apply it in the studio" on a Special task: the part's tracks go into the song as "Song · ..." (replacing an earlier copy). */
   const applyPart = async () => {
     stopSpeaking();
-    const { ops, open } = applyPartOps((await window.daw.getInitial()).project, () => crypto.randomUUID());
+    const { ops, open } = applyPartOps((await window.daw.getInitial()).project, () => crypto.randomUUID(), MOONWING.tempo);
     if (!(await parkLessonWork(ops))) return;
     if (open) onOpenClip(open.trackId, open.clipId);
     onExit();
@@ -216,15 +252,22 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
 
   return (
     <div className="flex h-full flex-col bg-[#0b0d13] text-slate-300" data-testid="learn-view">
-      <header className="flex items-center gap-4 border-b border-white/10 bg-[#0e1118] px-4 py-3 lg:px-6">
-        <button onClick={() => show({ kind: "lessons" })} className="flex shrink-0 items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60" title="Lessons" aria-label="Waveform Studio: all lessons" data-testid="learn-home">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl text-emerald-300 ring-1 ring-emerald-300/50">
-            <WaveLogoIcon size={20} />
-          </span>
-          <span className="hidden text-[15px] font-semibold tracking-wide text-white sm:inline">
-            WAVEFORM <span className="font-normal text-slate-400">/ STUDIO</span>
-          </span>
+      <header className="flex items-center gap-6 border-b border-white/10 bg-[#0e1118] px-4 py-2.5 lg:px-6">
+        <button onClick={() => show({ kind: "lessons" })} className="shrink-0 rounded-lg text-xl font-semibold outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/60" title="Lessons" aria-label="CollabDAW: all lessons" data-testid="learn-home">
+          <span className="text-amber-300">Collab</span>
+          <span className="text-slate-200">DAW</span>
         </button>
+        <nav aria-label="Main" className="flex min-w-0 items-center gap-1 overflow-x-auto py-1.5">
+          {[
+            { label: "Home", Icon: HomeIcon },
+            { label: "Studio", Icon: MusicIcon, onClick: exit, testId: "learn-exit" },
+            { label: "Collaborate", Icon: UsersIcon },
+            { label: "Learn", Icon: BookIcon, onClick: () => show({ kind: "lessons" }), active: true, testId: "nav-learn" },
+            { label: "Projects", Icon: FolderIcon },
+          ].map((item) => (
+            <NavButton key={item.label} item={item} />
+          ))}
+        </nav>
         {(view.kind === "path" || view.kind === "sub" || view.kind === "earlier") && <PathSearch onOpen={openHit} />}
         <div className="ml-auto flex items-center gap-3">
           {canSpeak && (
@@ -256,22 +299,6 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
           </div>
         </div>
       </header>
-
-      <nav aria-label="Main" className="flex items-center gap-1 overflow-x-auto border-b border-white/10 bg-[#0d1016] px-3 py-1.5 lg:px-5">
-          {[
-            { label: "Home", Icon: HomeIcon },
-            { label: "Studio", Icon: MusicIcon, onClick: exit, testId: "learn-exit" },
-            { label: "Collaborate", Icon: UsersIcon },
-            { label: "Learn", Icon: BookIcon, onClick: () => show({ kind: "lessons" }), active: true, testId: "nav-learn" },
-            { label: "Projects", Icon: FolderIcon },
-          ].map((item) => (
-            <NavButton key={item.label} item={item} />
-          ))}
-          <div className="ml-auto flex items-center gap-1 border-l border-white/10 pl-2">
-            <NavButton item={{ label: "Settings", Icon: GearIcon }} />
-            <NavButton item={{ label: "Log out", Icon: LogoutIcon }} />
-          </div>
-        </nav>
 
       <div className="flex min-h-0 flex-1">
       <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-4 pb-5 lg:px-6">

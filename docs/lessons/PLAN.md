@@ -579,7 +579,8 @@ lesson leaves the Studio clean); regressions home 27/27, Kick 44/44, sequencer 2
 
 Source: `Song-Making-Learning-Workflow.pdf` (comparison in `SONG-WORKFLOW-GAPS.md`). There is no separate "Make a Song"
 course. Its new lessons go into the course they teach, easiest first. Each course ends with **Special task** cards that
-build one part of a single song (Am-F-C-G, 124 BPM). The last main card puts all those parts together in the DAW.
+build one part of a single song, **Moonwing's Theme** (below). The last main card puts all those parts together in the
+DAW.
 
 **Where the lessons are**
 
@@ -599,8 +600,8 @@ build one part of a single song (Am-F-C-G, 124 BPM). The last main card puts all
 - When a task is done, **Apply it in the studio** copies the learner's part into the song as "Song · Piano", "Song ·
   Bass", ... Applying again replaces the earlier copy. M50.5 saves the mix (levels and pans) instead, under **Save my mix**.
 - **M51.1 Build the whole song** works on the learner's real song (the Studio tracks). It checks that every part is there
-  (a missing part names the Special task that makes it), then: 112 bars, intro, first drop 17-32, strip back with the
-  filter rising, full drop 65-96, outro, the transitions, headroom with the saved mix, then export (tick).
+  (a missing part names the Special task that makes it), then arranges the 60-second theme (see "The Special tasks'
+  song" below), the transitions, headroom with the saved mix, then export (tick).
 
 Removed: the "Make a Song" card and the U0-U11 module list, M41.1 (replaced by M51.1), and the links to existing lessons
 (0.2, 1.1, 1.2, 2.1 and 8.1 are already in Piano and the Drum sequencer).
@@ -609,3 +610,24 @@ Verified: typecheck clean; 638 desktop unit tests (course order, every Special t
 part passing, apply replacing older copies, the whole-song checks). In the built app: Special tasks 32/32 (every task
 done step by step, applied, then the whole song built, mixed and exported), main page 27/27, Kick 44/44, Drum
 sequencer 29/29, Apply 13/13, Piano 196/196.
+
+### The Special tasks' song: Moonwing's Theme (2026-10-25)
+
+The learner asked for the Special tasks to build Hedwig's Theme. That melody is under copyright, so the lessons use an
+original theme with the same magical feel instead: **Moonwing's Theme** (`MOONWING` in `studio/songParts.ts`; notes in
+`CONTENT.md`). E minor, Em - C - Am - B (the B chord's D# gives the spell-like pull home), a celesta-like melody with
+an E - D# - E turn, a music-box arp, half-time drums, 128 BPM, 32 bars = 60 seconds.
+
+- The course lessons keep their own practice song (Am - F - C - G, 124 BPM). The song generator and the checks take a
+  theme: setups say `theme: "moonwing"`, and a Special task's checks run with `ctx.theme = "moonwing"`, so chords,
+  roots, phrases and the kick pattern come from the theme.
+- Parts land where the song needs them: bass 9-16, arp 17-24, transitions at 9, 17 and 25. Applying a part sets the
+  song to 128 BPM. Synth tracks get a matching preset (Strings = Violin, Melody = Pluck, Bass = Bass); the lesson
+  "+ Add track" tool now does this for every lesson.
+- Build the whole song: every part, 128 BPM and exactly 32 bars, intro (1-8) and theme (9-16), climax (17-24), outro
+  (25-32) with a closing filter, the transitions, headroom, export.
+
+Verified: typecheck clean; 640 desktop unit tests (the theme lasts 60 s and starts every bar on a chord tone; each
+Special task's setup fails, the course song's chords fail, the theme's part passes; the full 32-bar arrangement passes
+the whole-song steps). In the built app: Special tasks 35/35, main page 27/27, Kick 44/44, Drum sequencer 29/29, Apply
+13/13, Piano 196/196.

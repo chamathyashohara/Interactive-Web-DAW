@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { playLesson } from "../lessonPlay";
 import type { Project } from "@daw/shared";
 import { libraryStore } from "../../../store";
 import { playEvents, type Preview } from "../audio";
@@ -233,7 +234,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
       setLit(step.sound ? { litCategory: step.sound.category, litSoundId: e?.id } : {});
       if (step.bars && hasSong(project)) {
         window.daw.seek(barTick(step.bars[0]));
-        window.daw.play();
+        void playLesson();
         songPlaying.current = true;
       }
       if (voice && canSpeak) speak(step.caption);

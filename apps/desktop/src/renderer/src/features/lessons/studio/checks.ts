@@ -15,10 +15,13 @@ export function songView(p: Project): Project {
   return { ...p, trackOrder, tracks: Object.fromEntries(trackOrder.map((id) => [id, p.tracks[id]!])) };
 }
 
-/** The project as the lessons see it: only their own tracks, so the learner's song never affects a check. */
+/**
+ * The project as the lessons see it: only their own tracks, so the learner's song never affects a check. Solo is left
+ * out: lesson Play solos the lesson tracks to keep the Studio's tracks quiet (lessonPlay.ts), not to hide any of them.
+ */
 export function lessonView(p: Project): Project {
   const trackOrder = p.trackOrder.filter(isLessonTrack);
-  return { ...p, trackOrder, tracks: Object.fromEntries(trackOrder.map((id) => [id, p.tracks[id]!])) };
+  return { ...p, trackOrder, tracks: Object.fromEntries(trackOrder.map((id) => [id, p.tracks[id]!.solo ? { ...p.tracks[id]!, solo: false } : p.tracks[id]!])) };
 }
 
 /**

@@ -20,9 +20,10 @@ const checkBtn = "rounded-lg bg-emerald-300 px-3 py-1.5 text-sm font-semibold te
 const smallBtn = "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 bg-white/5 text-slate-200 hover:bg-white/10";
 const uuid = () => crypto.randomUUID();
 
-/** Several checks as one: all must pass; the feedback is the first one that does not. */
+/** Several checks as one, against the Special tasks' song (Moonwing's Theme): all must pass; the feedback is the first one that does not. */
 export function runAll(p: Project, checks: StudioCheck | StudioCheck[]): CheckResult {
-  const results = (Array.isArray(checks) ? checks : [checks]).map((c) => runStudioCheck(p, c, studioCtx()));
+  const ctx = { ...studioCtx(), theme: "moonwing" as const };
+  const results = (Array.isArray(checks) ? checks : [checks]).map((c) => runStudioCheck(p, c, ctx));
   const failed = results.find((r) => !r.pass);
   const items = results.flatMap((r) => r.items);
   return { pass: !failed, score: items.length ? items.filter((i) => i.ok).length / items.length : 1, feedback: failed ? failed.feedback : results[results.length - 1]!.feedback, items };

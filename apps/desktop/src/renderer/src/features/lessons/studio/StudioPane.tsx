@@ -5,6 +5,7 @@ import { GRID_OPTIONS } from "../../../pianoRoll/geometry";
 import { CATEGORY_COLORS, sampleTag } from "../../../samples/sampleColors";
 import { categoryCounts, filterSamples } from "../../../samples/filter";
 import { libraryStore, previewIdStore, statusStore, useStore } from "../../../store";
+import { playLesson } from "../lessonPlay";
 import { PianoPane } from "../PianoPane";
 import { browserStore, readJson, writeJson } from "../storage";
 import { LESSON_TRACK_PREFIX, lessonView, songView } from "./checks";
@@ -41,12 +42,13 @@ export interface StudioGuide {
 }
 
 /** Tracks the learner can add (Make a Song): the name says which element it is. */
-const NEW_TRACKS: { name: string; kind: "synth" | "drums"; color: string }[] = [
-  { name: "Pads", kind: "synth", color: "#818cf8" },
-  { name: "Strings", kind: "synth", color: "#c084fc" },
-  { name: "Bass", kind: "synth", color: "#a78bfa" },
-  { name: "Arp", kind: "synth", color: "#34d399" },
-  { name: "Melody", kind: "synth", color: "#facc15" },
+/** Tracks the lesson tool adds; synth tracks play the built-in preset that suits them. */
+const NEW_TRACKS: { name: string; kind: "synth" | "drums"; color: string; preset?: string }[] = [
+  { name: "Pads", kind: "synth", color: "#818cf8", preset: "pad" },
+  { name: "Strings", kind: "synth", color: "#c084fc", preset: "strings" },
+  { name: "Bass", kind: "synth", color: "#a78bfa", preset: "bass" },
+  { name: "Arp", kind: "synth", color: "#34d399", preset: "keys" },
+  { name: "Melody", kind: "synth", color: "#facc15", preset: "pluck" },
   { name: "Kick", kind: "drums", color: "#f97316" },
   { name: "Hats", kind: "drums", color: "#a3e635" },
   { name: "Clap", kind: "drums", color: "#fb7185" },
@@ -206,7 +208,7 @@ export function StudioPane({ project, guide, ready = true, scope }: { project: P
     if (!t) return;
     const id = newTrackId();
     const clipId = uuid();
-    void batch(newTrackOps(t.kind, t.name, t.color, id, clipId), "");
+    void batch(newTrackOps(t.kind, t.name, t.color, id, clipId, 1, t.preset), "");
     setSelected({ trackId: id, clipId });
   };
   const rename = () => {
@@ -366,7 +368,7 @@ export function StudioPane({ project, guide, ready = true, scope }: { project: P
     <section className="flex min-w-0 flex-1 flex-col gap-3" data-testid="studio-pane">
       <div className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#11141c]">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-2.5">
-          <button onClick={() => (playing ? window.daw.stop() : window.daw.play())} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/15" aria-label={playing ? "Stop" : "Play"} data-testid="kplay">
+          <button onClick={() => (playing ? window.daw.stop() : void playLesson())} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/15" aria-label={playing ? "Stop" : "Play"} data-testid="kplay">
             {playing ? "■" : "▶"}
           </button>
           <span className="font-mono text-sm text-slate-200" data-testid="kposition">

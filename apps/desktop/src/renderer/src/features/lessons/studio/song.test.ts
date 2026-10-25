@@ -10,8 +10,8 @@ import { runAll } from "./SpecialTaskPage";
 import { SPECIAL_TASKS, SPECIALS } from "./specials";
 import { lessonTracksOf } from "./space";
 import { hzToValue } from "./songChecks";
-import { barTick, songTrackId } from "./songParts";
-import type { SoundInfo, StudioCheck, StudioCtx } from "./types";
+import { MOONWING, barTick, songTrackId } from "./songParts";
+import type { SongSpec, SoundInfo, StudioCheck, StudioCtx } from "./types";
 
 let n = 0;
 const id = () => `x${++n}`;
@@ -278,7 +278,7 @@ describe("Make a Song checks: starting setups fail, the plan's activity passes",
 
 });
 
-describe("Special tasks: the course song, part by part", () => {
+describe("Special tasks: Moonwing's Theme, part by part", () => {
   const setUpTask = (taskId: string) => {
     const r = stageSetupOps(createProject("p"), SPECIAL_TASKS[taskId]!.setup!, id);
     if (!r.ok) throw new Error(r.reason);
@@ -287,21 +287,35 @@ describe("Special tasks: the course song, part by part", () => {
   const step = (p: Project, taskId: string, i: number) => runAll(lessonView(p), SPECIAL_TASKS[taskId]!.steps[i]!.check);
   const note = (trackId: string, clipId: string, pitch: number, start: number, len: number) => ({ type: "addNote" as const, trackId, clipId, note: { id: id(), pitch, startTick: start, durationTicks: len, velocity: 100 } });
 
-  it("Piano 1: chords, sixteen bars, pads, phrase A, then A-B-A-C; Apply names the parts and replaces an earlier copy", () => {
+  it("the theme: E minor at 128 BPM, 32 bars are one minute, original phrases with a chromatic turn", () => {
+    expect(MOONWING.tempo).toBe(128);
+    expect((32 * 4 * 60) / MOONWING.tempo).toBe(60);
+    expect(MOONWING.progression.map((c) => c.map((x) => x % 12))).toEqual([[4, 7, 11], [0, 4, 7], [9, 0, 4], [11, 3, 6]]);
+    // Every phrase starts each bar on a note of that bar's chord, and A turns E - D# - E.
+    for (const ph of Object.values(MOONWING.phrases)) for (const bar of [1, 2, 3, 4]) expect(MOONWING.progression[bar - 1]!.map((x) => x % 12)).toContain(ph.find(([b2, beat]) => b2 === bar && beat === 1)![3] % 12);
+    expect(MOONWING.phrases.A.slice(0, 3).map((x) => x[3])).toEqual([76, 75, 76]);
+    const setup = setUpTask("M50.1");
+    expect(setup.tempo).toBe(128);
+    expect(setup.tracks["lesson-song-melody"]!.synthPreset).toBe("pluck");
+  });
+
+  it("Piano 1: Em - C - Am - B, sixteen bars, strings, phrase A, then A-B-A-C; Apply names the parts, sets 128 BPM and replaces an earlier copy", () => {
     let p = setUpTask("M50.1");
     expect(step(p, "M50.1", 0).pass).toBe(false);
-    const chords = [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]];
-    p = apply(p, chords.flatMap((c, b) => c.map((pitch) => note("lesson-song-piano", "lesson-song-piano-b1", pitch, b * TICKS_PER_BAR, TICKS_PER_BAR - 60))));
+    expect(step(p, "M50.1", 0).feedback).toMatch(/Bar 1 should be Em \(E G B\)/);
+    // Am - F - C - G (the course lessons' chords) is not this song.
+    const wrong = apply(p, [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]].flatMap((c, b) => c.map((pitch) => note("lesson-song-piano", "lesson-song-piano-b1", pitch, b * TICKS_PER_BAR, TICKS_PER_BAR - 60))));
+    expect(step(wrong, "M50.1", 0).pass).toBe(false);
+    p = apply(p, MOONWING.progression.flatMap((c, b) => c.map((pitch) => note("lesson-song-piano", "lesson-song-piano-b1", pitch, b * TICKS_PER_BAR, TICKS_PER_BAR - 60))));
     expect(step(p, "M50.1", 0).pass).toBe(true);
     p = duplicate(p, "lesson-song-piano", 3);
     expect(step(p, "M50.1", 1).pass).toBe(true);
-    p = apply(p, newTrackOps("synth", "Pads", "#818cf8", "lesson-k-pads", "pc0", 1));
+    p = apply(p, newTrackOps("synth", "Strings", "#c084fc", "lesson-k-pads", "pc0", 1, "strings"));
     p = apply(p, [{ type: "deleteClip", trackId: "lesson-k-pads", clipId: "pc0" }]);
     for (const c of clipsOf(p, "piano")) p = apply(p, copyClipToTrackOps(p, c, "lesson-k-pads", id));
     expect(step(p, "M50.1", 2).pass).toBe(true);
     expect(step(p, "M50.1", 3).feedback).toMatch(/Missing: E5 at bar 1, beat 1/);
-    const A = [[0, 76, 960], [960, 74, 960], [1920, 72, 1920], [3840, 72, 960], [4800, 69, 960], [5760, 65, 1920], [7680, 67, 1920], [9600, 64, 1920], [11520, 67, 1920], [13440, 71, 1920]];
-    p = apply(p, A.map(([t, pitch, len]) => note("lesson-song-melody", "lesson-song-melody-b1", pitch!, t!, len!)));
+    p = apply(p, MOONWING.phrases.A.map(([bar, beat, len, pitch]) => note("lesson-song-melody", "lesson-song-melody-b1", pitch, (bar - 1) * TICKS_PER_BAR + (beat - 1) * 960, len * 960)));
     expect(step(p, "M50.1", 3).pass).toBe(true);
     p = duplicate(p, "lesson-song-melody", 3);
     const mel = clipsOf(p, "melody");
@@ -309,22 +323,26 @@ describe("Special tasks: the course song, part by part", () => {
     p = edit(mel[1]!, 79);
     p = edit(clipsOf(p, "melody")[3]!, 72);
     expect(step(p, "M50.1", 4).pass).toBe(true);
-    const { ops } = applyPartOps(p, id);
+    const { ops } = applyPartOps({ ...p, tempo: 120 }, id, MOONWING.tempo);
+    expect(ops.some((o) => o.type === "setTempo" && o.bpm === 128)).toBe(true);
     let song = apply(p, ops);
     const names = () => song.trackOrder.filter((t) => !t.startsWith("lesson-")).map((t) => song.tracks[t]!.name);
-    expect(names()).toEqual(["Synth", "Song · Piano", "Song · Melody", "Song · Pads"]);
+    expect(names()).toEqual(["Synth", "Song · Piano", "Song · Melody", "Song · Strings"]);
+    expect(song.tracks[song.trackOrder.find((t) => song.tracks[t]!.name === "Song · Strings")!]!.synthPreset).toBe("strings");
     song = apply(song, applyPartOps(song, id).ops);
-    expect(names()).toEqual(["Synth", "Song · Piano", "Song · Melody", "Song · Pads"]);
+    expect(names()).toEqual(["Synth", "Song · Piano", "Song · Melody", "Song · Strings"]);
   });
 
-  it("Piano 2: bass from the reference chords, roots, chopped, and an arp; the reference is never applied", () => {
+  it("Piano 2: the bass from the roots E, C, A, B in bars 9-16, and a music-box arp in 17-24; the reference is never applied", () => {
     let p = setUpTask("M50.2");
     expect(step(p, "M50.2", 0).pass).toBe(false);
     p = apply(p, newTrackOps("synth", "Bass", "#a78bfa", "lesson-k-bass", "bc0", 1));
     p = apply(p, [{ type: "deleteClip", trackId: "lesson-k-bass", clipId: "bc0" }]);
     const ref = Object.values(p.tracks["lesson-song-ref-piano"]!.clips);
-    for (const c of ref) p = apply(p, copyClipToTrackOps(p, c, "lesson-k-bass", id));
+    const at = (bars: number[]) => ref.filter((c) => bars.includes(c.startTick / TICKS_PER_BAR + 1));
+    for (const c of at([9, 13])) p = apply(p, copyClipToTrackOps(p, c, "lesson-k-bass", id));
     expect(step(p, "M50.2", 0).pass).toBe(true);
+    expect(step(p, "M50.2", 1).feedback).toMatch(/keep only the root \(E\)/);
     for (const c of Object.values(p.tracks["lesson-k-bass"]!.clips)) {
       const lowest = new Map<number, string>();
       for (const n2 of Object.values(c.notes)) if (!lowest.has(n2.startTick) || c.notes[lowest.get(n2.startTick)!]!.pitch > n2.pitch) lowest.set(n2.startTick, n2.id);
@@ -333,54 +351,88 @@ describe("Special tasks: the course song, part by part", () => {
       p = apply(p, shiftOps("lesson-k-bass", p.tracks["lesson-k-bass"]!.clips[c.id]!, -24));
     }
     expect(step(p, "M50.2", 1).pass).toBe(true);
-    for (const c of Object.values(p.tracks["lesson-k-bass"]!.clips)) p = apply(p, chopOps("lesson-k-bass", c, 480, id));
+    for (const c of Object.values(p.tracks["lesson-k-bass"]!.clips)) p = apply(p, chopOps("lesson-k-bass", c, 960, id));
     expect(step(p, "M50.2", 2).pass).toBe(true);
     p = apply(p, newTrackOps("synth", "Arp", "#34d399", "lesson-k-arp", "ac0", 1));
     p = apply(p, [{ type: "deleteClip", trackId: "lesson-k-arp", clipId: "ac0" }]);
-    for (const c of ref) p = apply(p, copyClipToTrackOps(p, c, "lesson-k-arp", id));
+    for (const c of at([17, 21])) p = apply(p, copyClipToTrackOps(p, c, "lesson-k-arp", id));
+    expect(step(p, "M50.2", 3).pass).toBe(false);
     for (const c of Object.values(p.tracks["lesson-k-arp"]!.clips)) p = apply(p, arpOps("lesson-k-arp", c, "up", 240, id));
     expect(step(p, "M50.2", 3).pass).toBe(true);
     const song = apply(p, applyPartOps(p, id).ops);
     expect(song.trackOrder.filter((t) => !t.startsWith("lesson-")).map((t) => song.tracks[t]!.name)).toEqual(["Synth", "Song · Bass", "Song · Arp"]);
   });
 
-  it("Drums: kick, hats, clap, then four bars with a lead-in", () => {
+  it("Drums: a half-time kick (1 and 3 only), hats, clap, then four bars with a lead-in", () => {
     let p = setUpTask("M50.3");
     const pads = (pitch: number, list: number[]) => list.map((x) => note("lesson-k-seq", "lesson-k-seq-clip", pitch, (x - 1) * 240, 240));
     expect(step(p, "M50.3", 0).pass).toBe(false);
-    p = apply(p, pads(36, [1, 5, 9, 13]));
+    expect(step(apply(p, pads(36, [1, 5, 9, 13])), "M50.3", 0).pass).toBe(false);
+    p = apply(p, pads(36, [1, 9]));
     expect(step(p, "M50.3", 0).pass).toBe(true);
     p = apply(p, pads(42, [3, 7, 11, 15]));
     p = apply(p, pads(39, [5, 13]));
     expect(step(p, "M50.3", 1).pass && step(p, "M50.3", 2).pass).toBe(true);
-    p = apply(p, pads(36, [17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 64]));
+    p = apply(p, pads(36, [17, 25, 33, 41, 49, 57, 64]));
     expect(step(p, "M50.3", 3).pass).toBe(true);
-    expect(apply(p, applyPartOps(p, id).ops).trackOrder.map((t) => p.tracks[t]?.name ?? "")).toBeTruthy();
   });
 
-  it("Transitions: the pair at 9, 17 and 33, a sweep and an impact into the drop", () => {
+  it("Transitions: a sweep and a down filter at 9, a sweep and an impact into the climax at 17, a down filter at 25", () => {
     let p = setUpTask("M50.4");
+    expect(p.songBars).toBe(32);
     expect(step(p, "M50.4", 0).pass).toBe(false);
     FX["FX/Impact/Impact"] = { category: "FX", sub: "Impact", name: "Impact", durationSec: 2 };
-    for (const bar of [9, 17, 33]) p = drop(drop(p, "FX/Riser/Riser 2s", bar - 2), "FX/Downlifter/Downlifter 1s", bar);
-    p = drop(drop(p, "FX/Riser/Riser 2s", 63), "FX/Impact/Impact", 65);
-    for (let i = 0; i < 4; i++) expect(runAll(lessonView(p), SPECIAL_TASKS["M50.4"]!.steps[i]!.check).pass, `step ${i}`).toBe(true);
+    p = drop(drop(p, "FX/Riser/Riser 2s", 7), "FX/Downlifter/Downlifter 1s", 9);
+    p = drop(drop(p, "FX/Riser/Riser 2s", 15), "FX/Impact/Impact", 17);
+    p = drop(p, "FX/Downlifter/Downlifter 1s", 25);
+    for (let i = 0; i < 3; i++) expect(runAll(lessonView(p), SPECIAL_TASKS["M50.4"]!.steps[i]!.check).pass, `step ${i}`).toBe(true);
     const song = apply(p, applyPartOps(p, id).ops);
     expect(song.trackOrder.filter((t) => !t.startsWith("lesson-")).every((t) => t === "track-1" || song.tracks[t]!.name.startsWith("Song · "))).toBe(true);
     expect(lessonTracksOf(song).some((t) => t.id.startsWith("lesson-song-ref-"))).toBe(true);
   });
 
-  it("Build the whole song reads the learner's own song: it needs every applied part", () => {
-    const empty = createProject("p");
-    expect(runAll(songView(empty), SPECIAL_TASKS["M51.1"]!.steps[0]!.check).feedback).toMatch(/Piano: Special task 1/);
-    const r = stageSetupOps(createProject("p"), { song: { bars: 16, parts: { piano: [[1, 16]], pads: [[1, 16]], melody: [[1, 16]], bass: [[1, 16]], arp: [[1, 16]], kick: [[1, 4]], hats: [[1, 4]], clap: [[1, 4]] }, sharedDrums: true } }, id) as { ok: true; ops: OpBody[] };
-    let song = apply(createProject("p"), r.ops.map((o) => (o.type === "addTrack" ? { ...o, track: { ...o.track, id: o.track.id.replace("lesson-song-", "track-") } } : o)));
-    expect(runAll(songView(song), SPECIAL_TASKS["M51.1"]!.steps[0]!.check).feedback).toMatch(/Missing: fx/);
-    song = drop(song, "FX/Riser/Riser 2s", 7);
-    const fx = song.trackOrder.find((t) => t.startsWith("lesson-k-"))!;
-    song = { ...song, trackOrder: song.trackOrder.map((t) => (t === fx ? "track-fx" : t)), tracks: Object.fromEntries(Object.entries(song.tracks).map(([k, v]) => (k === fx ? ["track-fx", { ...v, id: "track-fx" }] : [k, v]))) };
-    expect(runAll(songView(song), SPECIAL_TASKS["M51.1"]!.steps[0]!.check).pass).toBe(true);
-    expect(runAll(songView(song), SPECIAL_TASKS["M51.1"]!.steps[1]!.check).feedback).toMatch(/112 bars/);
+  /** A learner's song (track ids "track-..."), built from parts of the theme. */
+  const ownSong = (song: { parts: SongSpec["song"]["parts"]; melodyPattern?: string }) => {
+    const r = stageSetupOps(createProject("p"), { song: { bars: 32, theme: "moonwing", sharedDrums: true, ...song } }, id) as { ok: true; ops: OpBody[] };
+    return apply(createProject("p"), r.ops.map((o) => (o.type === "addTrack" ? { ...o, track: { ...o.track, id: o.track.id.replace("lesson-song-", "track-") } } : o)));
+  };
+  /** Drops a sound into the learner's song (a new FX track gets an ordinary track id). */
+  const own = (p: Project, sid: string, bar: number) => {
+    const out = drop(p, sid, bar);
+    const fx = out.trackOrder.find((t) => t.startsWith("lesson-k-"));
+    if (!fx) return out;
+    const nid = `track-${id()}`;
+    return { ...out, trackOrder: out.trackOrder.map((t) => (t === fx ? nid : t)), tracks: Object.fromEntries(Object.entries(out.tracks).map(([k, v]) => (k === fx ? [nid, { ...v, id: nid, sample: v.sample }] : [k, v]))) };
+  };
+  const final = (p: Project, i: number) => runAll(songView(p), SPECIAL_TASKS["M51.1"]!.steps[i]!.check);
+
+  it("Build the whole song reads the learner's own song: it needs every applied part, 128 BPM and 32 bars", () => {
+    expect(final(createProject("p"), 0).feedback).toMatch(/Piano: Special task 1/);
+    let song = ownSong({ parts: { piano: [[1, 16]], pads: [[1, 16]], melody: [[1, 16]], bass: [[9, 16]], arp: [[17, 24]], kick: [[1, 4]], hats: [[1, 4]], clap: [[1, 4]] } });
+    expect(final(song, 0).feedback).toMatch(/Missing: fx/);
+    song = own(song, "FX/Riser/Riser 2s", 7);
+    expect(final(song, 0).pass).toBe(true);
+    expect(final({ ...song, tempo: 124 }, 1).feedback).toMatch(/Type 128/);
+    expect(final({ ...song, songBars: 40 }, 1).feedback).toMatch(/32 bars/);
+    expect(final(song, 1).pass).toBe(true);
+  });
+
+  it("Build the whole song: the 60-second arrangement passes intro, climax, outro and transitions", () => {
+    // Intro 1-8 (piano, strings, melody), theme 9-16 (+ drums, bass), climax 17-24 (+ arp), outro 25-32 (thinning out).
+    let song = ownSong({ parts: { piano: [[1, 28]], pads: [[1, 32]], melody: [[1, 24]], kick: [[9, 24]], hats: [[9, 24]], clap: [[9, 24]], bass: [[9, 24]], arp: [[17, 32]] }, melodyPattern: "ABAC" });
+    expect(final(song, 2).pass).toBe(true);
+    expect(final(song, 3).pass).toBe(true);
+    expect(final(song, 4).feedback).toMatch(/filter curve/);
+    song = apply(song, [{ type: "setAutomation", trackId: "track-pads", param: "filter", points: [{ tick: barTick(25), value: 1 }, { tick: barTick(32), value: hzToValue(400) }] }]);
+    expect(final(song, 4).pass).toBe(true);
+    // Drums from bar 1: the intro is not quiet any more.
+    expect(final(ownSong({ parts: { piano: [[1, 16]], pads: [[1, 16]], kick: [[1, 16]] } }), 2).pass).toBe(false);
+    expect(final(song, 5).pass).toBe(false);
+    FX["FX/Impact/Impact"] = { category: "FX", sub: "Impact", name: "Impact", durationSec: 2 };
+    song = own(own(song, "FX/Riser/Riser 2s", 7), "FX/Downlifter/Downlifter 1s", 9);
+    song = own(own(song, "FX/Riser/Riser 2s", 15), "FX/Impact/Impact", 17);
+    song = own(song, "FX/Downlifter/Downlifter 1s", 25);
+    expect(final(song, 5).pass).toBe(true);
   });
 });
 

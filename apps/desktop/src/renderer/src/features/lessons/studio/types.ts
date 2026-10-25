@@ -19,6 +19,8 @@ export interface StudioCtx {
   auditioned: string[];
   /** Peaks measured while the song played (mixing lessons), linear. */
   peaks?: { tracks: Record<string, number>; master: number; samples: number };
+  /** The song the checks compare against: the Special tasks' "moonwing" theme (absent = the course lessons' song). */
+  theme?: "moonwing";
 }
 
 /** Which sound a task asks for: a category, optionally a finer sub-category. */
@@ -120,7 +122,7 @@ export type StudioCheck =
   /** The learner's song has every part from the Special tasks. */
   | { kind: "parts" }
   /** The song is at least this many bars long. */
-  | { kind: "songBars"; bars: number }
+  | { kind: "songBars"; bars: number; exact?: boolean }
   /** The capstone checklist on the learner's own song. */
   | { kind: "capstone" };
 
@@ -139,6 +141,8 @@ export interface SongSpec {
     parts: Partial<Record<"piano" | "pads" | "kick" | "hats" | "clap" | "bass" | "arp" | "melody", [number, number][]>>;
     /** Bass as copied chords (5.1), long roots (5.2) or chopped eighths (default). */
     bass?: "chords" | "long" | "chopped";
+    /** The song the parts come from: "moonwing" (the Special tasks' theme); absent = the course lessons' song. */
+    theme?: "moonwing";
     /** Melody clips in this pattern of phrases, repeated ("A", "ABAC"); "unsettled" for Lesson 8.2. */
     melodyPattern?: string;
     melody?: "unsettled";

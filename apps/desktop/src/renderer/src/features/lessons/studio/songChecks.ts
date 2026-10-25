@@ -2,7 +2,7 @@ import { TICKS_PER_BAR, type AutoPoint, type Project, type Track } from "@daw/sh
 import type { CheckResult } from "../types";
 import { soundOfTrack } from "./checks";
 import { toDb } from "./meters";
-import { PHRASES, barTick, chordPcs, rootPc } from "./songParts";
+import { barTick, themeOf } from "./songParts";
 import type { StudioCheck, StudioCtx } from "./types";
 
 /**
@@ -107,7 +107,6 @@ function fxClips(p: Project, ctx: StudioCtx) {
 
 const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const noteName = (pitch: number) => `${NOTE[pitch % 12]}${Math.floor(pitch / 12) - 1}`;
-const CHORD_NAMES = ["Am (A C E)", "F (F A C)", "C (C E G)", "G (G B D)"];
 /** Which Special task makes each element of the song. */
 const MADE_BY: Record<string, string> = {
   piano: "Piano: Special task 1 (chords, pads and melody)",
@@ -122,6 +121,11 @@ const MADE_BY: Record<string, string> = {
 };
 
 export function runSongCheck(p: Project, check: StudioCheck, ctx: StudioCtx): CheckResult | null {
+  // The song's chords: the course lessons' Am - F - C - G, or the Special tasks' theme.
+  const th = themeOf(ctx.theme);
+  const chordPcs = (bar: number) => th.progression[(bar - 1) % 4]!.map((x) => x % 12);
+  const rootPc = (bar: number) => th.bassRoots[(bar - 1) % 4]! % 12;
+  const chordList = th.chordNames.map((n) => n.split(" ")[0]).join(" - ");
   switch (check.kind) {
     case "progression": {
       const piano = hits(p, ctx).filter((x) => x.element === "piano");
@@ -131,15 +135,15 @@ export function runSongCheck(p: Project, check: StudioCheck, ctx: StudioCtx): Ch
         return at.length < 3 || chordPcs(bar).some((pc) => !pcs.has(pc)) || [...pcs].some((pc) => !chordPcs(bar).includes(pc));
       });
       return result(
-        [{ label: `Am - F - C - G in ${bars(...check.bars)}`, ok: bad === undefined, fix: bad === undefined ? "" : `Bar ${bad} should be ${CHORD_NAMES[(bad - 1) % 4]}, three notes starting on the bar line. Follow the faint notes.` }],
-        "The chords of the song: Am, F, C, G.",
+        [{ label: `${chordList} in ${bars(...check.bars)}`, ok: bad === undefined, fix: bad === undefined ? "" : `Bar ${bad} should be ${th.chordNames[(bad - 1) % 4]}, three notes starting on the bar line. Follow the faint notes.` }],
+        `The chords of ${th.name}: ${chordList.split(" - ").join(", ")}.`,
       );
     }
     case "phrase": {
       const mel = hits(p, ctx).filter((x) => x.element === "melody");
       const from = barTick(check.from);
       const have = mel.filter((x) => x.start >= from && x.start < from + 4 * TICKS_PER_BAR).map((x) => ({ start: x.start - from, pitch: x.pitch, len: x.end - x.start }));
-      const want = PHRASES[check.letter].map(([bar, beat, len, pitch]) => ({ start: (bar - 1) * TICKS_PER_BAR + Math.round((beat - 1) * 960), pitch, len: Math.round(len * 960) }));
+      const want = th.phrases[check.letter].map(([bar, beat, len, pitch]) => ({ start: (bar - 1) * TICKS_PER_BAR + Math.round((beat - 1) * 960), pitch, len: Math.round(len * 960) }));
       const missing = want.find((w) => !have.some((h) => h.start === w.start && h.pitch === w.pitch && Math.abs(h.len - w.len) <= 120));
       const extra = have.find((h) => !want.some((w) => w.start === h.start && w.pitch === h.pitch));
       const where = (t: number) => `bar ${check.from + Math.floor(t / TICKS_PER_BAR)}, beat ${Math.floor((t % TICKS_PER_BAR) / 960) + 1}${t % 960 ? "½" : ""}`;
@@ -157,7 +161,7 @@ export function runSongCheck(p: Project, check: StudioCheck, ctx: StudioCtx): Ch
       return result([{ label: `${check.element} plays in ${bars(...check.bars)}`, ok: gap === undefined, fix: `The ${check.element} track has nothing in bar ${gap}. Copy the clips onto it so every bar is covered.` }], `The ${check.element} track plays all through.`);
     }
     case "songBars":
-      return result([{ label: `Song is ${check.bars} bars long`, ok: p.songBars >= check.bars, fix: `Set the song length to ${check.bars} bars (Song bars, at the top of the workspace).` }], `The song is ${p.songBars} bars long.`);
+      return result([{ label: `Song is ${check.bars} bars long`, ok: check.exact ? p.songBars === check.bars : p.songBars >= check.bars, fix: `Set the song length to ${check.bars} bars (Song bars, at the top of the workspace). It is ${p.songBars} now.` }], `The song is ${p.songBars} bars long.`);
     case "parts": {
       const els = elementsIn(hits(p, ctx), 1, p.songBars);
       const need = ["piano", "pads", "melody", "bass", "arp", "kick", "hats", "clap"] as Element[];

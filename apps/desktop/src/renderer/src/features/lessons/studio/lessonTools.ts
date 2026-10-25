@@ -95,8 +95,9 @@ export function separateDrumsOps(project: Project, trackId: string, newTrackId: 
 }
 
 /** A new empty synth or drum track for the lesson workspace, with one 4-bar clip at `bar`. */
-export function newTrackOps(kind: "synth" | "drums", name: string, color: string, trackId: string, clipId: string, bar = 1): OpBody[] {
+export function newTrackOps(kind: "synth" | "drums", name: string, color: string, trackId: string, clipId: string, bar = 1, preset?: string): OpBody[] {
   const t = createTrack(trackId, name, kind, color, clipId);
+  if (preset && kind === "synth") t.synthPreset = preset;
   t.clips[clipId] = { ...t.clips[clipId]!, startTick: (bar - 1) * TICKS_PER_BAR, lengthTicks: 4 * TICKS_PER_BAR };
   return [{ type: "addTrack", track: t }];
 }

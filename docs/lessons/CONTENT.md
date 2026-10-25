@@ -332,13 +332,31 @@ Create your sound."
 | M36.1 | Add an arp preset | Piano L7 | Arp in bars 17-32; three presets tried (tick) |
 | M40.1-M40.5 | One channel per element, Gain staging, EQ and compression, Pan, Master headroom | Mixing X1 | As in the plan (levels measured with the engine's meters) |
 
-## Special tasks (one song, built part by part)
+## Special tasks: "Moonwing's Theme" (one song, built part by part)
+
+The Special tasks build one original song, written for these lessons: **Moonwing's Theme**, a magical theme in E minor
+inspired by the feel of film-score fantasy themes (it does not copy any existing melody). 128 BPM, 32 bars = 60
+seconds. Chords, one per bar: **Em - C - Am - B** (the B major chord's D#, from the harmonic minor, pulls back to Em).
+Sounds: Piano (Piano preset), Strings (Violin), Melody (Pluck, celesta-like), Arp (Piano, high: a music box), Bass.
+
+Melody (bar.beat, length in beats; C5 = middle C's octave up):
+
+| Phrase | Bar 1 (Em) | Bar 2 (C) | Bar 3 (Am) | Bar 4 (B) |
+| --- | --- | --- | --- | --- |
+| A, the question | E5 1.5, D#5 0.5, E5 1, G5 1 | G5 1.5, F#5 0.5, E5 1, C5 1 | A4 1, C5 1, E5 1.5, D5 0.5 | D#5 2, F#5 1, B4 1 |
+| B, the answer | E5 1, G5 1, B5 1.5, A5 0.5 | G5 1.5, E5 0.5, C5 1, E5 1 | A5 2, G5 0.5, E5 0.5, C5 1 | B4 1, D#5 1, F#5 2 |
+| C, the ending | as A | as A | as A | F#5 1, D#5 1, B4 2 |
+
+Song map: intro 1-8 (piano, strings, melody A-B), theme 9-16 (+ half-time drums, bass; melody A-C), climax 17-24
+(everything + the music-box arp), outro 25-32 (one element fewer every 4 bars, a filter closing).
 
 | Id | Card at the end of | Steps (each checked) | Apply |
 | --- | --- | --- | --- |
-| M50.1 | Piano | Am-F-C-G over ghost notes; repeat to 16 bars; Pads layer; phrase A over ghost notes; melody A-B-A-C | Song · Piano, Song · Pads, Song · Melody |
-| M50.2 | Piano | Bass from the piano clips; roots only, two octaves down; chop to 1/8; Arp track with a preset | Song · Bass, Song · Arp |
-| M50.3 | Drum sequencer | Kick on 1, 5, 9, 13; hats on 3, 7, 11, 15; clap on 5 and 13; four bars with a kick on pad 16 of bar 4 | Song · Drums |
-| M50.4 | Kick Drums | Sweep + down filter at bars 9, 17 and 33; sweep and Impact into the drop on 65 | Song · FX tracks |
+| M50.1 | Piano | Em-C-Am-B over ghost notes; repeat to 16 bars; Strings layer; phrase A over ghost notes; melody A-B-A-C | Song · Piano, Song · Strings, Song · Melody |
+| M50.2 | Piano | Bass from the chords in bars 9-16; roots only (E, C, A, B), two octaves down; chopped (1/4 or 1/8); Arp in bars 17-24 with a preset | Song · Bass, Song · Arp |
+| M50.3 | Drum sequencer | Half-time kick on pads 1 and 9 only; hats on 3, 7, 11, 15; clap on 5 and 13; four bars with a kick on pad 16 of bar 4 | Song · Drums |
+| M50.4 | Kick Drums | Sweep + down filter at bar 9; sweep and Impact into the climax on 17; down filter from 25 | Song · FX tracks |
 | M50.5 | Mixing | Gain staging (kick about -9 dB), pan hats and arp apart, master -6 to -3 dB | Save my mix |
-| M51.1 | Main page, last card "Build the whole song" | All parts there; 112 bars; intro; drop 17-32; strip back + filter rise; full drop 65-96; outro; transitions; headroom; export (tick) | (the learner's own song) |
+| M51.1 | Main page, last card "Build the whole song" | All parts there; 128 BPM and 32 bars; intro and theme (kick from bar 9); full climax 17-24; outro 25-32 with a closing filter; transitions; headroom; export (tick) | (the learner's own song) |
+
+Applying a part also sets the song to 128 BPM.
