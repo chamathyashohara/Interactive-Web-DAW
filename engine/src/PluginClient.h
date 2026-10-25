@@ -44,6 +44,12 @@ public:
     uint64_t droppedBlocks() const { return droppedCount.load(std::memory_order_relaxed); }
     uint64_t heartbeat() const;
 
+    /** Asks the host to show the plugin's own window (it also brings it forward if it is already open). */
+    void openEditor();
+    bool editorOpen() const;
+    /** True once, after the host wrote changed plugin settings; `state` then holds them (base64). Off the audio thread. */
+    bool takeSavedState(std::string& state);
+
     /** Tests only: terminates the host process to simulate a plugin crash. */
     void killHostForTest();
 
@@ -53,7 +59,8 @@ public:
 private:
     void drain();
 
-    std::string hostExe, path, stateFile, sessionId;
+    std::string hostExe, path, stateFile, stateOutFile, sessionId;
+    uint32_t seenStateSeq = 0;
     double sr;
     bool blockingMode;
     void* map = nullptr;        // HANDLE
@@ -92,7 +99,10 @@ public:
     /** state changes for the UI: slot, state, plugin name, message */
     using Report = std::function<void(int slot, PluginState, const std::string& name, const std::string& message)>;
 
-    PluginManager(std::string hostExe, Report report);
+    /** the plugin's settings changed in its own window: slot, settings (base64) */
+    using SavedReport = std::function<void(int slot, const std::string& stateB64)>;
+
+    PluginManager(std::string hostExe, Report report, SavedReport saved = {});
     ~PluginManager();
 
     void setFormat(double sampleRate) { sr = sampleRate; }
@@ -100,6 +110,8 @@ public:
     /** Starts clients for new plugin tracks, keeps the ones unchanged, retires the ones no longer wanted. */
     void reconcile(const std::vector<Wanted>& wanted);
     PluginClient* clientFor(int slot);
+    /** Shows the plugin's own window for this slot's plugin (no-op if it is not loaded). */
+    void openEditor(int slot);
     void shutdownAll();
 
 private:
@@ -116,6 +128,7 @@ private:
 
     std::string hostExe;
     Report report;
+    SavedReport savedReport;
     double sr = 48000.0;
     std::mutex mutex;
     std::vector<std::unique_ptr<Entry>> entries;

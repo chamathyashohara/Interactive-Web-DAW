@@ -1,8 +1,85 @@
 #include "PluginHost.h"
 
+/** A plain window around the plugin's own editor. Closing it only raises a flag; the host loop deletes the window. */
+class PluginHost::EditorWindow : public juce::DocumentWindow
+{
+public:
+    EditorWindow(juce::AudioProcessorEditor* editor, const juce::String& title)
+        : juce::DocumentWindow(title, juce::Colour(0xff1b1f29), juce::DocumentWindow::minimiseButton | juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar(true);
+        setContentOwned(editor, true);
+        setResizable(editor->isResizable(), false);
+        centreWithSize(getWidth(), getHeight());
+        setVisible(true);
+        setAlwaysOnTop(true); // the DAW window is a different program; keep the plugin reachable while it is being played
+    }
+    void closeButtonPressed() override { closeRequested = true; }
+    std::atomic<bool> closeRequested{ false };
+};
+
 PluginHost::PluginHost()
 {
-    juce::addHeadlessDefaultFormatsToManager(formats); // VST3, plus VST2 when JUCE_PLUGINHOST_VST is on (JUCE 8, no editor UI here)
+    juce::addDefaultFormatsToManager(formats); // VST3 (with its editor), plus VST2 when JUCE_PLUGINHOST_VST is on
+}
+
+PluginHost::~PluginHost() { closeEditor(); }
+
+bool PluginHost::openEditor()
+{
+    if (plugin == nullptr || !plugin->hasEditor()) return false;
+    if (editorWindow != nullptr)
+    {
+        editorWindow->toFront(true);
+        return true;
+    }
+    auto* editor = plugin->createEditorIfNeeded();
+    if (editor == nullptr) return false;
+    editorWindow = std::make_unique<EditorWindow>(editor, plugin->getName());
+    return true;
+}
+
+bool PluginHost::editorIsOpen() const { return editorWindow != nullptr; }
+
+bool PluginHost::serviceEditor()
+{
+    if (editorWindow != nullptr && editorWindow->closeRequested.load())
+    {
+        closeEditor();
+        return true;
+    }
+    return false;
+}
+
+void PluginHost::closeEditor() { editorWindow.reset(); }
+
+bool PluginHost::takeChangedSettings(int64_t quietMs)
+{
+    if (!changes.dirty.load(std::memory_order_acquire)) return false;
+    const int64_t now = static_cast<int64_t>(juce::Time::getMillisecondCounterHiRes());
+    if (now - changes.lastMs.load(std::memory_order_relaxed) < quietMs) return false;
+    changes.dirty.store(false, std::memory_order_release);
+    return true;
+}
+
+juce::StringArray PluginHost::parameterNames() const
+{
+    juce::StringArray names;
+    if (plugin != nullptr)
+        for (auto* p : plugin->getParameters()) names.add(p->getName(64));
+    return names;
+}
+
+bool PluginHost::tweakParameter(const juce::String& match)
+{
+    if (plugin == nullptr) return false;
+    for (auto* p : plugin->getParameters())
+        if (p->getName(64).containsIgnoreCase(match))
+        {
+            p->setValueNotifyingHost(p->getValue() < 0.5f ? 0.85f : 0.15f);
+            return true;
+        }
+    return false;
 }
 
 bool PluginHost::supportsVst2()
@@ -59,13 +136,17 @@ std::string PluginHost::load(const std::string& path, double sampleRate, int max
 
     plugin->setRateAndBufferSizeDetails(sampleRate, maxBlock);
     plugin->prepareToPlay(sampleRate, maxBlock);
+    changes.dirty = false;
+    plugin->addListener(&changes);
     return {};
 }
 
 void PluginHost::unload()
 {
+    closeEditor(); // the window must go before the plugin it shows
     if (plugin != nullptr)
     {
+        plugin->removeListener(&changes);
         plugin->releaseResources();
         plugin.reset();
     }

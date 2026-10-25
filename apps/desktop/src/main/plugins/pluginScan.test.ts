@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { defaultPluginFolders, scanPlugins } from "./pluginScan";
+import { defaultPluginFolders, prettyName, scanPlugins } from "./pluginScan";
 
 let root: string;
 beforeEach(() => {
@@ -44,6 +44,14 @@ describe("scanning for VST3 plugins", () => {
     expect(found.map((p) => p.name)).toEqual(["Spire"]);
     expect(found[0]!.id).toBe(path.join(root, "Spire-1.5_x64", "Spire.vst3"));
   });
+  it("lists VST2 .dll files (tagged vst2) next to VST3 plugins, and ignores folders and other files", () => {
+    file(root, "Nexus3.4.4.dll");
+    file(root, "readme.txt");
+    bundleDir(root, "NotAPlugin.dll"); // a folder named .dll is not a VST2 file
+    file(root, "Diva.vst3");
+    const found = scanPlugins([root]);
+    expect(found.map((p) => [p.name, p.format])).toEqual([["Diva", "vst3"], ["Nexus3.4.4", "vst2"]]);
+  });
   it("skips missing or unreadable folders without throwing", () => {
     file(root, "OnlyOne.vst3");
     expect(scanPlugins([path.join(root, "does-not-exist"), root]).map((p) => p.name)).toEqual(["OnlyOne"]);
@@ -60,5 +68,14 @@ describe("default folders", () => {
     } else {
       expect(folders.length).toBeGreaterThan(0); // other platforms still return sensible defaults
     }
+  });
+});
+
+describe("plugin display names", () => {
+  it("drops the extension and a trailing architecture tag", () => {
+    expect(prettyName("Diva(x64).vst3")).toBe("Diva");
+    expect(prettyName("Sylenth1.vst3")).toBe("Sylenth1");
+    expect(prettyName("Nexus3_x64.dll")).toBe("Nexus3");
+    expect(prettyName("x64.vst3")).toBe("x64"); // never an empty name
   });
 });

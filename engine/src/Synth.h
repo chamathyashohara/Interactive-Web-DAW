@@ -3,6 +3,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
+
+/** Most points of a note's pitch bend curve (see Note.bend in packages/shared/src/model.ts). */
+constexpr int kMaxBend = 48;
 
 /** Preset parameters for the built-in synth (sent per track by the model; see packages/shared/src/synth.ts). */
 struct SynthParams
@@ -58,7 +62,11 @@ public:
         recompute();
     }
 
-    void noteOn(int pitch, int velocity)
+    /**
+     * Starts a note. A note played live from a controller (`preview`) can be bent while it is held with `setPreviewBend`; a note from the
+     * song can carry a curve (`noteOnBend`).
+     */
+    void noteOn(int pitch, int velocity, bool preview = false)
     {
         Voice* target = nullptr;
         for (auto& v : voices)
@@ -81,8 +89,32 @@ public:
         v.inc = static_cast<float>(freq / sr);
         v.inc2 = v.inc * detuneRatio;
         v.gain = params.gain * vel;
+        v.livePreview = preview;
 
         if (v.model == 1) startPiano(v, pitch, vel, freq);
+    }
+
+    /** Starts a note whose pitch follows a curve: `ticks` after the start, `semis` above the note's pitch; `samplesPerTick` times it. */
+    void noteOnBend(int pitch, int velocity, const float* ticks, const float* semis, int n, double samplesPerTick)
+    {
+        noteOn(pitch, velocity);
+        int newest = -1;
+        for (int i = 0; i < kVoices; ++i)
+            if (voices[i].active && (newest < 0 || voices[i].age > voices[newest].age)) newest = i;
+        if (newest < 0 || n <= 0) return;
+        voices[newest].bendN = std::min(n, kMaxBend);
+        for (int i = 0; i < voices[newest].bendN; ++i)
+        {
+            bendStore[newest].t[i] = static_cast<float>(static_cast<double>(ticks[i]) * samplesPerTick);
+            bendStore[newest].s[i] = semis[i];
+        }
+    }
+
+    /** Bends the notes being played live (not the song's) to `semitones` above their own pitch. Smoothed, so it can be called often. */
+    void setPreviewBend(float semitones)
+    {
+        for (auto& v : voices)
+            if (v.active && v.livePreview && !v.releasing) v.liveTarget = semitones;
     }
 
     void noteOff(int pitch)
@@ -102,10 +134,12 @@ public:
     /** Adds the voices' output into `out`. */
     void render(float* out, int numSamples)
     {
-        for (auto& v : voices)
+        for (int vi = 0; vi < kVoices; ++vi)
         {
+            Voice& v = voices[vi];
             if (!v.active)
                 continue;
+            prepareBend(v, vi, numSamples);
             if (v.model == 1) renderPiano(v, out, numSamples);
             else if (v.model == 2) renderStrings(v, out, numSamples);
             else renderClassic(v, out, numSamples);
@@ -130,6 +164,12 @@ private:
         float noiseLp = 0;
         uint32_t rng = 1;
         unsigned long long age = 0;
+        // pitch bend: a curve stored with the note (times in samples after it starts) and/or a live bend from a controller
+        int bendN = 0; // points of the curve kept in bendStore[this voice]
+        float bendPos = 0;
+        bool livePreview = false;
+        float liveTarget = 0, liveCur = 0;
+        float rate = 1, rateStep = 0; // pitch ratio at the start of this block, and its change per sample
     };
 
     struct Resonator
@@ -198,6 +238,39 @@ private:
         res3.set(3200.0, 3.0, sr);
     }
 
+    /** The note's own bend curve at `pos` samples after it started (straight lines; the end values are held). */
+    float curveAt(const Voice& v, int vi, float pos) const
+    {
+        if (v.bendN <= 0) return 0.0f;
+        const float* t = bendStore[vi].t;
+        const float* s = bendStore[vi].s;
+        if (pos <= t[0]) return s[0];
+        if (pos >= t[v.bendN - 1]) return s[v.bendN - 1];
+        int i = 1;
+        while (t[i] < pos) ++i;
+        const float span = t[i] - t[i - 1];
+        return span <= 0.0f ? s[i] : s[i - 1] + (s[i] - s[i - 1]) * (pos - t[i - 1]) / span;
+    }
+
+    /** Works out this block's pitch ratio at its start and how it changes per sample, so a glide is smooth inside the block too. */
+    void prepareBend(Voice& v, int vi, int numSamples)
+    {
+        if (v.bendN == 0 && !v.livePreview)
+        {
+            v.rate = 1.0f;
+            v.rateStep = 0.0f;
+            return;
+        }
+        const float n = static_cast<float>(numSamples);
+        const float s0 = curveAt(v, vi, v.bendPos) + v.liveCur;
+        v.liveCur += (v.liveTarget - v.liveCur) * (1.0f - std::exp(-n / (0.006f * static_cast<float>(sr)))); // follow the controller within about 6 ms
+        v.bendPos += n;
+        const float s1 = curveAt(v, vi, v.bendPos) + v.liveCur;
+        const float r0 = std::exp2(s0 / 12.0f), r1 = std::exp2(s1 / 12.0f);
+        v.rate = r0;
+        v.rateStep = (r1 - r0) / n;
+    }
+
     /** Advances the attack/release envelope one sample; returns false when the voice has finished. */
     bool stepEnv(Voice& v)
     {
@@ -219,11 +292,14 @@ private:
     {
         const bool useOsc2 = params.osc2Level > 0.0001f;
         const bool useSine = params.sineLevel > 0.0001f;
+        float r = v.rate;
         for (int i = 0; i < numSamples; ++i)
         {
             if (!stepEnv(v)) return;
-            float raw = params.sawLevel * (2.0f * v.phase - 1.0f - polyBlep(v.phase, v.inc));
-            if (useOsc2) raw += params.osc2Level * (2.0f * v.phase2 - 1.0f - polyBlep(v.phase2, v.inc2));
+            const float inc = v.inc * r, inc2 = v.inc2 * r;
+            r += v.rateStep;
+            float raw = params.sawLevel * (2.0f * v.phase - 1.0f - polyBlep(v.phase, inc));
+            if (useOsc2) raw += params.osc2Level * (2.0f * v.phase2 - 1.0f - polyBlep(v.phase2, inc2));
             if (useSine) raw += params.sineLevel * sinLookup(v.phase);
             raw += params.subLevel * sinLookup(v.subPhase);
             v.lp += toneCoef * (raw - v.lp); // one-pole tone filter
@@ -231,14 +307,14 @@ private:
             if (params.drive > 0.01f) x = std::tanh(params.drive * x) * driveNorm * 0.55f; // soft saturation keeps low notes audible on small speakers
             out[i] += x * v.env * v.gain;
 
-            v.phase += v.inc;
+            v.phase += inc;
             if (v.phase >= 1.0f) v.phase -= 1.0f;
             if (useOsc2)
             {
-                v.phase2 += v.inc2;
+                v.phase2 += inc2;
                 if (v.phase2 >= 1.0f) v.phase2 -= 1.0f;
             }
-            v.subPhase += v.inc * 0.5f;
+            v.subPhase += inc * 0.5f;
             if (v.subPhase >= 1.0f) v.subPhase -= 1.0f;
         }
     }
@@ -277,8 +353,11 @@ private:
     {
         const float hammerDecay = std::exp(-1.0f / (0.006f * static_cast<float>(sr)));
         const float rel = 1.0f / (0.28f * static_cast<float>(sr)); // damper: a quick fade when the key is released
+        float r = v.rate;
         for (int i = 0; i < numSamples; ++i)
         {
+            const float incR = v.inc * r;
+            r += v.rateStep;
             if (v.releasing)
             {
                 v.env -= rel;
@@ -288,7 +367,7 @@ private:
             for (int k = 0; k < v.partials; ++k)
             {
                 s += v.pLevel[k] * sinLookup(v.pPhase[k]);
-                v.pPhase[k] += v.inc * v.pMul[k];
+                v.pPhase[k] += incR * v.pMul[k];
                 if (v.pPhase[k] >= 1.0f) v.pPhase[k] -= 1.0f;
                 v.pLevel[k] *= v.pDecay[k];
             }
@@ -308,6 +387,7 @@ private:
     {
         const float vibRate = params.vibratoHz / static_cast<float>(sr);
         const float vibDelay = std::max(1.0f, params.vibratoDelaySec * static_cast<float>(sr));
+        float r = v.rate;
         for (int i = 0; i < numSamples; ++i)
         {
             if (!stepEnv(v)) return;
@@ -318,7 +398,8 @@ private:
             v.vibPhase += vibRate;
             if (v.vibPhase >= 1.0f) v.vibPhase -= 1.0f;
 
-            const float inc1 = v.inc * vib, inc2 = v.inc2 * vib;
+            const float inc1 = v.inc * vib * r, inc2 = v.inc2 * vib * r;
+            r += v.rateStep;
             float bow = params.sawLevel * (2.0f * v.phase - 1.0f - polyBlep(v.phase, inc1))
                       + params.osc2Level * (2.0f * v.phase2 - 1.0f - polyBlep(v.phase2, inc2));
             v.noiseLp += 0.25f * (noise(v.rng) - v.noiseLp);
@@ -335,7 +416,13 @@ private:
         }
     }
 
+    struct BendStore
+    {
+        float t[kMaxBend];
+        float s[kMaxBend];
+    };
     Voice voices[kVoices];
+    std::unique_ptr<BendStore[]> bendStore{ new BendStore[kVoices]() }; // one curve per voice, on the heap
     SynthParams params;
     Resonator res1, res2, res3;
     double sr = 48000.0;

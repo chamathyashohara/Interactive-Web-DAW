@@ -182,6 +182,17 @@ PlaybackModel* parseModel(const juce::var& project, SampleStore& samples, Plugin
                         e.cut = static_cast<bool>(n["cut"]);
                         e.lengthSec = static_cast<double>(e.endTick - e.startTick) * 60.0 / (model->tempo * model->ppq);
                     }
+                    if (tm.instrument == kSynth)
+                        if (const auto* bend = n["bend"].getArray())
+                            for (const auto& pt : *bend)
+                                if (const auto* pair = pt.getArray(); pair != nullptr && pair->size() == 2 && e.bendN < kMaxBend)
+                                {
+                                    const float tick = std::max(0.0f, static_cast<float>(static_cast<double>((*pair)[0])));
+                                    if (e.bendN > 0 && tick <= e.bendTick[e.bendN - 1]) continue; // points must go forward in time
+                                    e.bendTick[e.bendN] = tick;
+                                    e.bendSemis[e.bendN] = std::clamp(static_cast<float>(static_cast<double>((*pair)[1])), -24.0f, 24.0f);
+                                    ++e.bendN;
+                                }
                     if (e.startTick >= 0 && e.startTick < model->loopTicks && e.endTick > e.startTick)
                         tm.notes.push_back(e);
                 }
@@ -227,6 +238,28 @@ std::string statusJson(AudioEngine& engine, juce::AudioDeviceManager& dm)
         std::snprintf(buf, sizeof(buf), i ? ",%.4f" : "%.4f", engine.slotPeak[i].exchange(0.0f));
         s += buf;
     }
+    s += "]";
+    // Mix analysis: what each channel puts on the master bus, and the master level before the soft clip (see AudioEngine.h)
+    std::snprintf(buf, sizeof(buf), ",\"prePeak\":%.5f,\"softClips\":%llu,\"overs\":%llu,\"bus\":[", static_cast<double>(engine.masterPrePeak.exchange(0.0f)),
+                  static_cast<unsigned long long>(engine.softClipSamples.exchange(0)), static_cast<unsigned long long>(engine.overSamples.exchange(0)));
+    s += buf;
+    for (int i = 0; i < kMaxSlots; ++i)
+    {
+        std::snprintf(buf, sizeof(buf), i ? ",%.5f" : "%.5f", static_cast<double>(engine.slotBusPeak[i].exchange(0.0f)));
+        s += buf;
+    }
+    s += "],\"sumSq\":[";
+    for (int i = 0; i < kMaxSlots; ++i)
+    {
+        std::snprintf(buf, sizeof(buf), i ? ",%.6g" : "%.6g", engine.slotSumSq[i].exchange(0.0));
+        s += buf;
+    }
+    s += "],\"frames\":[";
+    for (int i = 0; i < kMaxSlots; ++i)
+    {
+        std::snprintf(buf, sizeof(buf), i ? ",%llu" : "%llu", static_cast<unsigned long long>(engine.slotFrames[i].exchange(0)));
+        s += buf;
+    }
     s += "]}";
     return s;
 }
@@ -260,6 +293,8 @@ int main(int argc, char** argv)
         static const char* names[] = { "starting", "ready", "crashed", "failed" };
         sendLine("{\"t\":\"pluginState\",\"slot\":" + std::to_string(slot) + ",\"state\":\"" + names[static_cast<int>(state)] + "\",\"name\":" + jsonEscape(juce::String(name)) +
                  ",\"message\":" + jsonEscape(juce::String(message)) + "}");
+    }, [](int slot, const std::string& stateB64) {
+        sendLine("{\"t\":\"pluginSaved\",\"slot\":" + std::to_string(slot) + ",\"state\":\"" + stateB64 + "\"}"); // base64 needs no escaping
     });
     juce::AudioDeviceManager deviceManager;
 
@@ -354,6 +389,69 @@ int main(int argc, char** argv)
         });
     };
 
+    // "Analyse whole song": renders the song offline (like an export, but no file) and measures it with the live meters plus a true-peak estimate.
+    auto startAnalysis = [&](const juce::String& id) {
+        if (exporting.load())
+        {
+            sendLine("{\"t\":\"mixAnalysis\",\"id\":" + jsonEscape(id) + ",\"ok\":false,\"message\":\"an export or analysis is already running\"}");
+            return;
+        }
+        auto model = models.copyCurrent();
+        if (model == nullptr)
+        {
+            sendLine("{\"t\":\"mixAnalysis\",\"id\":" + jsonEscape(id) + ",\"ok\":false,\"message\":\"no project loaded\"}");
+            return;
+        }
+        if (exportThread.joinable()) exportThread.join();
+        exporting = true;
+        cancelExport = false;
+        exportThread = std::thread([&, id, m = std::move(model)] {
+#ifdef _WIN32
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+            juce::uint32 lastSent = 0;
+            const auto progress = [&](double fraction) {
+                const auto now = juce::Time::getMillisecondCounter();
+                if (now - lastSent < 100 && fraction < 1.0) return;
+                lastSent = now;
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), ",\"fraction\":%.4f}", fraction);
+                sendLine("{\"t\":\"mixProgress\",\"id\":" + jsonEscape(id) + buf);
+            };
+            const auto r = analyzeMixOffline(*m, kExportSampleRate, 1.0, progress, &cancelExport);
+            if (!r.ok)
+                sendLine("{\"t\":\"mixAnalysis\",\"id\":" + jsonEscape(id) + ",\"ok\":false,\"message\":" + jsonEscape(juce::String(r.error)) + "}");
+            else
+            {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), ",\"ok\":true,\"sampleRate\":%.0f,\"totalFrames\":%lld,\"prePeak\":%.5f,\"truePeak\":%.5f,\"outPeak\":%.5f,\"softClips\":%llu,\"overs\":%llu",
+                              r.sampleRate, static_cast<long long>(r.frames), static_cast<double>(r.prePeak), static_cast<double>(r.truePeak), static_cast<double>(r.outPeak),
+                              static_cast<unsigned long long>(r.softClips), static_cast<unsigned long long>(r.overs));
+                std::string s = "{\"t\":\"mixAnalysis\",\"id\":" + std::string(jsonEscape(id)) + buf + ",\"bus\":[";
+                for (int i = 0; i < kMaxSlots; ++i)
+                {
+                    std::snprintf(buf, sizeof(buf), i ? ",%.5f" : "%.5f", static_cast<double>(r.bus[static_cast<size_t>(i)]));
+                    s += buf;
+                }
+                s += "],\"sumSq\":[";
+                for (int i = 0; i < kMaxSlots; ++i)
+                {
+                    std::snprintf(buf, sizeof(buf), i ? ",%.6g" : "%.6g", r.sumSq[static_cast<size_t>(i)]);
+                    s += buf;
+                }
+                s += "],\"frames\":[";
+                for (int i = 0; i < kMaxSlots; ++i)
+                {
+                    std::snprintf(buf, sizeof(buf), i ? ",%llu" : "%llu", static_cast<unsigned long long>(r.slotFrames[static_cast<size_t>(i)]));
+                    s += buf;
+                }
+                s += "]}";
+                sendLine(s);
+            }
+            exporting = false;
+        });
+    };
+
     // Sample jobs (decode for the browser preview, decode + waveform for imports) run on one worker thread,
     // so slow disks never delay transport or note commands. Only the newest preview request is honoured.
     std::mutex jobMutex;
@@ -412,7 +510,10 @@ int main(int argc, char** argv)
         else if (type == "preview")
             engine.pushPreview({ std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1), std::clamp(static_cast<int>(msg["pitch"]), 0, 127),
                                  std::clamp(static_cast<int>(msg["velocity"]), 1, 127), static_cast<bool>(msg["on"]) });
+        else if (type == "previewBend")
+            engine.pushPreview({ std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1), 60, 90, false, true, std::clamp(static_cast<float>(static_cast<double>(msg["semitones"])), -24.0f, 24.0f) });
         else if (type == "exportWav") startExport(msg["id"].toString(), msg["path"].toString(), static_cast<double>(msg["tailSeconds"]));
+        else if (type == "analyzeMix") startAnalysis(msg["id"].toString());
         else if (type == "analyzeSample")
         {
             const juce::String id = msg["id"].toString();
@@ -460,6 +561,7 @@ int main(int argc, char** argv)
             ++previewRequest; // cancels a preview that is still loading
             engine.preview.stop();
         }
+        else if (type == "openPluginEditor") plugins.openEditor(std::clamp(static_cast<int>(msg["slot"]), 0, kMaxSlots - 1));
         else if (type == "hello") sendLine(readyBuf);
     }
 

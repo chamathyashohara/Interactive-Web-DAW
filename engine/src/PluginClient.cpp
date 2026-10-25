@@ -26,9 +26,33 @@ PluginClient::PluginClient(std::string hostExePath, std::string pluginFile, std:
 #else
     sessionId = "0_" + std::to_string(++sessionCounter);
 #endif
+    if (!blockingMode) // only the live host is edited; the export host just plays the settings it is given
+        stateOutFile = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("daw_pluginout_" + juce::String(sessionId) + ".bin").getFullPathName().toStdString();
 }
 
-PluginClient::~PluginClient() { shutdown(); }
+PluginClient::~PluginClient()
+{
+    shutdown();
+    if (!stateOutFile.empty()) juce::File(juce::String::fromUTF8(stateOutFile.c_str())).deleteFile();
+}
+
+void PluginClient::openEditor()
+{
+    if (sh != nullptr && st.load(std::memory_order_acquire) == PluginState::Ready) sh->openEditorSeq.fetch_add(1, std::memory_order_release);
+}
+bool PluginClient::editorOpen() const { return sh != nullptr && sh->editorOpen.load(std::memory_order_acquire) != 0; }
+
+bool PluginClient::takeSavedState(std::string& state)
+{
+    if (sh == nullptr) return false;
+    const uint32_t seq = sh->stateSeq.load(std::memory_order_acquire);
+    if (seq == seenStateSeq) return false;
+    seenStateSeq = seq;
+    juce::MemoryBlock data;
+    if (!juce::File(juce::String::fromUTF8(stateOutFile.c_str())).loadFileAsData(data) || data.getSize() == 0) return false;
+    state = juce::Base64::toBase64(data.getData(), data.getSize()).toStdString();
+    return true;
+}
 
 std::string PluginClient::message() const
 {
@@ -81,7 +105,11 @@ bool PluginClient::launch()
     args.add("--plugin"); args.add(juce::String::fromUTF8(path.c_str()));
     args.add("--sr"); args.add(juce::String(static_cast<int>(sr)));
     args.add("--engine-pid"); args.add(juce::String(static_cast<int>(GetCurrentProcessId())));
-    if (!stateFile.empty()) { args.add("--state"); args.add(juce::String::fromUTF8(stateFile.c_str())); }
+    // a restarted host starts from the newest settings the user made, not the ones the project had when the plugin was added
+    const bool haveNewer = !stateOutFile.empty() && juce::File(juce::String::fromUTF8(stateOutFile.c_str())).existsAsFile();
+    const std::string& startState = haveNewer ? stateOutFile : stateFile;
+    if (!startState.empty()) { args.add("--state"); args.add(juce::String::fromUTF8(startState.c_str())); }
+    if (!stateOutFile.empty()) { args.add("--state-out"); args.add(juce::String::fromUTF8(stateOutFile.c_str())); }
     child = std::make_unique<juce::ChildProcess>();
     if (!child->start(args))
     {
@@ -90,6 +118,7 @@ bool PluginClient::launch()
     }
 
     submitted = drained = 0;
+    seenStateSeq = 0; // the new shared memory starts counting again
     ringHead = ringCount = 0;
     primed = false;
     launchedAtMs = static_cast<int64_t>(juce::Time::getMillisecondCounterHiRes());
@@ -272,7 +301,8 @@ void PluginClient::process(const plugipc::MidiEv*, int, int frames, float* outL,
 
 // ---------------------------------------------------------------------------------------------------------------- manager
 
-PluginManager::PluginManager(std::string hostExePath, Report reportFn) : hostExe(std::move(hostExePath)), report(std::move(reportFn))
+PluginManager::PluginManager(std::string hostExePath, Report reportFn, SavedReport savedFn)
+    : hostExe(std::move(hostExePath)), report(std::move(reportFn)), savedReport(std::move(savedFn))
 {
     struct Watcher : juce::Thread
     {
@@ -343,8 +373,16 @@ PluginClient* PluginManager::clientFor(int slot)
     return nullptr;
 }
 
+void PluginManager::openEditor(int slot)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    for (auto& e : entries)
+        if (e->slot == slot) e->client->openEditor();
+}
+
 void PluginManager::watch()
 {
+    std::vector<std::pair<int, std::string>> saved;
     std::vector<std::pair<int, PluginState>> changes;
     std::vector<std::string> names, messages;
     {
@@ -353,6 +391,7 @@ void PluginManager::watch()
         for (auto& e : entries)
         {
             e->client->poll();
+            if (std::string st; e->client->takeSavedState(st)) saved.emplace_back(e->slot, std::move(st));
             const PluginState s = e->client->state();
             if (s != e->reported)
             {
@@ -375,6 +414,8 @@ void PluginManager::watch()
     }
     for (size_t i = 0; i < changes.size(); ++i)
         if (report) report(changes[i].first, changes[i].second, names[i], messages[i]);
+    for (const auto& s : saved)
+        if (savedReport) savedReport(s.first, s.second);
 }
 
 void PluginManager::shutdownAll()

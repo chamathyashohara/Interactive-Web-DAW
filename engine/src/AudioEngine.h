@@ -65,6 +65,9 @@ public:
         int pitch = 60;
         int velocity = 90;
         bool on = false;
+        /** A pitch bend for the note being played live on this slot (semitones above its pitch), not a note on or off. */
+        bool bend = false;
+        float semis = 0.0f;
     };
 
     Sequencer sequencer;
@@ -227,6 +230,12 @@ public:
         juce::FloatVectorOperations::clear(bufL.data(), numSamples);
         juce::FloatVectorOperations::clear(bufR.data(), numSamples);
         float localPeak[kMaxSlots] = {};
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            busPeakLocal[s] = 0.0f;
+            busSumSqLocal[s] = 0.0;
+            busFramesLocal[s] = 0;
+        }
 
         int cursor = 0;
         for (int i = 0; i < eventCount; ++i)
@@ -244,7 +253,8 @@ public:
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
                 else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot], &e.note);
                 else if (e.instrument == kPlugin) { /* its MIDI was sent to the plugin host before rendering */ }
-                else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
+                else if (e.note.bendN > 0 && segTps > 0.0) slots[e.slot].synth.noteOnBend(e.pitch, e.velocity, e.note.bendTick, e.note.bendSemis, e.note.bendN, 1.0 / segTps);
+            else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
             }
             else
             {
@@ -260,13 +270,22 @@ public:
 
         preview.renderAdd(bufL.data(), bufR.data(), numSamples);
 
-        // Master: smoothed gain, soft clip, peak meters.
-        float pl = 0.0f, pr = 0.0f;
+        // Master: smoothed gain, soft clip, peak meters. The level BEFORE the soft clip is measured too: the soft clip keeps the
+        // output under 1.0, so the output meter alone can never show that the mix is being squashed.
+        float pl = 0.0f, pr = 0.0f, prePeak = 0.0f;
+        uint64_t softClipped = 0, overs = 0;
         for (int i = 0; i < numSamples; ++i)
         {
             masterGain += (masterTarget - masterGain) * sampleCoef;
-            const float l = softClip(bufL[static_cast<size_t>(i)] * masterGain);
-            const float r = softClip(bufR[static_cast<size_t>(i)] * masterGain);
+            const float xl = bufL[static_cast<size_t>(i)] * masterGain;
+            const float xr = bufR[static_cast<size_t>(i)] * masterGain;
+            if (preClipTapL != nullptr) { preClipTapL[i] = xl; preClipTapR[i] = xr; } // offline analysis only (the true-peak meter reads these)
+            const float ax = std::max(std::fabs(xl), std::fabs(xr));
+            prePeak = std::max(prePeak, ax);
+            if (ax > kSoftClipKnee) ++softClipped;
+            if (ax >= 1.0f) ++overs;
+            const float l = softClip(xl);
+            const float r = softClip(xr);
             bufL[static_cast<size_t>(i)] = l;
             bufR[static_cast<size_t>(i)] = r;
             pl = std::max(pl, std::fabs(l));
@@ -284,8 +303,19 @@ public:
 
         raise(masterPeakL, pl);
         raise(masterPeakR, pr);
+        raise(masterPrePeak, prePeak);
+        if (softClipped > 0) softClipSamples.fetch_add(softClipped, std::memory_order_relaxed);
+        if (overs > 0) overSamples.fetch_add(overs, std::memory_order_relaxed);
         for (int s = 0; s < kMaxSlots; ++s)
+        {
             raise(slotPeak[s], localPeak[s]);
+            raise(slotBusPeak[s], busPeakLocal[s]);
+            if (busFramesLocal[s] > 0)
+            {
+                addDouble(slotSumSq[s], busSumSqLocal[s]);
+                slotFrames[s].fetch_add(static_cast<uint64_t>(busFramesLocal[s]), std::memory_order_relaxed);
+            }
+        }
     }
 
     std::atomic<uint64_t> callbacks{ 0 };
@@ -294,6 +324,18 @@ public:
     std::atomic<float> masterPeakL{ 0.0f };
     std::atomic<float> masterPeakR{ 0.0f };
     std::atomic<float> slotPeak[kMaxSlots] = {};
+    /** Mix analysis (read and reset by the status thread). What a channel puts on the master bus: after its fader and pan, before the master. */
+    std::atomic<float> slotBusPeak[kMaxSlots] = {};
+    std::atomic<double> slotSumSq[kMaxSlots] = {}; // sum of squares over both channels of the bus signal (RMS = sqrt(sum / (2 * frames)))
+    std::atomic<uint64_t> slotFrames[kMaxSlots] = {}; // frames in which the channel was audible (idle, muted and silent stretches add nothing)
+    std::atomic<float> masterPrePeak{ 0.0f };         // master peak before the soft clip (linear, can exceed 1.0)
+    std::atomic<uint64_t> softClipSamples{ 0 };       // samples above the soft-clip knee (the clipper is shaping them)
+    std::atomic<uint64_t> overSamples{ 0 };           // samples at or above full scale before the clip
+    /** Offline analysis only: when set, the master signal before the soft clip is copied here every block (room for the block size). */
+    float* preClipTapL = nullptr;
+    float* preClipTapR = nullptr;
+    static constexpr float kSoftClipKnee = 0.8f;
+    static constexpr float kAudibleBus = 1.0e-4f; // -80 dBFS: below this a channel counts as silent in the mix analysis
     double sampleRate = 48000.0;
     int bufferSize = 0;
 
@@ -416,6 +458,9 @@ private:
     int seenCut = 0;
     float masterGain = 0.64f;
     bool masterInitialised = false;
+    float busPeakLocal[kMaxSlots] = {};
+    double busSumSqLocal[kMaxSlots] = {};
+    int64_t busFramesLocal[kMaxSlots] = {};
     float invTau = 0.002f, sampleCoef = 0.002f;
     juce::AbstractFifo fifo{ 64 };
     PreviewMsg previewBuf[64];
@@ -425,11 +470,16 @@ private:
     {
         if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
     }
+    static void addDouble(std::atomic<double>& a, double v)
+    {
+        double cur = a.load(std::memory_order_relaxed);
+        while (!a.compare_exchange_weak(cur, cur + v, std::memory_order_relaxed)) {} // lock-free; the status thread only swaps it for zero
+    }
     static float softClip(float x)
     {
         const float a = std::fabs(x);
-        if (a <= 0.8f) return x;
-        const float y = 0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f);
+        if (a <= kSoftClipKnee) return x;
+        const float y = kSoftClipKnee + 0.2f * std::tanh((a - kSoftClipKnee) / 0.2f);
         return x < 0.0f ? -y : y;
     }
 
@@ -474,6 +524,11 @@ private:
     void applyPreview(const PreviewMsg& pm, const PlaybackModel* m)
     {
         const int slot = std::clamp(pm.slot, 0, kMaxSlots - 1);
+        if (pm.bend)
+        {
+            slots[slot].synth.setPreviewBend(pm.semis); // only the built-in synth bends (a plugin's bend range is its own)
+            return;
+        }
         int instrument = kSynth;
         if (m != nullptr)
             for (const auto& tr : m->tracks)
@@ -491,7 +546,7 @@ private:
                         if (tr.slot == slot) { d = tr.sample.get(); gate = tr.gate; break; }
                 slots[slot].samp.trigger(d, pm.pitch, pm.velocity, gate);
             }
-            else slots[slot].synth.noteOn(pm.pitch, pm.velocity);
+            else slots[slot].synth.noteOn(pm.pitch, pm.velocity, true);
         }
         else
         {
@@ -531,6 +586,9 @@ private:
             const float gl = std::cos(angle) * 1.41421356f;
             const float gr = std::sin(angle) * 1.41421356f;
             float pk = localPeak[s];
+            float busPk = busPeakLocal[s];
+            float segPk = 0.0f; // this segment only: decides whether the channel was audible (a muted channel keeps its voices running at zero gain)
+            float busSq = 0.0f;
             float g = st.gain;
             float* L = bufL.data() + start;
             float* R = bufR.data() + start;
@@ -574,9 +632,19 @@ private:
                 L[i] += lo;
                 R[i] += ro;
                 pk = std::max(pk, spk);
+                const float bp = std::max(std::fabs(lo), std::fabs(ro));
+                segPk = std::max(segPk, bp);
+                busSq += lo * lo + ro * ro;
             }
             st.gain = g;
             localPeak[s] = pk;
+            if (segPk > kAudibleBus) // silent stretches (muted, faded out, between notes) are not part of the channel's average level
+            {
+                busPk = std::max(busPk, segPk);
+                busPeakLocal[s] = busPk;
+                busSumSqLocal[s] += static_cast<double>(busSq);
+                busFramesLocal[s] += len;
+            }
         }
         click.renderAdd(bufL.data() + start, bufR.data() + start, len);
     }

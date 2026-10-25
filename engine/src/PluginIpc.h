@@ -16,7 +16,7 @@
 namespace plugipc
 {
 constexpr uint32_t kMagic = 0x58474C50; // "PLGX"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr int kSlots = 8;        // ring depth (blocks in flight)
 constexpr int kMaxFrames = 4096; // most frames one block may carry
 constexpr int kMaxMidi = 512;    // most MIDI events one block may carry
@@ -50,6 +50,9 @@ struct Shared
     std::atomic<uint64_t> doneSeq;    // host -> engine: blocks finished
     std::atomic<uint64_t> hostBeat;   // the host bumps this every loop (a stuck host stops moving it)
     std::atomic<uint32_t> quit;
+    std::atomic<uint32_t> openEditorSeq; // engine -> host: bumped to ask for the plugin's own window to be shown
+    std::atomic<uint32_t> editorOpen;    // host -> engine: 1 while that window is showing
+    std::atomic<uint32_t> stateSeq;      // host -> engine: bumped after the host wrote the plugin's changed settings to its --state-out file
     char error[256];
     char name[128];
     Slot slots[kSlots];

@@ -70,6 +70,7 @@ export function toEngineSnapshot(project: Project, slots: SlotAllocator, sampleF
           if (a.fadeOutTicks) note.fadeOutSec = a.fadeOutTicks * secPerTick;
           if (a.cut || a.fadeOutTicks) note.cut = true;
         }
+        if (n.bend?.length && track.instrument === "synth") note.bend = n.bend.map((p) => [p.tick, p.semis]);
         notes.push(note);
       }
     }

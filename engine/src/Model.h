@@ -25,6 +25,10 @@ struct NoteEvent
     double fadeOutSec = 0.0;
     double lengthSec = 0.0; // the note's length at the project tempo (fades and cuts are timed against it)
     bool cut = false;
+    // Synth tracks: the pitch bend curve, ticks after the note starts and semitones above its pitch (fixed size: events are copied on the audio thread)
+    int bendN = 0;
+    float bendTick[kMaxBend] = {};
+    float bendSemis[kMaxBend] = {};
 };
 
 /** One point of an automation curve: an absolute tick and a value 0..1. */
