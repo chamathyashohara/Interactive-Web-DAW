@@ -56,6 +56,9 @@ interface Active {
   stopReason: string;
   startedNs: number;
   lastWriteError: string;
+  /** vocal over backing: the exact capture frame the take begins on (the same frame the backing track starts playing on) */
+  forcedStartFrame: number | null;
+  vocal: boolean;
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, "0");
@@ -78,6 +81,11 @@ export class CaptureRecorderPort implements RecorderPort {
   private events: PortEvent[] = [];
   private peak = 0;
   private blocks = 0;
+  private latencyUs = 0;
+  /** vocal take scheduled: tell the window which capture frame to start the backing track on */
+  onVocalSchedule: ((o: { takeId: number; startFrame: number; offsetUs: number; backingId: string }) => void) | null = null;
+  /** vocal take over (finished, failed or cancelled): stop the backing track */
+  onVocalEnd: ((takeId: number) => void) | null = null;
 
   constructor(private opts: CaptureRecorderOptions) {
     this.clock = opts.clock ?? systemClock;
@@ -86,6 +94,14 @@ export class CaptureRecorderPort implements RecorderPort {
   }
 
   setRecordingsRoot(root: string): void { this.root = root; }
+  /** The speaker-to-microphone round trip (microseconds) the next vocal takes are made with. */
+  setLatencyUs(us: number): void { this.latencyUs = Math.max(0, Math.round(us)); }
+  /** The capture frame a time on the shared clock corresponds to (needs microphone blocks to have arrived). */
+  frameAtNs(ns: number): number | null {
+    return this.captureClock.hasMapping ? Math.ceil(this.captureClock.frameAt(ns)) : null;
+  }
+  /** The capture frame of the newest block's end: nothing at or before it can still be started on. */
+  get latestFrame(): number { return this.nextFrame; }
   get recordingsRoot(): string { return this.root; }
   get captureState(): CaptureState { return { ...this.state }; }
   get level(): number { return this.peak; }
@@ -156,6 +172,12 @@ export class CaptureRecorderPort implements RecorderPort {
   scheduleTake(spec: PortTakeSpec): string {
     if (this.active) return "a take is already open on this PC";
     if (!this.state.open) return "the microphone is not on";
+    let forced: number | null = null;
+    if (spec.vocal) {
+      forced = this.frameAtNs(spec.startAtNs);
+      if (forced === null || this.nextFrame < 0) return "the microphone has not delivered any audio yet";
+      if (forced < this.nextFrame + Math.round(this.state.sampleRate * 0.05)) return "the start time is too close to start the backing track in sync";
+    }
     if (!this.sessionDir || this.sessionIdForDir !== spec.sessionId) {
       this.sessionDir = path.join(this.root, `${compactUtc(Date.now())}_${spec.sessionId}`);
       this.sessionIdForDir = spec.sessionId;
@@ -170,12 +192,13 @@ export class CaptureRecorderPort implements RecorderPort {
       fs.writeSync(fd, buildWavHeader({ sampleRate: this.state.sampleRate, channels: this.state.channels }, 0));
       this.active = {
         spec, phase: "scheduled", finalPath, partialPath, fd, frames: 0, firstFrame: 0, firstSampleNs: 0, lateFrames: 0, endFrame: null, stopAtNs: 0, stopNow: false,
-        remoteStop: false, stopReason: "", startedNs: 0, lastWriteError: "",
+        remoteStop: false, stopReason: "", startedNs: 0, lastWriteError: "", forcedStartFrame: forced, vocal: !!spec.vocal,
       };
     } catch (e) {
       return (e as Error).message;
     }
     this.log.log("info", "recorder", "scheduled", "take scheduled", { take: spec.takeId, file: finalPath });
+    if (spec.vocal && forced !== null) this.onVocalSchedule?.({ takeId: spec.takeId, startFrame: forced, offsetUs: spec.vocal.offsetUs, backingId: spec.vocal.backingId });
     return "";
   }
 
@@ -194,6 +217,7 @@ export class CaptureRecorderPort implements RecorderPort {
     if (!a || a.phase !== "scheduled") return;
     this.discard(a, "cancelled before the start");
     this.active = null;
+    if (a.vocal) this.onVocalEnd?.(a.spec.takeId);
     const e = blankEvent("finalised", a.spec.takeId);
     e.status = TakeStatus.Cancelled;
     e.stopReason = "cancelled";
@@ -262,7 +286,7 @@ export class CaptureRecorderPort implements RecorderPort {
     if (!a) return;
     const blockEnd = frame + n;
     if (a.phase === "scheduled") {
-      const targetFrame = Math.ceil(this.captureClock.frameAt(a.spec.startAtNs));
+      const targetFrame = a.forcedStartFrame ?? Math.ceil(this.captureClock.frameAt(a.spec.startAtNs));
       if (targetFrame >= blockEnd) return; // the start is in a later block
       const first = Math.max(targetFrame, frame);
       a.firstFrame = first;
@@ -355,6 +379,8 @@ export class CaptureRecorderPort implements RecorderPort {
     e.sampleRate = this.state.sampleRate;
     e.stopReason = stopReason;
     e.error = error;
+    e.latencyUs = a.vocal ? this.latencyUs : 0;
+    if (a.vocal) this.onVocalEnd?.(a.spec.takeId);
     if (a.fd === null || a.phase === "scheduled" && a.frames === 0 && status !== TakeStatus.Complete) {
       // nothing was ever written: no file is kept
       this.discard(a, stopReason);

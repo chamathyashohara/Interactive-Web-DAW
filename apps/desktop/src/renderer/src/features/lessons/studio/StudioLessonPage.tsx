@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { playLesson } from "../lessonPlay";
 import type { Project } from "@daw/shared";
 import { libraryStore } from "../../../store";
 import { playEvents, type Preview } from "../audio";
@@ -7,9 +8,10 @@ import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerI
 import { NotesTab } from "../LessonPage";
 import { ResultCard } from "../ResultCard";
 import { speak, stopSpeaking } from "../speech";
+import { studioSpeech } from "../voiceLines";
 import { STAGES, type StageId } from "../subLesson";
 import type { CheckResult } from "../types";
-import { lessonView, runStudioCheck } from "./checks";
+import { lessonView, runStudioCheck, songView } from "./checks";
 import { barTick, hasSong, stageSetupOps } from "./exampleSong";
 import { SequencerPane } from "./SequencerPane";
 import { StudioPane, type StudioGuide } from "./StudioPane";
@@ -38,6 +40,13 @@ function demoSound(want: SoundWant) {
   return e;
 }
 
+/** A short melody example for a labelling question (at 124 BPM, with its chords underneath). */
+function playExample(notes: { pitch: number; beat: number; beats: number }[]) {
+  const beat = 60 / 124;
+  const chords = [0, 1, 2, 3].flatMap((bar) => [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]][bar]!.map((pitch) => ({ time: bar * 4 * beat, duration: 4 * beat * 0.95, pitch, gain: 0.25 })));
+  playEvents([...chords, ...notes.map((n) => ({ time: (n.beat - 1) * beat, duration: n.beats * beat * 0.95, pitch: n.pitch, gain: 0.8 }))], "synth", 16 * beat + 0.5);
+}
+
 /** "Label the sections" (M13.1): done on the lesson page. */
 function LabelTask({ labels, passed, onPass }: { labels: Labels; passed: boolean; onPass: () => void }) {
   const [picked, setPicked] = useState<string[]>(() => labels.sections.map((s) => (passed ? s.answer : "")));
@@ -59,12 +68,22 @@ function LabelTask({ labels, passed, onPass }: { labels: Labels; passed: boolean
       <div className={`grid gap-3 ${labels.sections.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
         {labels.sections.map((s, i) => (
           <div key={s.bars} className="flex flex-col gap-2 rounded-xl bg-white/[0.03] p-3 ring-1 ring-white/10">
-            <div className="flex h-16 items-end gap-1" aria-hidden="true">
+            <div className={`flex h-16 items-end gap-1 ${s.energy ? "" : "hidden"}`} aria-hidden="true">
               {Array.from({ length: 5 }, (_, k) => (
                 <span key={k} className={`flex-1 rounded-t ${k < s.energy ? "bg-violet-400/70" : "bg-white/5"}`} style={{ height: `${(k + 1) * 20}%` }} />
               ))}
             </div>
-            <div className="text-xs text-slate-400">{s.bars} · energy {s.energy}/5</div>
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>
+                {s.bars}
+                {s.energy ? ` · energy ${s.energy}/5` : ""}
+              </span>
+              {s.notes && (
+                <button className="rounded bg-white/10 px-1.5 py-0.5 text-[11px] text-slate-100 hover:bg-white/20" onClick={() => playExample(s.notes!)} data-testid={`label-play-${i}`}>
+                  ▶ Listen
+                </button>
+              )}
+            </div>
             <select value={picked[i]} onChange={(e) => setPicked(picked.map((p, j) => (j === i ? e.target.value : p)))} className="rounded-lg bg-[#0b0d13] px-2 py-1.5 text-sm text-slate-100 ring-1 ring-white/15" aria-label={`Section for ${s.bars}`} data-testid={`label-${i}`}>
               <option value="">Choose…</option>
               {labels.options.map((o) => (
@@ -216,7 +235,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
       setLit(step.sound ? { litCategory: step.sound.category, litSoundId: e?.id } : {});
       if (step.bars && hasSong(project)) {
         window.daw.seek(barTick(step.bars[0]));
-        window.daw.play();
+        void playLesson();
         songPlaying.current = true;
       }
       if (voice && canSpeak) speak(step.caption);
@@ -244,7 +263,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const check = (ex: Exercise, which: "try" | "practice") => {
     if (!ex.check) return;
-    const project_ = runStudioCheck(lessonView(project), ex.check, studioCtx());
+    const project_ = runStudioCheck(ex.scope === "song" ? songView(project) : lessonView(project), ex.check, studioCtx());
     const unticked = (ex.confirm ?? []).filter((c) => !confirmed[`${which}:${c}`]);
     const r: CheckResult = ex.confirm
       ? {
@@ -288,8 +307,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
     const i = STAGES.findIndex((x) => x.id === s);
     save({ stage: s, reached: Math.max(studioState.progress(lesson.id).reached, i) });
   };
-  const speech = (s: StageId) =>
-    s === "hook" ? `${lesson.hook.headline}. ${lesson.hook.text}` : s === "watch" ? (steps[Math.max(0, watchIndex)]?.caption ?? "") : s === "try" ? lesson.tryIt.instruction : s === "practice" ? lesson.practice.instruction : s === "quick" ? lesson.quick.question : `Well done. ${lesson.recap.join(" ")}`;
+  const speech = (s: StageId) => studioSpeech(lesson, s, watchIndex);
   useEffect(() => {
     if (voice && canSpeak && stage !== "watch") speak(speech(stage));
     else if (!voice) stopSpeaking();
@@ -317,9 +335,9 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
   const hints = studioState.progress(lesson.id).hints;
   const guide: StudioGuide =
     stage === "try"
-      ? { targets: lesson.tryIt.targets, editNotes: lesson.tryIt.editNotes }
+      ? { targets: lesson.tryIt.targets, editNotes: lesson.tryIt.editNotes, tools: lesson.tryIt.tools }
       : stage === "practice"
-        ? { targets: hints >= 3 ? lesson.practice.targets : undefined, editNotes: lesson.practice.editNotes }
+        ? { targets: hints >= 3 ? lesson.practice.targets : undefined, editNotes: lesson.practice.editNotes, tools: lesson.practice.tools }
         : stage === "watch"
           ? { readOnly: true, ...lit, targets: watchIndex >= 0 ? steps[watchIndex]!.targets : undefined, litBars: watchIndex >= 0 ? steps[watchIndex]!.bars : undefined }
           : { readOnly: true, ...lit };

@@ -1,5 +1,6 @@
 import { ArrivalStats, JitterBuffer } from "@daw/recording";
 import workletUrl from "./recordingWorklets.js?url";
+import { clickBuffer, findOnset, loadLatencySetting, robustLatencyFrames, saveLatencySetting, type LatencySetting } from "./latency";
 
 /**
  * The window's half of remote recording: it opens the microphone, cuts it into 10 ms blocks, and
@@ -23,6 +24,15 @@ export interface MicState {
   outLevel: number;
   /** frames of the other person's voice handed to the speakers so far */
   played: number;
+  /** vocal over a backing track: the backing track held in memory (id), and whether it is playing now */
+  backingId: string;
+  backingPlaying: boolean;
+  backingVolume: number;
+  /** speaker-to-microphone round trip used for takes, microseconds, and where the number comes from */
+  latencyUs: number;
+  latencySource: "auto" | "measured" | "manual";
+  calibrating: boolean;
+  calibNote: string;
   talkSupported: boolean;
 }
 
@@ -34,7 +44,7 @@ export interface DeviceList {
 type Listener = () => void;
 
 export class LiveAudio {
-  private state: MicState = { open: false, starting: false, deviceName: "", error: "", level: 0, outLevel: 0, played: 0, talkSupported: typeof AudioEncoder !== "undefined" && typeof AudioDecoder !== "undefined" };
+  private state: MicState = { open: false, starting: false, deviceName: "", error: "", level: 0, outLevel: 0, played: 0, backingId: "", backingPlaying: false, backingVolume: 0.8, latencyUs: 0, latencySource: "auto", calibrating: false, calibNote: "", talkSupported: typeof AudioEncoder !== "undefined" && typeof AudioDecoder !== "undefined" };
   private listeners = new Set<Listener>();
   private ctx: AudioContext | null = null;
   private stream: MediaStream | null = null;
@@ -63,6 +73,24 @@ export class LiveAudio {
   private offAudio: (() => void) | null = null;
   private offEnd: (() => void) | null = null;
 
+  // backing track (vocal over the producer's song)
+  private backing: AudioBuffer | null = null;
+  private backingGain: GainNode | null = null;
+  private backingSrc: AudioBufferSourceNode | null = null;
+  private latency: LatencySetting = loadLatencySetting();
+  private micTrack: MediaStreamTrack | null = null;
+  private calib: { starts: number[]; floors: number[]; measures: (number | null)[]; done: (r: { ok: boolean; us: number; detail: string }) => void; endFrame: number } | null = null;
+  /** TEST ONLY (end-to-end tests): the "microphone" is the backing track's own output, so a take must contain the backing track exactly. */
+  testLoopMic = false;
+
+  constructor() {
+    if (typeof window !== "undefined" && window.daw?.live) {
+      window.daw.live.onBackingFile((f) => void this.loadBacking(f));
+      window.daw.live.onPlayBacking((p) => this.playBacking(p.startFrame, p.offsetSec));
+      window.daw.live.onStopBacking(() => this.stopBackingPlayback());
+    }
+  }
+
   get micState(): MicState { return this.state; }
   subscribe = (l: Listener): (() => void) => {
     this.listeners.add(l);
@@ -89,18 +117,27 @@ export class LiveAudio {
     if (this.state.open || this.state.starting) await this.stopMic();
     this.set({ starting: true, error: "" });
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-      });
       const ctx = new AudioContext({ sampleRate: RATE, latencyHint: "interactive" });
       await ctx.audioWorklet.addModule(workletUrl);
       if (ctx.state !== "running") await ctx.resume();
-      const track = stream.getAudioTracks()[0]!;
-      const src = ctx.createMediaStreamSource(stream);
+      let stream: MediaStream | null = null;
+      if (!this.testLoopMic) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+        });
+      }
+      const track = stream?.getAudioTracks()[0] ?? null;
+      this.micTrack = track;
+      const backingGain = ctx.createGain(); // the backing track is a separate path from the microphone: it never enters the recording
+      backingGain.gain.value = this.state.backingVolume;
+      backingGain.connect(ctx.destination);
+      this.backingGain = backingGain;
+      const src = stream ? ctx.createMediaStreamSource(stream) : null;
       const capture = new AudioWorkletNode(ctx, "rr-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       const silent = ctx.createGain();
       silent.gain.value = 0;
-      src.connect(capture);
+      src?.connect(capture);
+      if (this.testLoopMic) backingGain.connect(capture); // TEST ONLY: the "microphone" hears the backing track with no delay at all
       capture.connect(silent).connect(ctx.destination); // an unconnected worklet is not pulled by the browser
       const playback = new AudioWorkletNode(ctx, "rr-playback", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
       const outGain = ctx.createGain();
@@ -116,12 +153,15 @@ export class LiveAudio {
         this.consumed = e.data.consumed;
         this.outLevelValue = Math.max(e.data.peak, this.outLevelValue * 0.85);
       };
-      track.onended = () => {
-        void this.stopMic("The microphone was disconnected.");
-      };
+      if (track) {
+        track.onended = () => {
+          void this.stopMic("The microphone was disconnected.");
+        };
+      }
       this.rateOk = Math.round(ctx.sampleRate) === RATE;
-      this.set({ open: true, starting: false, deviceName: track.label || "microphone", talkSupported: this.state.talkSupported && this.rateOk });
-      window.daw.live.captureState({ open: true, deviceName: track.label || "microphone", sampleRate: Math.round(ctx.sampleRate), channels: 1 });
+      this.set({ open: true, starting: false, deviceName: this.testLoopMic ? "test loopback" : track?.label || "microphone", talkSupported: this.state.talkSupported && this.rateOk });
+      this.applyLatency();
+      window.daw.live.captureState({ open: true, deviceName: this.testLoopMic ? "test loopback" : track?.label || "microphone", sampleRate: Math.round(ctx.sampleRate), channels: 1 });
       this.posted = 0;
       this.consumed = 0;
       this.startPlayout();
@@ -155,8 +195,168 @@ export class LiveAudio {
     if (this.capture) this.capture.port.onmessage = null;
     this.stream?.getTracks().forEach((t) => { t.onended = null; t.stop(); });
     try { await this.ctx?.close(); } catch { /* already closed */ }
-    this.ctx = this.capture = this.playback = this.outGain = null;
+    this.stopBackingPlayback();
+    this.ctx = this.capture = this.playback = this.outGain = this.backingGain = null;
+    this.micTrack = null;
     this.stream = null;
+  }
+
+  // ---- backing track ----
+
+  /** Decodes the downloaded backing track (independent of the microphone) and tells the main process it can be played. */
+  private async loadBacking(f: { id: string; path: string }): Promise<void> {
+    try {
+      const bytes = await window.daw.live.readBacking(f.path);
+      if (!bytes) throw new Error("the downloaded file cannot be read");
+      const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const decoder = new OfflineAudioContext(2, 1, RATE); // decoding needs no sound card
+      const buf = await decoder.decodeAudioData(copy);
+      if (buf.numberOfChannels < 1 || buf.length < RATE / 10) throw new Error("the backing track is empty");
+      this.backing = buf;
+      this.set({ backingId: f.id });
+      await window.daw.live.backingReady(f.id);
+    } catch (e) {
+      this.backing = null;
+      this.set({ backingId: "" });
+      await window.daw.live.backingFailed(f.id, (e as Error).message);
+    }
+  }
+
+  /**
+   * Starts the backing track on audio-context frame `startFrame` (the frame the take starts recording on), `offsetSec` into the song.
+   * If that frame has already passed, the music starts at once but skips ahead by exactly the time lost, so it stays where it belongs.
+   */
+  private playBacking(startFrame: number, offsetSec: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.backing || !this.backingGain) return;
+    this.stopBackingPlayback();
+    const src = ctx.createBufferSource();
+    src.buffer = this.backing;
+    src.connect(this.backingGain);
+    const at = startFrame / ctx.sampleRate;
+    const now = ctx.currentTime;
+    let offset = offsetSec;
+    if (at > now + 0.001) {
+      src.start(at, offset);
+    } else {
+      offset += now - at;
+      if (offset >= this.backing.duration) return;
+      src.start(0, offset);
+    }
+    src.onended = () => {
+      if (this.backingSrc === src) {
+        this.backingSrc = null;
+        this.set({ backingPlaying: false });
+      }
+    };
+    this.backingSrc = src;
+    this.set({ backingPlaying: true });
+  }
+
+  private stopBackingPlayback(): void {
+    const s = this.backingSrc;
+    this.backingSrc = null;
+    if (s) {
+      s.onended = null;
+      try { s.stop(); } catch { /* it had not started */ }
+      try { s.disconnect(); } catch { /* already disconnected */ }
+    }
+    if (this.state.backingPlaying) this.set({ backingPlaying: false });
+  }
+
+  setBackingVolume(v: number): void {
+    const vol = Math.min(1, Math.max(0, v));
+    this.set({ backingVolume: vol });
+    if (this.backingGain) this.backingGain.gain.value = vol;
+  }
+
+  // ---- latency ----
+
+  /** What the browser reports for the sound card's output and input delay: an estimate that is often optimistic. */
+  private estimateLatencyUs(): number {
+    if (this.testLoopMic) return 0;
+    const ctx = this.ctx;
+    if (!ctx) return 0;
+    const out = ctx.outputLatency || ctx.baseLatency || 0;
+    const inn = Number((this.micTrack?.getSettings() as { latency?: number } | undefined)?.latency ?? 0);
+    return Math.round((out + inn) * 1e6);
+  }
+
+  private applyLatency(): void {
+    const us = this.testLoopMic ? 0 : this.latency.source === "auto" ? this.estimateLatencyUs() : this.latency.us;
+    this.set({ latencyUs: us, latencySource: this.latency.source });
+    window.daw.live.setLatency(us);
+  }
+
+  /** The user typed a value (milliseconds), or asked to go back to the automatic estimate. */
+  setLatencyMs(ms: number | null): void {
+    this.latency = ms === null ? { source: "auto", us: 0 } : { source: "manual", us: Math.round(Math.min(2000, Math.max(0, ms)) * 1000) };
+    saveLatencySetting(this.latency);
+    this.applyLatency();
+  }
+
+  /**
+   * Measures the round trip: plays five clicks through the speakers and times when the microphone hears them. Needs the speakers to be audible to
+   * the microphone (not headphones). Resolves with the result; the value is used for the next takes.
+   */
+  calibrate(): Promise<{ ok: boolean; us: number; detail: string }> {
+    const ctx = this.ctx;
+    if (!ctx || !this.state.open) return Promise.resolve({ ok: false, us: 0, detail: "Turn the microphone on first." });
+    if (this.calib) return Promise.resolve({ ok: false, us: 0, detail: "A measurement is already running." });
+    this.set({ calibrating: true, calibNote: "Listening… keep the room quiet and the microphone near the speakers." });
+    const click = clickBuffer(ctx);
+    const first = Math.ceil((ctx.currentTime + 0.6) * ctx.sampleRate);
+    const starts = [0, 1, 2, 3, 4].map((k) => first + Math.round(k * 0.7 * ctx.sampleRate));
+    for (const s of starts) {
+      const src = ctx.createBufferSource();
+      src.buffer = click;
+      src.connect(ctx.destination);
+      src.start(s / ctx.sampleRate);
+    }
+    return new Promise((resolve) => {
+      this.calib = {
+        starts, floors: starts.map(() => 0), measures: starts.map(() => null), endFrame: starts[starts.length - 1]! + Math.round(0.5 * ctx.sampleRate),
+        done: (r) => {
+          this.calib = null;
+          this.set({ calibrating: false, calibNote: r.detail });
+          if (r.ok) {
+            this.latency = { source: "measured", us: r.us };
+            saveLatencySetting(this.latency);
+            this.applyLatency();
+          }
+          resolve(r);
+        },
+      };
+    });
+  }
+
+  private calibBlock(frame: number, samples: Float32Array): void {
+    const c = this.calib!;
+    const rate = this.ctx?.sampleRate ?? RATE;
+    c.starts.forEach((s, k) => {
+      if (c.measures[k] !== null) return;
+      // background level: the 150 ms before the click
+      if (frame + samples.length > s - 0.15 * rate && frame < s) {
+        let peak = 0;
+        for (let i = 0; i < samples.length && frame + i < s; i++) peak = Math.max(peak, Math.abs(samples[i]!));
+        c.floors[k] = Math.max(c.floors[k]!, peak);
+      }
+      if (frame + samples.length > s && frame < s + 0.35 * rate) {
+        const from = Math.max(0, s - frame);
+        const idx = findOnset(samples.subarray(from), c.floors[k]!);
+        if (idx >= 0) c.measures[k] = frame + from + idx - s;
+      }
+    });
+    if (frame > c.endFrame) {
+      const got = c.measures.filter((m): m is number => m !== null);
+      const frames = robustLatencyFrames(got, rate);
+      if (frames === null) {
+        c.done({ ok: false, us: 0, detail: got.length < 3 ? "The clicks were not heard. Use speakers (not headphones), turn them up a little and put the microphone close to them." : "The measurements did not agree. Try again in a quieter room." });
+      } else {
+        const us = Math.round((frames / rate) * 1e6);
+        c.done({ ok: true, us, detail: `Measured ${(us / 1000).toFixed(1)} ms (from ${got.length} clicks).` });
+      }
+    }
   }
 
   // ---- talkback ----
@@ -209,6 +409,7 @@ export class LiveAudio {
 
   private onBlock(frame: number, samples: Float32Array): void {
     window.daw.live.capture(frame, samples);
+    if (this.calib) this.calibBlock(frame, samples);
     let peak = 0;
     for (let i = 0; i < samples.length; i++) {
       const v = Math.abs(samples[i]!);
@@ -359,3 +560,10 @@ export class LiveAudio {
 
 /** One per window: the microphone and the talkback are shared by every part of the interface. */
 export const liveAudio = new LiveAudio();
+
+// End-to-end tests drive the audio through this handle (development builds and test runs only).
+if (typeof window !== "undefined" && window.daw?.isDev) {
+  void window.daw.isDev().then((dev) => {
+    if (dev) (window as unknown as { __liveAudio?: LiveAudio }).__liveAudio = liveAudio;
+  });
+}

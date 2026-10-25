@@ -85,7 +85,7 @@ describe("session handshake", () => {
     expect(s.sessionId).toBe(p.producer.snapshot().sessionId);
     expect(s.linkStats.offsetSamples).toBeGreaterThanOrEqual(3);
     expect(Math.abs(s.linkStats.thetaNs)).toBeLessThan(5_000_000); // same process, same clock
-    expect(p.producer.snapshot().protocolMinor).toBe(2);
+    expect(p.producer.snapshot().protocolMinor).toBe(3);
     expect(p.producer.snapshot().peerName).toBe("Singer");
   });
 
@@ -104,7 +104,7 @@ describe("session handshake", () => {
     expect(await p.producer.createSession("127.0.0.1", p.port)).toBe("");
     await p.performer.join("127.0.0.1", p.port, p.producer.snapshot().pairingCode);
     await until(() => p.performer.snapshot().lastError !== "", 5000, "a refusal");
-    expect(p.performer.snapshot().lastError).toMatch(/1\.2.*9\.2/);
+    expect(p.performer.snapshot().lastError).toMatch(/1\.3.*9\.3/);
   });
 
   it("refuses to listen on 0.0.0.0", async () => {

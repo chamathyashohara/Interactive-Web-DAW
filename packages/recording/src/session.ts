@@ -200,10 +200,10 @@ export function sessionStatusText(state: number, reasons: string[]): string {
 
 // ---- readiness checklist (Stage 9) ----
 
-export const ReadyItem = { InputDevice: 0, EngineHealthy: 1, FolderWritable: 2, DiskSpace: 3, NoActiveRecording: 4, Consent: 5, Connected: 6, ClockOffset: 7 } as const;
+export const ReadyItem = { InputDevice: 0, EngineHealthy: 1, FolderWritable: 2, DiskSpace: 3, NoActiveRecording: 4, Consent: 5, Connected: 6, ClockOffset: 7, Backing: 8 } as const;
 export type ReadyItem = (typeof ReadyItem)[keyof typeof ReadyItem];
 
-const READY_IDS = ["input", "engine", "folder", "disk", "idle", "consent", "link", "clock"];
+const READY_IDS = ["input", "engine", "folder", "disk", "idle", "consent", "link", "clock", "backing"];
 const READY_LABELS = [
   "Input device open",
   "Audio engine healthy",
@@ -213,6 +213,7 @@ const READY_LABELS = [
   "Recording consent given (armed)",
   "Connected to the other PC",
   "Clock offset to the producer measured",
+  "Backing track received",
 ];
 export const readyItemId = (i: number): string => READY_IDS[i] ?? "unknown";
 export const readyItemLabel = (i: number): string => READY_LABELS[i] ?? "Unknown check";

@@ -133,6 +133,20 @@ export function runSeqCheck(p: Project, check: StudioCheck): CheckResult | null 
         "The kicks swell from soft to loud: the pattern builds.",
       );
     }
+    case "pattern": {
+      const hits = hitsOf(p);
+      const items = check.rows.map((row) => {
+        const pads = hits.filter((h) => h.pitch === row.pitch).map((h) => padOf(h.tick));
+        const missing = row.pads.filter((x) => !pads.includes(x));
+        const extra = row.exact ? [...new Set(pads)].filter((x) => !row.pads.includes(x)) : [];
+        return {
+          label: `${row.name} on ${row.pads.map((x) => `pad ${x}`).join(", ")}`,
+          ok: !missing.length && !extra.length,
+          fix: missing.length ? `${row.name}: nothing on ${missing.map(padName).join(", ")} yet.` : `${row.name}: remove the extra hit on ${extra.map(padName).join(", ")}.`,
+        };
+      });
+      return result(items, "The full basic beat: every drum on its own pads.");
+    }
     default:
       return null;
   }

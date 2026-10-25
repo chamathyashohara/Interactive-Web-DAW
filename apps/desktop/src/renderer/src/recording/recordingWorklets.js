@@ -1,22 +1,26 @@
 // Audio worklets for remote recording. They run on the audio thread, so they only move samples; every decision is made elsewhere.
 
-/** Collects the microphone into 480-frame (10 ms at 48 kHz) blocks and posts them with a running frame index. */
+/**
+ * Collects the microphone into 480-frame (10 ms at 48 kHz) blocks and posts them with the index of the block's first frame on the AUDIO CONTEXT's own
+ * frame counter (`currentFrame`). The backing track is scheduled on that same counter, so "the take starts on frame S" and "the music starts on frame S"
+ * are the same instant by construction, whatever the device or the browser's scheduling does.
+ */
 class CaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.block = new Float32Array(480);
     this.fill = 0;
-    this.frame = 0;
+    this.blockStart = 0;
   }
   process(inputs) {
     const input = inputs[0] && inputs[0][0];
     const n = 128;
     for (let i = 0; i < n; i++) {
+      if (this.fill === 0) this.blockStart = currentFrame + i;
       this.block[this.fill++] = input ? input[i] : 0;
       if (this.fill === 480) {
         const out = this.block;
-        this.port.postMessage({ frame: this.frame, samples: out }, [out.buffer]);
-        this.frame += 480;
+        this.port.postMessage({ frame: this.blockStart, samples: out }, [out.buffer]);
         this.block = new Float32Array(480);
         this.fill = 0;
       }

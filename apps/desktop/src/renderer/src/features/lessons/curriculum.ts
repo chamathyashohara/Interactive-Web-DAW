@@ -91,6 +91,8 @@ export const MODULES: PathModule[] = [
       item("m4", "other-classics", "Other classics"),
       item("m4", "your-own", "Your own progression"),
       item("m4", "rhythm-bass", "Rhythm and a bass note"),
+      { id: "M31.3", title: "Repeat and transpose the progression" },
+      { id: "M31.4", title: "Layer the chords on pads" },
     ],
   },
   {
@@ -103,6 +105,18 @@ export const MODULES: PathModule[] = [
       item("m5", "melody-rhythm", "Melody rhythm"),
       item("m5", "motif", "Motif and repetition"),
       item("m5", "project", "Project: melody over your progression"),
+      { id: "M38.2", title: "Melody theory: phrase, cadence, call and response" },
+      { id: "M38.3", title: "The four melody patterns" },
+    ],
+  },
+  {
+    id: "m6",
+    code: "L7",
+    title: "Bass and arp",
+    items: [
+      { id: "M35.1", title: "Bass from the root notes" },
+      { id: "M35.2", title: "Chop the bass with the chopper" },
+      { id: "M36.1", title: "Add an arp preset" },
     ],
   },
 ];
@@ -111,6 +125,14 @@ export const MODULES: PathModule[] = [
 export const BUILT: Record<string, SubLesson> = Object.fromEntries(SUB_LESSONS.map((s) => [s.id, s]));
 
 export const isBuilt = (id: string) => id in BUILT;
+
+/**
+ * Piano path lessons that use the arrangement workspace (the song-making lessons, L5-L7). They live with the other
+ * workspace lessons (studio/pianoExtras.ts) and open in the same Learn view; the path lists them by id.
+ */
+export const PIANO_STUDIO_IDS = ["M31.3", "M31.4", "M38.2", "M38.3", "M35.1", "M35.2", "M36.1"];
+/** Can this path item be opened: a written sub-lesson or one of the workspace lessons? */
+export const isReady = (id: string) => isBuilt(id) || PIANO_STUDIO_IDS.includes(id);
 
 /** Lessons from before the module path existed. They stay available until they are folded into modules. */
 export const EARLIER_LESSONS: Lesson[] = LESSONS;
@@ -131,7 +153,7 @@ export function searchPath(query: string): PathHit[] {
   for (const m of MODULES) {
     for (const it of m.items) {
       const text = `${it.title} ${m.title} ${m.code}`.toLowerCase();
-      if (words.every((w) => text.includes(w))) hits.push({ kind: "sub", id: it.id, title: it.title, where: `${m.code} ${m.title}`, built: isBuilt(it.id) });
+      if (words.every((w) => text.includes(w))) hits.push({ kind: "sub", id: it.id, title: it.title, where: `${m.code} ${m.title}`, built: isReady(it.id) });
     }
   }
   for (const l of EARLIER_LESSONS) {
@@ -141,7 +163,7 @@ export function searchPath(query: string): PathHit[] {
   return hits.sort((a, b) => Number(b.built) - Number(a.built));
 }
 
-export function moduleProgress(m: PathModule, isDone: (id: string) => boolean, ready: (id: string) => boolean = isBuilt) {
+export function moduleProgress(m: PathModule, isDone: (id: string) => boolean, ready: (id: string) => boolean = isReady) {
   const built = m.items.filter((i) => ready(i.id));
   return { built: built.length, done: built.filter((i) => isDone(i.id)).length, total: m.items.length };
 }
@@ -150,5 +172,5 @@ export function moduleProgress(m: PathModule, isDone: (id: string) => boolean, r
 export function nextBuilt(id: string): { id: string; title: string } | null {
   const flat = MODULES.flatMap((m) => m.items);
   const i = flat.findIndex((it) => it.id === id);
-  return flat.slice(i + 1).find((it) => isBuilt(it.id)) ?? null;
+  return flat.slice(i + 1).find((it) => isReady(it.id)) ?? null;
 }

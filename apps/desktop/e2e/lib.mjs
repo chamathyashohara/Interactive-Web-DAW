@@ -121,3 +121,52 @@ export async function connect(port) {
     evalJs(`(() => { const i = document.querySelector(${JSON.stringify(selector)}); if (!i) return false; const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ${JSON.stringify(String(value))}); i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   return { ws, send, evalJs, mouse, click, drag, dblclick, key, ctrl, insertText, rectOf, clickEl, setRange };
 }
+
+/**
+ * A TCP proxy that delays every chunk by delayMs +/- jitterMs in both directions, never reordering (a strict FIFO), to stand in for a long-distance link.
+ * Listens on listenHost:port and forwards to targetHost:port.
+ */
+export async function delayProxy(listenHost, port, targetHost, delayMs, jitterMs) {
+  const net = await import("node:net");
+  const sockets = new Set();
+  const server = net.createServer((client) => {
+    const upstream = net.connect(port, targetHost);
+    sockets.add(client);
+    sockets.add(upstream);
+    const pipe = (from, to) => {
+      const queue = [];
+      let timer = null;
+      let last = 0;
+      const drain = () => {
+        timer = null;
+        while (queue.length && queue[0].at <= Date.now()) {
+          const q = queue.shift();
+          if (q.end) to.end();
+          else if (!to.destroyed) to.write(q.data);
+        }
+        if (queue.length) timer = setTimeout(drain, Math.max(1, queue[0].at - Date.now()));
+      };
+      from.on("data", (d) => {
+        last = Math.max(last, Date.now() + delayMs + (Math.random() * 2 - 1) * jitterMs);
+        queue.push({ at: last, data: d });
+        if (!timer) timer = setTimeout(drain, Math.max(1, queue[0].at - Date.now()));
+      });
+      from.on("end", () => {
+        // the close travels in the same queue: it can never overtake data that was sent before it
+        queue.push({ at: Math.max(last, Date.now() + delayMs), end: true });
+        if (!timer) timer = setTimeout(drain, Math.max(1, queue[0].at - Date.now()));
+      });
+      from.on("error", () => to.destroy());
+    };
+    pipe(client, upstream);
+    pipe(upstream, client);
+    // when one side closes, the other is closed only after what is still "in flight" has been delivered
+    client.on("close", () => setTimeout(() => upstream.destroy(), delayMs + jitterMs + 300));
+    upstream.on("close", () => setTimeout(() => client.destroy(), delayMs + jitterMs + 300));
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, listenHost, resolve);
+  });
+  return { close: () => { server.close(); sockets.forEach((s) => s.destroy()); } };
+}

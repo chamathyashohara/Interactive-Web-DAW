@@ -178,9 +178,9 @@ describe("sub-lesson helpers", () => {
 });
 
 describe("curriculum", () => {
-  it("matches the outline: M0-M5 and their sub-lesson counts", () => {
-    expect(MODULES.map((m) => [m.code, m.items.length])).toEqual([["L1", 7], ["L2", 6], ["L3", 7], ["L4", 8], ["L5", 6], ["L6", 5]]);
-    expect(MODULES.map((m) => m.id)).toEqual(["m0", "m1", "m2", "m3", "m4", "m5"]);
+  it("matches the outline: L1-L7 and their lesson counts (L5-L7 include the song-making workspace lessons)", () => {
+    expect(MODULES.map((m) => [m.code, m.items.length])).toEqual([["L1", 7], ["L2", 6], ["L3", 7], ["L4", 8], ["L5", 8], ["L6", 7], ["L7", 3]]);
+    expect(MODULES.map((m) => m.id)).toEqual(["m0", "m1", "m2", "m3", "m4", "m5", "m6"]);
   });
 
   it("has unique ids, and every built sub-lesson is on the path", () => {

@@ -3,6 +3,7 @@ import { MAX_BPM, MIN_BPM, PPQ, songTicks, type Clip, type Project, type Track }
 import { GRID_OPTIONS, MAX_ROW_H, MIN_ROW_H, PITCH_MAX, PITCH_MIN, isBlackKey, pitchLabel } from "../../pianoRoll/geometry";
 import { PianoRoll, type PianoRollGuide, type Tool } from "../../pianoRoll/PianoRoll";
 import { engineStateStore, statusStore, useStore } from "../../store";
+import { playLesson } from "./lessonPlay";
 import { whySilent } from "./audibility";
 import { lessonState } from "./lessonState";
 import { BrushIcon, CursorIcon, EraserIcon, MuteIcon, PencilIcon, PlayIcon, ScissorsIcon, SpeakerIcon, StopIcon } from "./Icons";
@@ -91,7 +92,7 @@ export function PianoPane({ project, shown, guide, emptyText = "Your exercise op
   const play = () => {
     if (playing) return window.daw.stop();
     if (shown) window.daw.seek(shown.clip.startTick);
-    window.daw.play();
+    void playLesson();
   };
 
   return (
