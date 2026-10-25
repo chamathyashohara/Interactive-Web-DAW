@@ -36,6 +36,8 @@ export function describeOp(op: Op, project?: NameSource): string {
     }
     case 'setKey':
       return op.key ? 'set the key' : 'cleared the key';
+    case 'setMixReference':
+      return op.reference ? 'changed the mix targets' : 'reset the mix targets';
     case 'setSongLength':
       return `set the song to ${op.bars} bars`;
     case 'addClip':

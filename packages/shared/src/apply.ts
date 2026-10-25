@@ -2,8 +2,11 @@ import {
   ALL_INSTRUMENTS,
   AUTO_PARAMS,
   MAX_AUTO_POINTS,
+  MAX_BEND_POINTS,
+  MAX_BEND_SEMITONES,
   MAX_BPM,
   MAX_GAIN_DB,
+  MIX_REFERENCE_LIMITS,
   MAX_MARKERS,
   MAX_MARKER_NAME,
   MIN_GAIN_DB,
@@ -19,7 +22,9 @@ import {
   songTicks,
   type AutoPoint,
   type Clip,
+  type BendPoint,
   type Marker,
+  type MixReference,
   type PluginRef,
   MAX_PLUGIN_ID,
   MAX_PLUGIN_NAME,
@@ -62,6 +67,20 @@ function validateNote(clip: Clip, n: Note): string | null {
   if (!isInt(n.durationTicks) || n.durationTicks < 1) return "durationTicks must be a positive integer";
   if (n.startTick + n.durationTicks > clip.lengthTicks) return "note exceeds clip length";
   if (n.muted !== undefined && typeof n.muted !== "boolean") return "muted must be boolean";
+  if (n.bend !== undefined) return bendError(n.bend);
+  return null;
+}
+
+/** A pitch bend curve: a few points in time order, within a sensible range. */
+function bendError(bend: unknown): string | null {
+  if (!Array.isArray(bend) || bend.length < 1 || bend.length > MAX_BEND_POINTS) return `pitch bend needs 1-${MAX_BEND_POINTS} points`;
+  let last = -1;
+  for (const p of bend as BendPoint[]) {
+    if (typeof p !== "object" || p === null || !isInt(p.tick) || p.tick < 0) return "pitch bend tick must be a non-negative integer";
+    if (p.tick <= last) return "pitch bend points must be in increasing time order";
+    if (typeof p.semis !== "number" || !Number.isFinite(p.semis) || Math.abs(p.semis) > MAX_BEND_SEMITONES) return `pitch bend must stay within ${MAX_BEND_SEMITONES} semitones`;
+    last = p.tick;
+  }
   return null;
 }
 
@@ -140,6 +159,30 @@ function validateTrackFields(t: Partial<TrackFields>): string | null {
   if (t.mute !== undefined && typeof t.mute !== "boolean") return "mute must be boolean";
   if (t.solo !== undefined && typeof t.solo !== "boolean") return "solo must be boolean";
   return null;
+}
+
+const inRange = (v: unknown, [lo, hi]: readonly [number, number]) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+/** The mixer assistant's reference levels: finite dBFS numbers in sensible ranges, tidied to one decimal place. */
+function cleanMixReference(r: unknown): { ok: true; value: MixReference } | { ok: false; reason: string } {
+  if (typeof r !== "object" || r === null) return { ok: false, reason: "mix reference must be an object" };
+  const x = r as Partial<MixReference>;
+  if (!inRange(x.masterPeakDb, MIX_REFERENCE_LIMITS.masterPeakDb)) return { ok: false, reason: "master peak target must be between -30 and 0 dBFS" };
+  if (!inRange(x.channelPeakDb, MIX_REFERENCE_LIMITS.channelPeakDb)) return { ok: false, reason: "channel peak target must be between -40 and 0 dBFS" };
+  if (!inRange(x.safetyDb, MIX_REFERENCE_LIMITS.safetyDb)) return { ok: false, reason: "warning level must be between -12 and 0 dBFS" };
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const value: MixReference = { masterPeakDb: round(x.masterPeakDb!), channelPeakDb: round(x.channelPeakDb!), safetyDb: round(x.safetyDb!) };
+  if (x.channels !== undefined) {
+    if (typeof x.channels !== "object" || x.channels === null || Array.isArray(x.channels)) return { ok: false, reason: "channel targets must be an object" };
+    const entries = Object.entries(x.channels);
+    if (entries.length > MAX_TRACKS) return { ok: false, reason: "too many channel targets" };
+    const channels: Record<string, number> = {};
+    for (const [id, db] of entries) {
+      if (id.length === 0 || id.length > 64 || !inRange(db, MIX_REFERENCE_LIMITS.channelPeakDb)) return { ok: false, reason: "a channel target is invalid" };
+      channels[id] = round(db);
+    }
+    if (entries.length > 0) value.channels = channels;
+  }
+  return { ok: true, value };
 }
 
 function validatePlugin(p: unknown): string | null {
@@ -222,6 +265,15 @@ export function applyOp(project: Project, op: Op): ApplyResult {
     case "setKey": {
       if (op.key !== null && !isValidKey(op.key)) return { ok: false, reason: "key must be a tonic 0-11 and major or minor" };
       return done({ ...project, key: op.key === null ? null : { tonic: op.key.tonic, mode: op.key.mode } }, op.opId);
+    }
+    case "setMixReference": {
+      if (op.reference === null) {
+        const { mixReference: _gone, ...rest } = project;
+        return done(rest as Project, op.opId);
+      }
+      const clean = cleanMixReference(op.reference);
+      if (!clean.ok) return { ok: false, reason: clean.reason };
+      return done({ ...project, mixReference: clean.value }, op.opId);
     }
     case "setLoop": {
       if (op.loop === null) {
@@ -361,6 +413,7 @@ export function applyOp(project: Project, op: Op): ApplyResult {
         if (err) return { ok: false, reason: err };
         const added: Note = { ...op.note };
         if (added.muted === false) delete added.muted; // canonical form: absent means not muted
+        if (added.bend) added.bend = added.bend.map((p) => ({ tick: p.tick, semis: Math.round(p.semis * 100) / 100 })); // tidy to 0.01 semitone
         const next = { ...clip, notes: { ...clip.notes, [op.note.id]: added } };
         return done(withClip(project, op.trackId, op.clipId, next), op.opId);
       }
@@ -404,6 +457,8 @@ export function invertOp(before: Project, op: Op, newOpId: string): Op | null {
       return { ...base, type: "setSongLength", bars: before.songBars };
     case "setKey":
       return { ...base, type: "setKey", key: before.key };
+    case "setMixReference":
+      return { ...base, type: "setMixReference", reference: before.mixReference ? { ...before.mixReference, ...(before.mixReference.channels ? { channels: { ...before.mixReference.channels } } : {}) } : null };
     case "setPlugin": {
       const track = before.tracks[op.trackId];
       return track ? { ...base, type: "setPlugin", trackId: op.trackId, plugin: track.plugin ? { ...track.plugin } : null } : null;

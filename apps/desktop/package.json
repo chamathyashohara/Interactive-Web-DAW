@@ -9,9 +9,10 @@
     "build": "electron-vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "electron-builder --win nsis portable"
+    "dist": "node ../../scripts/gesture-assets.mjs && electron-builder --win nsis portable"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "ws": "^8.22.0"
@@ -51,6 +52,10 @@
       {
         "from": "build-resources/vcruntime",
         "to": "engine"
+      },
+      {
+        "from": "resources/mediapipe",
+        "to": "assets/mediapipe"
       }
     ],
     "win": {

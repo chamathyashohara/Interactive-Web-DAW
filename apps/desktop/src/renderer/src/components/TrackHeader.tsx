@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createTrack, MAX_BPM, MAX_TRACKS, MIN_BPM, SYNTH_PRESETS, TRACK_COLORS, type InstrumentKind, type Project, type SampleRef, type TrackFields } from "@daw/shared";
 import { useUnlock } from "../unlock/useUnlock";
 import { Fader } from "../controls/Fader";
 import { Meter } from "./Meter";
+import { pluginListStore, pluginStateStore, useStore } from "../store";
+import type { PluginEntry } from "../../../preload/index";
 
 export const TRACK_ROW_H = 60;
 export const HEADER_W = 272;
@@ -98,6 +101,41 @@ function SampleFit({ trackId, sample, projectTempo }: { trackId: string; sample:
   );
 }
 
+const PLUGIN_STATE_LABEL: Record<string, { text: string; cls: string; hint: string }> = {
+  starting: { text: "starting…", cls: "text-amber-300", hint: "The plugin is loading" },
+  ready: { text: "ready", cls: "text-emerald-300", hint: "The plugin is loaded and playing" },
+  crashed: { text: "restarting…", cls: "text-amber-300", hint: "The plugin crashed. The DAW is still running; it is being restarted." },
+  failed: { text: "failed", cls: "text-red-400", hint: "The plugin could not be loaded" },
+};
+
+/** A plugin track's plugin name and what its host process is doing (the plugin runs in a separate process, so a crash never takes the DAW down). */
+function PluginBadge({ trackId, name }: { trackId: string; name?: string }) {
+  const states = useStore(pluginStateStore);
+  const s = states[trackId];
+  const label = name ? (s ? PLUGIN_STATE_LABEL[s.state] : undefined) : undefined;
+  return (
+    <span className="flex min-w-0 shrink items-center gap-1 text-[10px]" data-testid={`plugin-badge-${trackId}`} data-plugin-state={name ? (s?.state ?? "starting") : "none"}>
+      <span className="max-w-[88px] truncate text-slate-300" title={name ?? "No plugin chosen"}>{name ?? "No plugin"}</span>
+      {name && (
+        <span className={label?.cls ?? "text-amber-300"} title={s?.message || label?.hint || "The plugin is loading"}>
+          {label?.text ?? "starting…"}
+        </span>
+      )}
+      {name && (
+        <button
+          className="hw-btn hw-teal shrink-0 px-1.5 py-0.5 text-[10px]"
+          disabled={s?.state !== "ready"}
+          onClick={() => void window.daw.plugins.openEditor(trackId)}
+          title={s?.state === "ready" ? "Open the plugin's own window to change its sound. The sound is saved with the project." : "Available once the plugin has loaded"}
+          data-testid={`plugin-edit-${trackId}`}
+        >
+          Edit
+        </button>
+      )}
+    </span>
+  );
+}
+
 /** One track's controls: colour, name, instrument, mute, solo, delete, volume and level meter. */
 export function TrackHeader({ project, trackId: id, index, selected, onSelect, autoOpen, onToggleAuto }: HeaderProps) {
   const t = project.tracks[id]!;
@@ -117,7 +155,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
         </label>
         <span className="w-4 text-center text-[10px] text-slate-500">{index + 1}</span>
         <NameField trackId={id} name={t.name} />
-        <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : t.instrument === "sample" ? "SMP" : "SYN"}</span>
+        <span className="rounded bg-white/5 px-1 text-[9px] text-slate-400">{t.instrument === "drums" ? "DRM" : t.instrument === "sample" ? "SMP" : t.instrument === "plugin" ? "PLG" : "SYN"}</span>
         {onToggleAuto && (
           <button
             className={`${small} hw-teal`}
@@ -157,6 +195,7 @@ export function TrackHeader({ project, trackId: id, index, selected, onSelect, a
             ))}
           </select>
         )}
+        {t.instrument === "plugin" && <PluginBadge trackId={id} name={t.plugin?.name} />}
         {t.instrument === "sample" && t.sample?.gate && <SampleFit trackId={id} sample={t.sample} projectTempo={project.tempo} />}
         <Fader orientation="horizontal" value={t.volume} min={0} max={100} color={t.color} className="!min-w-0 !flex-1" disabled={!unlock.can("mixer.panel")} title={unlock.reason("mixer.panel") ?? undefined} onChange={(v) => update(id, { volume: v }, `vol-${id}`)} label={`Volume of ${t.name}`} />
         <Meter orientation="horizontal" className="w-14" color={t.color} testId={`meter-list-${id}`} read={(s) => s?.levels[id] ?? 0} />
@@ -182,26 +221,106 @@ export function AddTrackRow({ project, onAdded }: { project: Project; onAdded: (
     onAdded(id);
   };
 
+  const plugins = useStore(pluginListStore);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // The menu is drawn on the page itself (not inside the scrolling track list), so the sticky ruler cannot cover it however tall it gets.
+  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
+  const toggleMenu = () => {
+    const r = buttonRef.current?.getBoundingClientRect();
+    if (r) setAnchor({ left: r.left, top: r.top, width: r.width });
+    setMenu(!menu);
+  };
+  const [pluginMenu, setPluginMenu] = useState(false);
+  const [pluginNote, setPluginNote] = useState<string | null>(null);
+
+  /** One batch so undo removes the track and its plugin together. */
+  const addPlugin = (entry: PluginEntry) => {
+    setMenu(false);
+    setPluginMenu(false);
+    const same = project.trackOrder.filter((id) => project.tracks[id]!.instrument === "plugin").length;
+    const id = `track-${crypto.randomUUID()}`;
+    const color = TRACK_COLORS[project.trackOrder.length % TRACK_COLORS.length]!;
+    const track = createTrack(id, same ? `${entry.name} ${same + 1}` : entry.name.slice(0, 40), "plugin", color, `clip-${crypto.randomUUID()}`);
+    void window.daw.dispatchBatch([{ type: "addTrack", track }, { type: "setPlugin", trackId: id, plugin: { id: entry.id, name: entry.name.slice(0, 80) } }]);
+    onAdded(id);
+  };
+  const browse = async () => {
+    const r = await window.daw.plugins.browse();
+    if (r.info) pluginListStore.set(r.info);
+    if (r.ok && r.entry) {
+      if (r.entry.format === "vst2" && !r.info?.vst2) setPluginNote("This build can only load VST3 plugins.");
+      else addPlugin(r.entry);
+    } else if (!r.ok && !r.canceled) setPluginNote(r.reason ?? "That file could not be used.");
+  };
+  const scanFolder = async () => {
+    const r = await window.daw.plugins.addFolder();
+    if (r.info) pluginListStore.set(r.info);
+  };
+  const usable = (e: PluginEntry) => e.format === "vst3" || !!plugins?.vst2;
+
   return (
     <div className="hw-strip relative shrink-0 border-r border-b border-black p-2" style={{ width: HEADER_W }}>
       <button
+        ref={buttonRef}
         className="hw-btn w-full py-1.5 text-xs"
         disabled={full || multipleLocked}
         title={unlock.reason("tracks.multiple") ?? undefined}
-        onClick={() => setMenu(!menu)}
+        onClick={toggleMenu}
         data-testid="add-track"
       >
         + Add track <span className="text-slate-600">({project.trackOrder.length}/{MAX_TRACKS})</span>
       </button>
-      {menu && (
-        <div className="absolute right-2 bottom-12 left-2 z-50 overflow-hidden rounded-md border border-white/15 bg-[#1b1f29] shadow-xl">
+      {menu && anchor && createPortal(
+        <div
+          className="fixed z-[200] overflow-y-auto rounded-md border border-white/15 bg-[#1b1f29] shadow-xl"
+          style={{ left: anchor.left, width: anchor.width, bottom: window.innerHeight - anchor.top + 4, maxHeight: Math.max(120, anchor.top - 8) }}
+        >
           <button className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10" onClick={() => add("synth")} data-testid="add-synth">
             Synth <span className="text-slate-500">— melodies, chords, bass</span>
           </button>
           <button className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" disabled={!unlock.can("tracks.drums")} title={unlock.reason("tracks.drums") ?? undefined} onClick={() => add("drums")} data-testid="add-drums">
             Drums <span className="text-slate-500">— kick, snare, hats…</span>
           </button>
-        </div>
+          <button
+            className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!plugins?.hostAvailable}
+            title={plugins?.hostAvailable ? "Play a plugin instrument you have installed (VST3)" : "The plugin host was not found, so plugins are unavailable"}
+            onClick={() => { setPluginMenu(!pluginMenu); setPluginNote(null); }}
+            data-testid="add-plugin"
+          >
+            Plugin ▸ <span className="text-slate-500">— VST3 instruments</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+      {menu && anchor && pluginMenu && createPortal(
+            <div
+              className="fixed z-[200] overflow-y-auto rounded-md border border-white/15 bg-[#161a22] shadow-xl"
+              style={{ left: anchor.left + anchor.width + 6, bottom: 8, width: 300, maxHeight: Math.min(420, window.innerHeight - 16) }}
+              data-testid="plugin-menu"
+            >
+              {plugins && plugins.entries.length === 0 && <div className="px-3 py-2 text-[11px] text-slate-500">No plugins found in the standard folders.</div>}
+              {plugins?.entries.map((e) => (
+                <button
+                  key={e.id}
+                  className="block w-full truncate px-3 py-1.5 text-left text-xs text-slate-200 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={!usable(e)}
+                  title={usable(e) ? e.id : "VST2 plugins need a build with the VST2 SDK; this build loads VST3 only"}
+                  onClick={() => addPlugin(e)}
+                  data-testid="plugin-entry"
+                >
+                  {e.name} <span className="text-[10px] text-slate-500">{e.format === "vst3" ? "VST3" : usable(e) ? "VST2" : "VST2 – not supported"}</span>
+                </button>
+              ))}
+              <button className="block w-full border-t border-white/10 px-3 py-1.5 text-left text-xs text-cyan-300 hover:bg-white/10" onClick={() => void browse()} data-testid="plugin-browse">
+                Browse for a plugin file…
+              </button>
+              <button className="block w-full px-3 py-1.5 text-left text-xs text-cyan-300 hover:bg-white/10" onClick={() => void scanFolder()} data-testid="plugin-scan-folder">
+                Scan another folder…
+              </button>
+              {pluginNote && <div className="px-3 py-1.5 text-[11px] text-amber-300" data-testid="plugin-note">{pluginNote}</div>}
+            </div>,
+        document.body,
       )}
     </div>
   );

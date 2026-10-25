@@ -190,3 +190,38 @@ describe("multi-track recovery", () => {
     expect(svc.dispatch({ type: "updateTrack", trackId: "track-1", changes: { volume: 50 } }).ok).toBe(true);
   });
 });
+
+describe("a plugin reporting its own saved settings", () => {
+  const withPlugin = (dir: string) => {
+    const svc = new ProjectService(new LocalStore(dir));
+    svc.dispatchBatch([
+      { type: "addTrack", track: createTrack("track-p", "Diva", "plugin", "#ff8800", "clip-p") },
+      { type: "setPlugin", trackId: "track-p", plugin: { id: "C:/VST3/Diva.vst3", name: "Diva" } },
+    ]);
+    return svc;
+  };
+
+  it("is saved and published, but is not an undo step", () => {
+    const svc = withPlugin(tmpDir());
+    svc.dispatch(addNote("n1")); // placeholder edit on the default track so there is something after the plugin track
+    let published = 0;
+    svc.subscribe(() => published++);
+    const r = svc.dispatchSilent({ type: "setPlugin", trackId: "track-p", plugin: { id: "C:/VST3/Diva.vst3", name: "Diva", state: "QUJD" } });
+    expect(r.ok).toBe(true);
+    expect(published).toBe(1);
+    expect(svc.current.tracks["track-p"]!.plugin?.state).toBe("QUJD");
+    svc.undo(); // takes back the note, not the plugin settings
+    expect(Object.keys(notes(svc))).toEqual([]);
+    expect(svc.current.tracks["track-p"]!.plugin?.state).toBe("QUJD");
+  });
+
+  it("survives an unclean exit, and a rejected state changes nothing", () => {
+    const dir = tmpDir();
+    const a = withPlugin(dir);
+    a.dispatchSilent({ type: "setPlugin", trackId: "track-p", plugin: { id: "C:/VST3/Diva.vst3", name: "Diva", state: "QUJD" } });
+    const bad = a.dispatchSilent({ type: "setPlugin", trackId: "track-p", plugin: { id: "", name: "Diva", state: "x" } });
+    expect(bad.ok).toBe(false);
+    const b = new ProjectService(new LocalStore(dir));
+    expect(b.current.tracks["track-p"]!.plugin).toEqual({ id: "C:/VST3/Diva.vst3", name: "Diva", state: "QUJD" });
+  });
+});

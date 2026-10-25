@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
-import { defaultProgress, type Progress, type Project } from "@daw/shared";
+import { defaultProgress, type MixSnapshot, type OpBody, type Progress, type Project } from "@daw/shared";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../../main/telemetry/telemetryStore";
 import type { CollabState, LiveState, RecordingState } from "../../preload/index";
+import type { PluginInfo, PluginTrackState } from "../../preload/index";
 import type { EngineState, ExportStatus, ProjectListPayload, ImportProgress, ImportResult, LibraryStatus, PackInfo, StatusPayload } from "../../preload/index";
 
 function createStore<T>(initial: T) {
@@ -62,6 +63,21 @@ export const progressStore = createStore<Progress>(defaultProgress());
 export const telemetryStore = createStore<TelemetryState>({ consented: false, participantCode: null, events: 0, session: "" });
 /** True in development builds: shows the developer tools (mark a lesson complete) in the Features panel. */
 export const devStore = createStore<boolean>(false);
+
+/** Installed third-party plugins (null until the first scan answers) and, per plugin track, what its host process is doing. */
+export const pluginListStore = createStore<PluginInfo | null>(null);
+export const pluginStateStore = createStore<Record<string, PluginTrackState>>({});
+
+/** The latest mixer measurement (null until the first one arrives) and the fixes the user applied, so each can be taken back. */
+export const mixStore = createStore<MixSnapshot | null>(null);
+export interface AppliedFix { key: string; label: string; applied: OpBody[]; restore: OpBody[]; atPass: number }
+export const mixAppliedStore = createStore<AppliedFix[]>([]);
+/** A whole-song analysis in progress (fraction 0..1) or the message of the last one that did not finish. */
+export const mixJobStore = createStore<{ running: boolean; fraction: number; message: string | null }>({ running: false, fraction: 0, message: null });
+/** The fix being auditioned (a changed copy of the mix plays; the project itself is unchanged), or null. */
+export const mixPreviewStore = createStore<{ label: string; ops: OpBody[]; project: Project } | null>(null);
+/** The finding whose explanation is open in the mixer (null = the list). */
+export const mixFocusStore = createStore<string | null>(null);
 
 export interface LibraryView {
   status: LibraryStatus;
@@ -133,6 +149,20 @@ export async function initStores() {
   progressStore.set(await window.daw.getProgress());
   devStore.set(await window.daw.isDev());
   window.daw.onProgress((p) => progressStore.set(p));
+  void window.daw.mix.get().then((s) => mixStore.set(s));
+  window.daw.mix.onAnalysis((s) => mixStore.set(s));
+  window.daw.mix.onPreview((e) => {
+    if (e.active) mixPreviewStore.set({ label: e.label, ops: e.ops, project: e.project });
+    else {
+      mixPreviewStore.set(null);
+      mixJobStore.set({ ...mixJobStore.get(), message: e.reason });
+    }
+  });
+  window.daw.mix.onProgress((p) => mixJobStore.set({ running: true, fraction: p.fraction, message: null }));
+  window.daw.mix.onDone((r) => mixJobStore.set({ running: false, fraction: r.ok ? 1 : 0, message: r.ok ? null : (r.message ?? "The analysis did not finish.") }));
+  void window.daw.plugins.list().then((i) => pluginListStore.set(i));
+  void window.daw.plugins.states().then((s) => pluginStateStore.set(s));
+  window.daw.plugins.onState(({ trackId, ...s }) => pluginStateStore.set({ ...pluginStateStore.get(), [trackId]: s }));
   telemetryStore.set(await window.daw.telemetry.getState());
   window.daw.telemetry.onState((s) => telemetryStore.set(s));
 }

@@ -1,4 +1,4 @@
-import { isInKey, nearestInKey, type Note, type OpBody, type ProjectKey } from "@daw/shared";
+import { isInKey, nearestInKey, sliceBend, type Note, type OpBody, type ProjectKey } from "@daw/shared";
 
 /** Pure builders for multi-note edits. Each returns ops that the main process applies as ONE undo step. */
 
@@ -28,6 +28,7 @@ export function pasteOps(clip: NoteClip, copied: Note[], atTick: number, newId: 
     if (duration < 1) continue;
     const note: Note = { id: newId(), pitch: n.pitch, startTick: start, durationTicks: duration, velocity: n.velocity };
     if (n.muted) note.muted = true;
+    if (n.bend) note.bend = n.bend.map((p) => ({ ...p })); // a pasted note glides like the one it was copied from
     ops.push({ type: "addNote", trackId: clip.trackId, clipId: clip.clipId, note });
   }
   return ops;
@@ -57,6 +58,8 @@ export function sliceOps(clip: NoteClip, note: Note, atTick: number, newId: NewI
   if (atTick <= note.startTick || atTick >= note.startTick + note.durationTicks) return null;
   const right: Note = { id: newId(), pitch: note.pitch, startTick: atTick, durationTicks: note.startTick + note.durationTicks - atTick, velocity: note.velocity };
   if (note.muted) right.muted = true;
+  const rightBend = sliceBend(note.bend, atTick - note.startTick, note.durationTicks); // the right part carries its share of the glide; the left keeps the original curve
+  if (rightBend) right.bend = rightBend;
   return [
     { type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: note.id, changes: { durationTicks: atTick - note.startTick } },
     { type: "addNote", trackId: clip.trackId, clipId: clip.clipId, note: right },

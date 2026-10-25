@@ -10,3 +10,5 @@ export * from "./synth";
 export * from "./transport";
 export * from "./research";
 export * from "./vocal";
+export * from "./mixAssist";
+export * from "./gesture";

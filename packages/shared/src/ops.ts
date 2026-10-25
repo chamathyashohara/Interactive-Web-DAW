@@ -1,4 +1,4 @@
-import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, PluginRef, Track } from "./model";
+import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, MixReference, Note, PluginRef, Track } from "./model";
 import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
@@ -104,6 +104,12 @@ export interface SetSongLengthOp extends OpBase {
   bars: number;
 }
 
+/** Sets the mixer assistant's reference levels; null returns to the defaults. */
+export interface SetMixReferenceOp extends OpBase {
+  type: "setMixReference";
+  reference: MixReference | null;
+}
+
 export interface SetKeyOp extends OpBase {
   type: "setKey";
   /** null clears the key. */
@@ -140,6 +146,7 @@ export type Op =
   | UpdateClipOp
   | SetSongLengthOp
   | SetKeyOp
+  | SetMixReferenceOp
   | SetLoopOp
   | SetMarkersOp;
 

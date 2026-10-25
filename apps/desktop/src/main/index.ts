@@ -1,7 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import fs from "node:fs";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
 import type { OpBody, Project } from "@daw/shared";
@@ -15,12 +17,14 @@ import { LocalStore } from "./project/localStore";
 import { ProgressStore } from "./progress/progressStore";
 import { ProjectService } from "./project/projectService";
 import { Workspace } from "./project/workspace";
+import { PluginCatalog } from "./plugins/pluginCatalog";
+import { pluginFormatOf } from "./plugins/pluginScan";
 import { parseMidi } from "./midi/parseMidi";
 import { midiToProject } from "./midi/midiToProject";
 import { TelemetryStore } from "./telemetry/telemetryStore";
 import { CollabClient, NetStats, isLanHost, parseServerAddress, startSessionServer, type SessionServer, type UserInfo } from "@daw/collab";
 import { WebSocket as NodeWebSocket } from "ws";
-import { eventsToCsv, metricsToCsv, migrateProject, isVocalTrackName } from "@daw/shared";
+import { MixAnalyzer, applyOp, eventsToCsv, metricsToCsv, migrateProject, mixSignature, stamp, isVocalTrackName } from "@daw/shared";
 import { createHash } from "node:crypto";
 
 interface EngineState {
@@ -38,6 +42,15 @@ function resolveEnginePath(): string {
   // The installed / portable app carries the engine beside it (see `build.extraResources` in apps/desktop/package.json).
   if (app.isPackaged) return path.join(process.resourcesPath, "engine", "daw_engine.exe");
   return path.resolve(app.getAppPath(), "../../engine/build/daw_engine_artefacts/Release/daw_engine.exe");
+}
+
+/** The plugin host program sits beside the engine (or in the build's sibling folder); tracks with plugins need it. */
+function resolvePluginHostPath(): string {
+  if (process.env.DAW_PLUGINHOST_PATH) return process.env.DAW_PLUGINHOST_PATH;
+  const enginePath = resolveEnginePath();
+  const beside = path.join(path.dirname(enginePath), "daw_pluginhost.exe");
+  if (fs.existsSync(beside)) return beside;
+  return path.resolve(path.dirname(enginePath), "../../daw_pluginhost_artefacts/Release/daw_pluginhost.exe");
 }
 
 function sendToRenderer(channel: string, payload: unknown) {
@@ -64,6 +77,11 @@ function createWindow() {
   else void win.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
+// The hand tracking (gesture playing) needs its WebAssembly files and model. They are served from the app's own folder through this
+// scheme, because a page loaded from a file cannot fetch other files. It serves nothing else (see the handler below).
+protocol.registerSchemesAsPrivileged([{ scheme: "dawasset", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+const ASSET_TYPES: Record<string, string> = { ".wasm": "application/wasm", ".js": "text/javascript", ".task": "application/octet-stream" };
+
 // End-to-end tests keep everything the app stores (settings, local storage, caches) out of the real user profile.
 if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userData", process.env.DAW_USER_DATA);
 
@@ -71,10 +89,27 @@ if (process.env.DAW_E2E === "1" && process.env.DAW_USER_DATA) app.setPath("userD
 if (process.env.DAW_E2E === "1" && process.env.DAW_FAKE_MIC === "1") {
   app.commandLine.appendSwitch("use-fake-device-for-media-stream");
   app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+  // gesture tests: the fake camera plays this video file (.mjpeg or .y4m) instead of Chromium's test pattern
+  if (process.env.DAW_FAKE_VIDEO) app.commandLine.appendSwitch("use-file-for-fake-video-capture", process.env.DAW_FAKE_VIDEO);
 }
 
 app.whenReady().then(() => {
-  // Only the microphone (and nothing else) may be asked for, and only by this app's own window.
+  // dawasset://mediapipe/<file>: only .wasm, .js and .task files inside <app>/resources/mediapipe (or the installed app's assets folder).
+  const assetRoot = path.resolve(app.isPackaged ? path.join(process.resourcesPath, "assets") : path.join(__dirname, "../../resources"));
+  protocol.handle("dawasset", async (request) => {
+    const url = new URL(request.url);
+    const file = path.resolve(assetRoot, url.hostname, "." + decodeURIComponent(url.pathname));
+    const type = ASSET_TYPES[path.extname(file).toLowerCase()];
+    if (url.hostname !== "mediapipe" || !type || !file.startsWith(path.join(assetRoot, "mediapipe") + path.sep)) return new Response("not found", { status: 404 });
+    try {
+      const res = await net.fetch(pathToFileURL(file).toString());
+      if (!res.ok) return new Response("not found", { status: 404 });
+      return new Response(res.body, { headers: { "content-type": type, "access-control-allow-origin": "*" } });
+    } catch {
+      return new Response("not found", { status: 404 });
+    }
+  });
+  // Only the microphone and camera ("media"; nothing else) may be asked for, and only by this app's own window.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === "media"));
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === "media");
   // Projects live under <userData>/projects, each in its own folder, managed by the Workspace.
@@ -128,7 +163,21 @@ app.whenReady().then(() => {
     .catch((err: unknown) => setLibraryStatus({ state: "error", message: err instanceof Error ? err.message : String(err) }));
 
   const slots = new SlotAllocator();
-  const pushProjectToEngine = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots, (id) => library.pathOf(id)) });
+  const mixAnalyzer = new MixAnalyzer(); // mixer assistant: measures the master and every channel while the song plays (packages/shared/src/mixAssist.ts)
+  let lastMixSent = 0;
+  let mixDirty = true; // the analysis shown by the window is out of date (a fader moved, playback stopped...)
+  // Mixer preview: the engine of THIS computer plays a changed copy of the mix so a suggested fix can be heard before it is applied. The
+  // project, its undo history and any collaborators never see it; any real change to the project (or an export) ends it.
+  let mixPreview: { project: Project } | null = null;
+  const pushProjectToEngine = (project: Project) => {
+    mixDirty = true;
+    if (mixPreview) {
+      mixPreview = null;
+      sendToRenderer("mix:preview", { active: false, reason: "The project changed, so the preview ended." });
+    }
+    pushProjectToEngineNow(project);
+  };
+  const pushProjectToEngineNow = (project: Project) => engine.send({ t: "loadProject", project: toEngineSnapshot(project, slots, (id) => library.pathOf(id)) });
 
   let metronomeOn = false; // a UI setting, not part of the project: kept here so a restarted engine gets it back
   engine.on("ready", (info) => {
@@ -156,6 +205,43 @@ app.whenReady().then(() => {
     else sendToRenderer("export:status", { state: "error", id: e.id, message: e.message });
   });
   engine.on("sampleInfo", (info) => analyzer.onInfo(info));
+
+  // ---- mixer assistant: measures the master and every channel while the song plays (see packages/shared/src/mixAssist.ts) ----
+
+  // ---- third-party plugins (each runs in its own host process; see docs/plugin-hosting.md) ----
+  const pluginCatalog = new PluginCatalog(path.join(app.getPath("userData"), "plugin-folders.json"));
+  const pluginStates: Record<string, { state: string; name: string; message: string }> = {};
+  let pluginCaps: { vst3: boolean; vst2: boolean; hostAvailable: boolean } = { vst3: false, vst2: false, hostAvailable: false };
+  const hostPath = resolvePluginHostPath();
+  if (fs.existsSync(hostPath)) {
+    execFile(hostPath, ["--caps"], { timeout: 15000 }, (err, stdout) => {
+      try {
+        const caps = JSON.parse(stdout.trim().split("\n").pop() ?? "{}") as { vst3?: boolean; vst2?: boolean };
+        pluginCaps = { vst3: !err && caps.vst3 !== false, vst2: !!caps.vst2, hostAvailable: true };
+      } catch {
+        pluginCaps = { vst3: false, vst2: false, hostAvailable: true };
+      }
+    });
+  }
+  engine.on("pluginState", (e) => {
+    const trackId = slots.trackFor(e.slot);
+    if (!trackId) return;
+    pluginStates[trackId] = { state: e.state, name: e.name, message: e.message };
+    sendToRenderer("plugin:state", { trackId, ...pluginStates[trackId] });
+  });
+  // The user changed a plugin's sound in its own window: keep the plugin's settings in the project (saved with it, used by the export).
+  engine.on("pluginSaved", (e) => {
+    const trackId = slots.trackFor(e.slot);
+    const base = collab ? collab.project : service.current;
+    const track = trackId && base ? base.tracks[trackId] : undefined;
+    if (!trackId || track?.instrument !== "plugin" || !track.plugin) return;
+    const body: OpBody = { type: "setPlugin", trackId, plugin: { id: track.plugin.id, name: track.plugin.name, state: e.state } };
+    const result = collab ? collab.client.dispatch(body) : service.dispatchSilent(body);
+    if (!result.ok) sendToRenderer("plugin:state", { trackId, ...(pluginStates[trackId] ?? { state: "ready", name: track.plugin.name }), message: `Could not keep the plugin's settings: ${result.reason}` });
+  });
+  engine.on("down", () => {
+    for (const k of Object.keys(pluginStates)) delete pluginStates[k]; // the engine and its hosts are gone; the restart reports again
+  });
   engine.on("status", (status) => {
     // Translate engine slot meters into per-track levels for the UI.
     const levels: Record<string, number> = {};
@@ -166,6 +252,15 @@ app.whenReady().then(() => {
     if (status.playing) intendedTick = null; // while playing, the engine's own position is the truth
     lastStatus = { ...status, levels };
     sendToRenderer("engine:status", lastStatus);
+    // Mix analysis: measured from the same status stream, outside the audio thread. The renderer gets a snapshot a few times a second.
+    const project = mixPreview?.project ?? collab?.project ?? service.current;
+    mixAnalyzer.feed(status, { project, sampleRate: engineState.info?.sampleRate ?? 48000, bufferSize: engineState.info?.bufferSize ?? 512, trackOf: (slot) => slots.trackFor(slot) });
+    const nowMs = Date.now();
+    if (nowMs - lastMixSent >= 250 && (status.playing || mixDirty)) {
+      lastMixSent = nowMs;
+      mixDirty = status.playing;
+      sendToRenderer("mix:analysis", mixAnalyzer.snapshot(project));
+    }
   });
 
   // ---- real-time collaboration session (Component 3) ----
@@ -300,12 +395,17 @@ app.whenReady().then(() => {
     engine.send({ t: "setMetronome", on: metronomeOn });
   });
   ipcMain.on("transport:seek", (_e, tick: number) => { liveHost.seek(tick); live.syncSeek(); });
+  ipcMain.on("engine:previewBend", (_e, p: { trackId: string; semitones: number }) => {
+    const slot = slots.slotFor(p.trackId);
+    if (slot !== undefined && Number.isFinite(p.semitones)) engine.send({ t: "previewBend", slot, semitones: Math.max(-24, Math.min(24, p.semitones)) });
+  });
   ipcMain.on("engine:preview", (_e, p: { trackId: string; pitch: number; velocity: number; on: boolean }) => {
     const slot = slots.slotFor(p.trackId);
     if (slot !== undefined) engine.send({ t: "preview", slot, pitch: p.pitch, velocity: p.velocity, on: p.on });
   });
   ipcMain.handle("export:wav", async (_e, explicitPath?: string, options?: { tailSeconds?: number }) => {
     if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
+    endMixPreview("The preview ended because the song was exported (an export is always the real project).");
     let target: string | undefined;
     if (explicitPath && process.env.DAW_E2E === "1") target = explicitPath; // test hook: skip the dialog (never enabled in normal use)
     else {
@@ -806,7 +906,95 @@ app.whenReady().then(() => {
     telemetry.record("ui.collab", { action: "leave" });
     return { ok: true };
   });
+  // ---- plugins: what is installed, which tracks' plugins are loaded ----
+  const pluginInfo = () => ({ ...pluginCatalog.list(), ...pluginCaps, hostAvailable: pluginCaps.hostAvailable || fs.existsSync(hostPath) });
+  ipcMain.handle("plugins:list", () => pluginInfo());
+  // "Analyse whole song": the engine renders the song offline and measures it. If a fader moves meanwhile the result no longer
+  // describes the mix, so it is thrown away instead of being shown as if it did.
+  const songAnalyses = new Map<string, string>();
+  ipcMain.handle("mix:analyzeSong", () => {
+    if (!engineState.connected) return { ok: false, reason: "The audio engine is not running." };
+    const id = randomUUID();
+    songAnalyses.set(id, mixSignature(mixPreview?.project ?? collab?.project ?? service.current));
+    engine.send({ t: "analyzeMix", id });
+    sendToRenderer("mix:progress", { id, fraction: 0 });
+    return { ok: true, id };
+  });
+  engine.on("mixProgress", (e) => sendToRenderer("mix:progress", e));
+  engine.on("mixAnalysis", (e) => {
+    const signature = songAnalyses.get(e.id);
+    songAnalyses.delete(e.id);
+    if (signature === undefined) return;
+    const project = mixPreview?.project ?? collab?.project ?? service.current;
+    if (!e.ok) return void sendToRenderer("mix:done", { id: e.id, ok: false, message: e.message });
+    if (signature !== mixSignature(project)) return void sendToRenderer("mix:done", { id: e.id, ok: false, message: "The mix changed while the song was being analysed, so the result was discarded. Analyse again." });
+    mixAnalyzer.loadWholeSong(e, { project, trackOf: (slot) => slots.trackFor(slot) });
+    mixDirty = true;
+    sendToRenderer("mix:analysis", mixAnalyzer.snapshot(project));
+    sendToRenderer("mix:done", { id: e.id, ok: true });
+  });
+  ipcMain.handle("mix:get", () => mixAnalyzer.snapshot(mixPreview?.project ?? collab?.project ?? service.current));
+  const endMixPreview = (reason: string) => {
+    if (!mixPreview) return;
+    mixPreview = null;
+    pushProjectToEngineNow(collab?.project ?? service.current);
+    mixDirty = true;
+    sendToRenderer("mix:preview", { active: false, reason });
+  };
+  ipcMain.handle("mix:previewStart", (_e, bodies: OpBody[], label: unknown) => {
+    // only fader moves can be previewed
+    if (!Array.isArray(bodies) || bodies.length === 0 || bodies.length > 20 || !bodies.every((b) => b?.type === "updateTrack" || b?.type === "setMasterVolume")) return { ok: false, reason: "Only fader changes can be previewed." };
+    let preview: Project = collab?.project ?? service.current;
+    for (const body of bodies) {
+      const r = applyOp(preview, stamp(body, randomUUID(), "preview"));
+      if (!r.ok) return { ok: false, reason: r.reason };
+      preview = r.project;
+    }
+    mixPreview = { project: preview };
+    pushProjectToEngineNow(preview);
+    mixDirty = true;
+    sendToRenderer("mix:preview", { active: true, label: typeof label === "string" ? label.slice(0, 200) : "", ops: bodies, project: preview });
+    return { ok: true };
+  });
+  ipcMain.handle("mix:previewStop", () => (endMixPreview("Preview stopped. Nothing was changed."), { ok: true }));
+  ipcMain.handle("mix:reset", () => {
+    mixAnalyzer.reset();
+    mixDirty = true;
+    const snap = mixAnalyzer.snapshot(mixPreview?.project ?? collab?.project ?? service.current);
+    sendToRenderer("mix:analysis", snap);
+    return snap;
+  });
+  ipcMain.handle("plugins:states", () => ({ ...pluginStates }));
+  ipcMain.handle("plugins:openEditor", (_e, trackId: unknown) => {
+    const slot = typeof trackId === "string" ? slots.slotFor(trackId) : undefined;
+    if (slot === undefined || pluginStates[trackId as string]?.state !== "ready") return { ok: false, reason: "The plugin is not loaded yet." };
+    engine.send({ t: "openPluginEditor", slot });
+    return { ok: true };
+  });
+  ipcMain.handle("plugins:addFolder", async () => {
+    const picked = await dialog.showOpenDialog(win!, { title: "Add a folder of plugins", properties: ["openDirectory"] });
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+    return { ok: pluginCatalog.addFolder(picked.filePaths[0]), info: pluginInfo() };
+  });
+  ipcMain.handle("plugins:browse", async (_e, explicitPath?: unknown) => {
+    let file = typeof explicitPath === "string" && process.env.DAW_E2E === "1" ? explicitPath : undefined;
+    if (!file) {
+      const picked = await dialog.showOpenDialog(win!, {
+        title: "Choose a plugin",
+        properties: ["openFile"],
+        filters: [{ name: "Plugins (.vst3, .dll)", extensions: ["vst3", "dll"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, canceled: true };
+      file = picked.filePaths[0];
+    }
+    if (!pluginFormatOf(path.basename(file))) return { ok: false, reason: "That is not a plugin file (.vst3 or .dll)." };
+    const entry = pluginCatalog.addFile(file);
+    return entry ? { ok: true, entry, info: pluginInfo() } : { ok: false, reason: "That plugin file could not be found." };
+  });
   ipcMain.handle("app:isDev", () => !app.isPackaged || process.env.DAW_E2E === "1");
+  // While the camera is tracking a hand the window must keep running even if another window covers it: Chromium otherwise pauses the
+  // animation frames the tracking loop runs on, and the notes would stop. It goes back to normal when the camera stops.
+  ipcMain.on("app:keepRunning", (_e, on: unknown) => win?.webContents.setBackgroundThrottling(on !== true));
   ipcMain.on("shell:show", (_e, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.on("debug:killEngine", () => engine.killForTest());
 

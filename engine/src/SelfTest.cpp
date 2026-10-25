@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
+#include <memory>
 #include <cstdio>
 #include <vector>
 
@@ -1072,6 +1074,265 @@ int runSelfTest()
             expect(level(true, true) > 0.2f, "metronome: the click is audible while playing");
             expect(level(false, true) == 0.0f && level(true, false) == 0.0f, "metronome: silent when off or when stopped");
         }
+    }
+
+    // ---- 11. Mix analysis: bus peak, RMS and pre-clip master peak are measured from the real audio ----
+    {
+        const auto makeTone = [](float amp) {
+            auto t = std::make_shared<SampleData>();
+            t->sampleRate = 48000.0;
+            t->channels = 1;
+            t->frames = 6 * 48000;
+            t->left.resize(static_cast<size_t>(t->frames));
+            for (int64_t i = 0; i < t->frames; ++i) t->left[static_cast<size_t>(i)] = amp * static_cast<float>(std::sin(2.0 * 3.14159265358979 * 440.0 * static_cast<double>(i) / 48000.0));
+            t->peak = amp;
+            return t;
+        };
+        struct Ch { int slot; float amp; float gain; };
+        struct Read { float bus[kMaxSlots]; double rms[kMaxSlots]; uint64_t frames[kMaxSlots]; float pre; uint64_t soft, over; float outPeak; };
+        const auto run = [&](const std::vector<Ch>& chs, float masterGain) {
+            PlaybackModel m;
+            m.ppq = 960;
+            m.tempo = 120.0;
+            m.loopTicks = 16 * 3840;
+            m.masterGain = masterGain;
+            for (const auto& c : chs)
+            {
+                TrackModel t;
+                t.slot = c.slot;
+                t.instrument = kSample;
+                t.gain = c.gain;
+                t.sample = makeTone(c.amp);
+                t.gate = true;
+                NoteEvent n;
+                n.startTick = 0;
+                n.endTick = 5 * 1920;
+                n.pitch = 60;
+                n.velocity = 127;
+                n.lengthSec = 5.0;
+                t.notes.push_back(n);
+                m.tracks.push_back(std::move(t));
+            }
+            AudioEngine eng;
+            eng.prepare(48000.0, 480);
+            eng.sequencer.setModel(&m);
+            eng.sequencer.setBpm(120.0);
+            eng.sequencer.setPlaying(true);
+            std::vector<float> l(480), r(480);
+            float* po[2] = { l.data(), r.data() };
+            Read rd{};
+            for (int b = 0; b < 300; ++b)
+            {
+                eng.process(po, 2, 480);
+                if (b >= 20) for (float v : l) rd.outPeak = std::max(rd.outPeak, std::fabs(v));
+            }
+            for (int i = 0; i < kMaxSlots; ++i)
+            {
+                rd.bus[i] = eng.slotBusPeak[i].load();
+                rd.frames[i] = eng.slotFrames[i].load();
+                rd.rms[i] = rd.frames[i] > 0 ? std::sqrt(eng.slotSumSq[i].load() / (2.0 * static_cast<double>(rd.frames[i]))) : 0.0;
+            }
+            rd.pre = eng.masterPrePeak.load();
+            rd.soft = eng.softClipSamples.load();
+            rd.over = eng.overSamples.load();
+            eng.sequencer.setModel(nullptr);
+            return rd;
+        };
+
+        const Read one = run({ { 1, 0.5f, 1.0f } }, 1.0f);
+        expect(std::fabs(one.bus[1] - 0.5f) < 0.01f, "mix analysis: a 0.5 sine at unity gain reads a bus peak of 0.5 (-6.02 dBFS)");
+        expect(std::fabs(one.rms[1] - 0.5 / std::sqrt(2.0)) < 0.01, "mix analysis: its RMS reads 0.354 (a sine's peak divided by root two)");
+        expect(one.frames[1] > 100000, "mix analysis: the sounding channel counted its frames");
+        expect(one.frames[0] == 0 && one.bus[0] == 0.0f && one.frames[5] == 0, "mix analysis: channels with nothing playing measure nothing (no invented levels)");
+        expect(std::fabs(one.pre - 0.5f) < 0.01f && one.soft == 0 && one.over == 0, "mix analysis: a quiet mix reports no soft clipping and no overs");
+
+        const Read muted = run({ { 1, 0.5f, 0.0f } }, 1.0f); // a muted channel keeps its voices running at zero gain
+        expect(muted.frames[1] == 0 && muted.bus[1] == 0.0f && muted.rms[1] == 0.0, "mix analysis: a muted channel measures nothing, not even time");
+
+        const Read half = run({ { 1, 0.5f, 0.5f } }, 1.0f);
+        expect(std::fabs(half.bus[1] - 0.25f) < 0.01f && std::fabs(half.rms[1] - 0.25 / std::sqrt(2.0)) < 0.01, "mix analysis: halving the channel gain halves both measurements (-6 dB), so a fader change really changes the signal");
+
+        const Read both = run({ { 1, 0.55f, 1.0f }, { 2, 0.55f, 1.0f } }, 1.0f);
+        expect(std::fabs(both.bus[1] - 0.55f) < 0.01f && std::fabs(both.bus[2] - 0.55f) < 0.01f, "mix analysis: each channel is measured on its own while they sum on the master");
+        expect(both.pre > 1.05f && both.pre < 1.15f, "mix analysis: the master peak BEFORE the clip is the true sum (1.1), above full scale");
+        expect(both.over > 0 && both.soft >= both.over, "mix analysis: overs and soft-clip samples are counted");
+        expect(both.outPeak < 1.0f, "mix analysis: the soft clip keeps the OUTPUT under 1.0, which is why the pre-clip peak is needed to see the problem");
+
+        const Read lowered = run({ { 1, 0.55f, 0.6f }, { 2, 0.55f, 1.0f } }, 1.0f);
+        expect(lowered.pre < both.pre - 0.15f && lowered.pre > 0.85f, "mix analysis: lowering one contributing channel lowers the pre-clip master peak by about its share");
+
+        // ---- true peak: a sine at a quarter of the sample rate, 45 degrees in, has samples of only 0.707 but its waveform reaches 1.0 ----
+        {
+            const int n = 4800;
+            std::vector<float> x(static_cast<size_t>(n));
+            for (int k = 0; k < n; ++k) x[static_cast<size_t>(k)] = static_cast<float>(std::sin(2.0 * 3.14159265358979 * 0.25 * k + 0.7853981633974483));
+            float samplePeak = 0.0f;
+            for (float v : x) samplePeak = std::max(samplePeak, std::fabs(v));
+            TruePeakMeter tp;
+            tp.process(x.data(), 1000); // fed in blocks, as in a render
+            tp.process(x.data() + 1000, n - 1000);
+            expect(std::fabs(samplePeak - 0.7071f) < 0.001f, "true peak: the test signal's sample peak is 0.707");
+            expect(tp.peak() > 0.97f && tp.peak() < 1.03f, "true peak: the between-sample peak of that signal is found (about 1.0, a +3 dB difference)");
+            TruePeakMeter silent;
+            std::vector<float> z(2000, 0.0f);
+            silent.process(z.data(), 2000);
+            expect(silent.peak() == 0.0f, "true peak: silence reads zero");
+            TruePeakMeter dc;
+            std::vector<float> d(2000, 0.5f);
+            dc.process(d.data(), 2000);
+            expect(std::fabs(dc.peak() - 0.5f) < 0.001f, "true peak: a steady level is not exaggerated");
+        }
+
+        // ---- whole-song analysis agrees with what the live meters read ----
+        {
+            const auto makeModel = [&](const std::vector<Ch>& chs, float masterGain) {
+                auto m = std::make_unique<PlaybackModel>();
+                m->ppq = 960;
+                m->tempo = 120.0;
+                m->loopTicks = 2 * 3840; // 4 s
+                m->masterGain = masterGain;
+                for (const auto& c : chs)
+                {
+                    TrackModel t;
+                    t.slot = c.slot;
+                    t.instrument = kSample;
+                    t.gain = c.gain;
+                    t.sample = makeTone(c.amp);
+                    t.gate = true;
+                    NoteEvent n;
+                    n.startTick = 0;
+                    n.endTick = 3 * 1920;
+                    n.pitch = 60;
+                    n.velocity = 127;
+                    n.lengthSec = 3.0;
+                    t.notes.push_back(n);
+                    m->tracks.push_back(std::move(t));
+                }
+                return m;
+            };
+            const auto quiet = makeModel({ { 1, 0.5f, 1.0f } }, 1.0f);
+            const MixAnalysisResult a = analyzeMixOffline(*quiet, 48000.0, 0.5);
+            expect(a.ok && a.frames >= 4 * 48000, "whole-song analysis: renders the whole song");
+            expect(std::fabs(a.bus[1] - 0.5f) < 0.01f && a.bus[0] == 0.0f && a.slotFrames[0] == 0, "whole-song analysis: channel peak is measured, other channels measure nothing");
+            const double rms = a.slotFrames[1] > 0 ? std::sqrt(a.sumSq[1] / (2.0 * static_cast<double>(a.slotFrames[1]))) : 0.0;
+            expect(std::fabs(rms - 0.5 / std::sqrt(2.0)) < 0.01, "whole-song analysis: RMS is the same as the live meters would read");
+            expect(a.truePeak >= a.prePeak - 1e-4f && a.truePeak < a.prePeak * 1.1f, "whole-song analysis: the true peak is never below the sample peak, and close to it for a plain sine");
+            expect(a.softClips == 0 && a.overs == 0, "whole-song analysis: a quiet mix has no overs");
+
+            const auto loud = makeModel({ { 1, 0.55f, 1.0f }, { 2, 0.55f, 1.0f } }, 1.0f);
+            const MixAnalysisResult b = analyzeMixOffline(*loud, 48000.0, 0.5);
+            expect(b.ok && b.prePeak > 1.05f && b.prePeak < 1.15f && b.overs > 0, "whole-song analysis: a clipping master is found offline, with its overs counted");
+            expect(b.outPeak < 1.0f && b.truePeak >= b.prePeak - 1e-4f, "whole-song analysis: the output stays under 1.0 while the pre-clip true peak does not");
+
+            std::atomic<bool> cancel{ true };
+            expect(!analyzeMixOffline(*loud, 48000.0, 0.5, {}, &cancel).ok, "whole-song analysis: can be cancelled");
+            PlaybackModel empty;
+            empty.loopTicks = 0;
+            expect(!analyzeMixOffline(empty, 48000.0, 0.5).ok, "whole-song analysis: an empty song is refused, not reported as silent");
+        }
+    }
+
+    // ---- 12. Pitch bend: the frequency actually follows the curve ----
+    {
+        SynthParams sine; // a pure sine, so every cycle can be counted
+        sine.sawLevel = 0.0f;
+        sine.subLevel = 0.0f;
+        sine.sineLevel = 1.0f;
+        sine.attackSec = 0.001f;
+        sine.gain = 0.3f;
+        const double sr = 48000.0;
+        /** Frequency over [from, to) seconds: whole cycles between the first and last upward zero crossing, with each crossing placed between samples. */
+        const auto freqIn = [&](const std::vector<float>& x, double from, double to) {
+            double first = -1.0, last = -1.0;
+            int count = 0;
+            for (size_t i = static_cast<size_t>(from * sr) + 1; i < static_cast<size_t>(to * sr) && i < x.size(); ++i)
+                if (x[i - 1] < 0.0f && x[i] >= 0.0f)
+                {
+                    const double pos = static_cast<double>(i - 1) + static_cast<double>(-x[i - 1]) / static_cast<double>(x[i] - x[i - 1]);
+                    if (first < 0.0) first = pos;
+                    last = pos;
+                    ++count;
+                }
+            return count < 2 ? 0.0 : (count - 1) * sr / (last - first);
+        };
+        const auto makeModel = [&](bool withBend, bool withNote) {
+            auto m = std::make_unique<PlaybackModel>();
+            m->ppq = 960;
+            m->tempo = 120.0;
+            m->loopTicks = 4 * 3840;
+            m->masterGain = 1.0f;
+            TrackModel t;
+            t.slot = 0;
+            t.instrument = kSynth;
+            t.gain = 1.0f;
+            t.synth = sine;
+            if (withNote)
+            {
+                NoteEvent n;
+                n.startTick = 0;
+                n.endTick = 3 * 1920; // 3 s
+                n.pitch = 57;         // A3, 220 Hz
+                n.velocity = 100;
+                if (withBend)
+                {
+                    n.bendN = 2;
+                    n.bendTick[0] = 0.0f;   n.bendSemis[0] = 0.0f;
+                    n.bendTick[1] = 960.0f; n.bendSemis[1] = 12.0f; // an octave up over half a second (120 bpm), then held
+                }
+                t.notes.push_back(n);
+            }
+            m->tracks.push_back(std::move(t));
+            return m;
+        };
+        // blocks of 480; `preview` runs between blocks so a live bend can be sent while it plays
+        const auto render = [&](const PlaybackModel& m, double seconds, const std::function<void(AudioEngine&, int)>& between = {}) {
+            AudioEngine eng;
+            eng.prepare(sr, 480);
+            eng.sequencer.setModel(&m);
+            eng.sequencer.setBpm(120.0);
+            eng.sequencer.setPlaying(true);
+            std::vector<float> l(480), r(480), out;
+            float* po[2] = { l.data(), r.data() };
+            const int blocks = static_cast<int>(seconds * sr / 480.0);
+            for (int b = 0; b < blocks; ++b)
+            {
+                if (between) between(eng, b);
+                eng.process(po, 2, 480);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            eng.sequencer.setModel(nullptr);
+            return out;
+        };
+
+        const auto plain = makeModel(false, true);
+        const auto flat = render(*plain, 1.5);
+        expect(std::fabs(freqIn(flat, 0.2, 1.2) - 220.0) < 0.5, "pitch bend: a note with no curve stays on its pitch (220 Hz)");
+
+        const auto bent = makeModel(true, true);
+        const auto sweep = render(*bent, 1.6);
+        // the curve is +24 semitones per second for half a second: f(t) = 220 * 2^(2t), so the cycles between t1 and t2 are 220 / (2 ln 2) * (2^(2 t2) - 2^(2 t1))
+        const auto expected = [](double t1, double t2) { return 220.0 / (2.0 * std::log(2.0)) * (std::pow(2.0, 2.0 * t2) - std::pow(2.0, 2.0 * t1)) / (t2 - t1); };
+        const double mid = freqIn(sweep, 0.20, 0.30);
+        expect(std::fabs(mid - expected(0.20, 0.30)) < 0.02 * expected(0.20, 0.30), "pitch bend: partway through the glide the frequency matches the curve (within 2%)");
+        expect(std::fabs(freqIn(sweep, 0.7, 1.4) - 440.0) < 1.0, "pitch bend: after the curve the note holds its last value, an octave up (440 Hz)");
+        expect(freqIn(sweep, 0.05, 0.10) < freqIn(sweep, 0.30, 0.35) && freqIn(sweep, 0.30, 0.35) < freqIn(sweep, 0.55, 0.60), "pitch bend: the pitch rises steadily through the glide");
+
+        // a note played live follows the live bend, and the song's own notes are not touched by it
+        const auto liveModel = makeModel(false, false);
+        const auto live = render(*liveModel, 1.5, [](AudioEngine& e, int b) {
+            if (b == 0) e.pushPreview({ 0, 57, 100, true });
+            if (b == 50) e.pushPreview({ 0, 60, 90, false, true, 12.0f }); // after 0.5 s: bend up an octave
+        });
+        expect(std::fabs(freqIn(live, 0.2, 0.45) - 220.0) < 1.0, "live bend: before any bend the played note is at its own pitch");
+        expect(std::fabs(freqIn(live, 0.9, 1.4) - 440.0) < 2.0, "live bend: the played note follows the bend within a moment (440 Hz)");
+        const auto songNote = render(*plain, 1.5, [](AudioEngine& e, int b) { if (b == 10) e.pushPreview({ 0, 60, 90, false, true, 12.0f }); });
+        expect(std::fabs(freqIn(songNote, 0.4, 1.4) - 220.0) < 0.5, "live bend: a note from the song is not moved by a live bend");
+        const auto released = render(*liveModel, 2.0, [](AudioEngine& e, int b) {
+            if (b == 0) e.pushPreview({ 0, 57, 100, true });
+            if (b == 20) e.pushPreview({ 0, 57, 0, false });                                     // released
+            if (b == 120) e.pushPreview({ 0, 57, 100, true });                                    // a new note, played later
+        });
+        expect(std::fabs(freqIn(released, 1.2, 1.9) - 220.0) < 1.0, "live bend: a new note starts at its own pitch, not at the last bend");
     }
 
     std::printf("{\"t\":\"selftest\",\"pass\":%s,\"checked\":%d,\"failures\":%d,\"worstSampleError\":%lld}\n", failures == 0 ? "true" : "false",

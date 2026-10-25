@@ -1,4 +1,4 @@
-import type { Note, OpBody } from "@daw/shared";
+import { sliceBend, type Note, type OpBody } from "@daw/shared";
 import type { NewId, NoteClip } from "./editing";
 
 /**
@@ -19,6 +19,8 @@ export function chopOps(clip: NoteClip, notes: Note[], pieceTicks: number, newId
       if (end - start < 1) continue;
       const note: Note = { id: newId(), pitch: n.pitch, startTick: start, durationTicks: end - start, velocity: n.velocity };
       if (n.muted) note.muted = true;
+      const bend = sliceBend(n.bend, start - n.startTick, end - n.startTick); // each piece glides along its own part of the curve
+      if (bend) note.bend = bend;
       ops.push({ type: "addNote", trackId: clip.trackId, clipId: clip.clipId, note });
     }
   }

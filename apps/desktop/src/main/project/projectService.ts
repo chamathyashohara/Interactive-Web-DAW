@@ -102,6 +102,16 @@ export class ProjectService {
     return { ok: true };
   }
 
+  /**
+   * Applies an op that is not a musical edit by the user (a plugin reporting its own saved settings): it is validated, journalled
+   * and published like any op, but kept out of undo, because undoing it would not change what the running plugin sounds like.
+   */
+  dispatchSilent(body: OpBody): DispatchResult {
+    const result = this.applyAndPersist(stamp(body, randomUUID(), this.clientId));
+    if (result.ok) this.publish();
+    return result;
+  }
+
   undo(): boolean {
     const entry = this.history.popUndo();
     if (!entry) return false;
