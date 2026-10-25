@@ -1,4 +1,4 @@
-import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, Note, PluginRef, Track } from "./model";
+import type { AutoParam, AutoPoint, Clip, ClipAudio, LoopRegion, Marker, MixReference, Note, PluginRef, Track } from "./model";
 import type { ProjectKey } from "./theory";
 
 export type NoteFields = Pick<Note, "pitch" | "startTick" | "durationTicks" | "velocity" | "muted">;
@@ -40,6 +40,12 @@ export interface UpdateSampleOp extends OpBase {
   changes: { bpm?: number | null; fit?: boolean };
 }
 /** Sets or clears the VST3 instrument of a plugin track (and its saved state); null leaves the track with no plugin chosen. */
+/** Sets the built-in synth preset of a synth track. */
+export interface SetSynthPresetOp extends OpBase {
+  type: "setSynthPreset";
+  trackId: string;
+  preset: string;
+}
 export interface SetPluginOp extends OpBase {
   type: "setPlugin";
   trackId: string;
@@ -98,6 +104,12 @@ export interface SetSongLengthOp extends OpBase {
   bars: number;
 }
 
+/** Sets the mixer assistant's reference levels; null returns to the defaults. */
+export interface SetMixReferenceOp extends OpBase {
+  type: "setMixReference";
+  reference: MixReference | null;
+}
+
 export interface SetKeyOp extends OpBase {
   type: "setKey";
   /** null clears the key. */
@@ -126,6 +138,7 @@ export type Op =
   | UpdateTrackOp
   | UpdateSampleOp
   | SetPluginOp
+  | SetSynthPresetOp
   | SetAutomationOp
   | SetMasterVolumeOp
   | AddClipOp
@@ -133,6 +146,7 @@ export type Op =
   | UpdateClipOp
   | SetSongLengthOp
   | SetKeyOp
+  | SetMixReferenceOp
   | SetLoopOp
   | SetMarkersOp;
 

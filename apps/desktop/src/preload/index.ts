@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { EngineReady, EngineStatus } from "@daw/engine-protocol";
-import type { OpBody, Progress, ProgressMode, Project } from "@daw/shared";
+import type { MixSnapshot, OpBody, Progress, ProgressMode, Project } from "@daw/shared";
+export type MixPreviewEvent = { active: true; label: string; ops: OpBody[]; project: Project } | { active: false; reason: string };
 import type { ProjectMeta } from "../main/project/workspace";
 import type { IndexEntry } from "@daw/sounds";
 import type { TelemetryState } from "../main/telemetry/telemetryStore";
 import type { LiveState, NetIface } from "../main/recording/liveRecording";
+import type { PluginEntry } from "../main/plugins/pluginScan";
 export type { TelemetryState, LiveState, NetIface };
 
 export interface EngineState {
@@ -75,6 +77,22 @@ export interface RecordingState {
 export type CollabState =
   | { active: false }
   | { active: true; hosting: boolean; status: string; code: string; address: string; online?: boolean; lan?: boolean; lanIp?: string; users: CollabUser[]; me: string };
+export interface PluginInfo {
+  entries: PluginEntry[];
+  folders: string[];
+  userFolders: string[];
+  /** Which formats the plugin host can load (VST2 needs a build with the VST2 SDK). */
+  vst3: boolean;
+  vst2: boolean;
+  hostAvailable: boolean;
+}
+/** What the plugin host process behind a plugin track is doing. */
+export interface PluginTrackState {
+  state: string;
+  name: string;
+  message: string;
+}
+export type { PluginEntry };
 export interface InitialPayload extends ProjectPayload {
   projects: ProjectListPayload;
   collab: CollabState;
@@ -191,6 +209,53 @@ const api = {
       return () => ipcRenderer.removeListener("project:list", l);
     },
   },
+  // ---- third-party instrument plugins (VST3; VST2 when the build supports it) ----
+  plugins: {
+    list: (): Promise<PluginInfo> => ipcRenderer.invoke("plugins:list"),
+    /** Shows the plugin's own window for this plugin track; changes made there are kept in the project. */
+    openEditor: (trackId: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("plugins:openEditor", trackId),
+    states: (): Promise<Record<string, PluginTrackState>> => ipcRenderer.invoke("plugins:states"),
+    /** Asks for a folder to search for plugins. */
+    addFolder: (): Promise<{ ok: boolean; canceled?: boolean; info?: PluginInfo }> => ipcRenderer.invoke("plugins:addFolder"),
+    /** Asks for one plugin file (anywhere on the computer); `explicitPath` is honoured only in test runs. */
+    browse: (explicitPath?: string): Promise<{ ok: boolean; canceled?: boolean; reason?: string; entry?: PluginEntry; info?: PluginInfo }> => ipcRenderer.invoke("plugins:browse", explicitPath),
+    onState: (cb: (s: PluginTrackState & { trackId: string }) => void) => {
+      const l = (_e: unknown, s: PluginTrackState & { trackId: string }) => cb(s);
+      ipcRenderer.on("plugin:state", l);
+      return () => ipcRenderer.removeListener("plugin:state", l);
+    },
+  },
+  // ---- mixer assistant: levels measured from the real audio while the song plays ----
+  mix: {
+    get: (): Promise<MixSnapshot> => ipcRenderer.invoke("mix:get"),
+    /** Renders the whole song offline and measures it (peak, RMS, an estimated true peak) without playing it. Answered by onDone. */
+    analyzeSong: (): Promise<{ ok: boolean; id?: string; reason?: string }> => ipcRenderer.invoke("mix:analyzeSong"),
+    onProgress: (cb: (p: { id: string; fraction: number }) => void) => {
+      const l = (_e: unknown, p: { id: string; fraction: number }) => cb(p);
+      ipcRenderer.on("mix:progress", l);
+      return () => ipcRenderer.removeListener("mix:progress", l);
+    },
+    onDone: (cb: (r: { id: string; ok: boolean; message?: string }) => void) => {
+      const l = (_e: unknown, r: { id: string; ok: boolean; message?: string }) => cb(r);
+      ipcRenderer.on("mix:done", l);
+      return () => ipcRenderer.removeListener("mix:done", l);
+    },
+    /** Plays a changed copy of the mix on this computer so a fix can be heard before it is applied. The project is not touched. */
+    previewStart: (ops: OpBody[], label: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("mix:previewStart", ops, label),
+    previewStop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("mix:previewStop"),
+    onPreview: (cb: (e: MixPreviewEvent) => void) => {
+      const l = (_e: unknown, e: MixPreviewEvent) => cb(e);
+      ipcRenderer.on("mix:preview", l);
+      return () => ipcRenderer.removeListener("mix:preview", l);
+    },
+    /** Starts the measurement again (also happens by itself when playback starts). */
+    reset: (): Promise<MixSnapshot> => ipcRenderer.invoke("mix:reset"),
+    onAnalysis: (cb: (s: MixSnapshot) => void) => {
+      const l = (_e: unknown, s: MixSnapshot) => cb(s);
+      ipcRenderer.on("mix:analysis", l);
+      return () => ipcRenderer.removeListener("mix:analysis", l);
+    },
+  },
   dispatch: (body: OpBody, group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:dispatch", body, group),
   dispatchBatch: (bodies: OpBody[], group?: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke("op:batch", bodies, group),
   undo: (): Promise<boolean> => ipcRenderer.invoke("history:undo"),
@@ -199,8 +264,12 @@ const api = {
   stop: () => ipcRenderer.send("transport:stop"),
   seek: (tick: number) => ipcRenderer.send("transport:seek", tick),
   setMetronome: (on: boolean) => ipcRenderer.send("transport:metronome", on),
+  /** Bends the note being played live on this track (built-in synth only) to this many semitones above its own pitch. */
+  previewBend: (trackId: string, semitones: number) => ipcRenderer.send("engine:previewBend", { trackId, semitones }),
   preview: (trackId: string, pitch: number, velocity: number, on: boolean) => ipcRenderer.send("engine:preview", { trackId, pitch, velocity, on }),
   exportWav: (explicitPath?: string, options?: { tailSeconds?: number }): Promise<{ ok: boolean; canceled?: boolean; reason?: string; id?: string }> => ipcRenderer.invoke("export:wav", explicitPath, options),
+  /** True while the camera is tracking a hand: the window keeps running even when covered by another window. */
+  keepRunning: (on: boolean) => ipcRenderer.send("app:keepRunning", on),
   showInFolder: (filePath: string) => ipcRenderer.send("shell:show", filePath),
   // ---- evaluation data: nothing is recorded until the participant agrees ----
   telemetry: {

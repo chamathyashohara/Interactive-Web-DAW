@@ -6,8 +6,11 @@ import { statusStore, useStore } from "../store";
 import { PianoKeys } from "./PianoKeys";
 import { WindowButtons } from "./WindowButtons";
 import { StepSequencer } from "./StepSequencer";
+import { GesturePanel } from "../gesture/GesturePanel";
 import { VelocityRamp } from "./VelocityRamp";
-import { clampGroupMove, copyNotes, deleteOps, duplicateOps, fixOutOfKeyOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, type NoteClip } from "./editing";
+import { clampGroupMove, copyNotes, deleteOps, duplicateOps, fixOutOfKeyOps, pasteOps, quantizeOps, sliceOps, toggleMuteOps, transposeOps, type NoteClip } from "./editing";
+import { chopOps } from "./chop";
+import { arpOps, type ArpMode } from "./arp";
 import {
   KEYS_W,
   MAX_PX_PER_BEAT,
@@ -139,6 +142,8 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   const unlock = guide ? { can: () => true, reason: () => null } : gated;
   // Drum clips open in the step sequencer; the roll is one click away.
   const [drumView, setDrumView] = useState<"steps" | "roll">("steps");
+  const [arpOpen, setArpOpen] = useState(false); // the little arpeggiator mode popover
+  const [handOpen, setHandOpen] = useState(false); // play notes with a hand in front of the webcam
   // A lesson's roll always shows the roll (its exercises draw ghost notes there).
   const showSteps = !guide && isDrums && unlock.can("seq.steps") && drumView === "steps";
   // Key help applies to melodic tracks only (drum rows are instruments, not pitches) and only once its lesson is done.
@@ -301,6 +306,10 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
   const cmdSelectAll = () => {
     if (unlock.can("tool.select")) setSelected(new Set(notes.map((n) => n.id)));
   };
+  // Chopper (Lesson 5.2), arpeggiator (Lesson 6.1) and transpose (Lessons 1.3, 5.1): act on the selection, or on every note when nothing is selected.
+  const cmdChop = (pieceTicks: number) => batch(chopOps(noteClip, targets(), pieceTicks, () => crypto.randomUUID()));
+  const cmdArp = (stepTicks: number, mode: ArpMode) => batch(arpOps(noteClip, targets(), stepTicks, mode, () => crypto.randomUUID()));
+  const cmdTranspose = (semitones: number) => batch(transposeOps(noteClip, targets(), semitones));
 
   useEffect(() => {
     if (!keysEnabled || readOnly) return;
@@ -314,9 +323,19 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
         else if (k === "c") (e.preventDefault(), cmdCopy());
         else if (k === "v") (e.preventDefault(), cmdPaste());
         else if (k === "d") (e.preventDefault(), cmdDuplicate());
+        else if (k === "arrowup") (e.preventDefault(), cmdTranspose(12));
+        else if (k === "arrowdown") (e.preventDefault(), cmdTranspose(-12));
         return;
       }
-      if (e.altKey) return;
+      if (e.altKey) {
+        if (k === "u") (e.preventDefault(), cmdChop(gridTicks)); // the chopper, at the toolbar grid size
+        return;
+      }
+      if (e.shiftKey && (k === "arrowup" || k === "arrowdown")) {
+        e.preventDefault();
+        cmdTranspose(k === "arrowup" ? 1 : -1);
+        return;
+      }
       if (k === "d") onTool("draw");
       else if (k === "p") onTool("paint");
       else if (k === "s") onTool("select");
@@ -605,6 +624,20 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
         <button className={btn} disabled={!unlock.can("edit.clipboard")} onClick={cmdPaste} title={unlock.reason("edit.clipboard") ?? "Paste at the playhead (Ctrl+V)"}>Paste{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
         <button className={btn} disabled={!liveSelected.size || !unlock.can("edit.clipboard")} onClick={cmdDuplicate} title={unlock.reason("edit.clipboard") ?? "Duplicate after the selection (Ctrl+D)"}>Duplicate{!unlock.can("edit.clipboard") && <LockIcon className="ml-1" />}</button>
         <button className={btn} disabled={!notes.length || !unlock.can("edit.quantize")} onClick={cmdQuantize} title={unlock.reason("edit.quantize") ?? "Quantize selected notes (or all) to the grid (Q)"}>Quantize{!unlock.can("edit.quantize") && <LockIcon className="ml-1" />}</button>
+        <button className={btn} disabled={!notes.length} onClick={() => cmdChop(gridTicks)} title="Chopper: slice held notes into pieces at the grid size (Alt+U)" data-testid="pr-chop">Chop</button>
+        {!isDrums && track.instrument !== "sample" && !guide && (
+          <button className={`${btn} ${handOpen ? "hw-teal" : ""}`} aria-pressed={handOpen} onClick={() => (window.daw.telemetry.event("ui.panel", { panel: "hand", open: !handOpen }), setHandOpen((o) => !o))} title="Play notes with your hand in front of the webcam, with help from the key that fades as you improve" data-testid="pr-hand">Hand</button>
+        )}
+        <span className="relative">
+          <button className={`${btn} ${arpOpen ? "hw-teal" : ""}`} aria-pressed={arpOpen} disabled={!notes.length} onClick={() => setArpOpen((o) => !o)} title="Arpeggiate chords into a sequence (at the grid size)" data-testid="pr-arp">Arp ▾</button>
+          {arpOpen && (
+            <div className="hw-popover absolute top-full left-0 z-[60] mt-1 flex gap-1 p-1.5" data-testid="pr-arp-menu" onMouseLeave={() => setArpOpen(false)}>
+              {([["Up", "up"], ["Down", "down"], ["Up-down", "updown"]] as const).map(([label, mode]) => (
+                <button key={mode} className={`${btn}`} onClick={() => (cmdArp(gridTicks, mode), setArpOpen(false))} data-testid={`pr-arp-${mode}`}>{label}</button>
+              ))}
+            </div>
+          )}
+        </span>
         <button className={btn} disabled={!liveSelected.size} onClick={cmdDelete} title="Delete selected (Delete)">Delete</button>
             <VelocityRamp clip={noteClip} notes={targets()} scope={selectedNotes.length ? "the selected notes" : "all the notes in this clip"} disabled={!unlock.can("velocity.ramp")} lockTitle={unlock.reason("velocity.ramp")} className={btn} />
           </>
@@ -790,6 +823,19 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
                   </div>
                 );
               })}
+              {/* pitch bend (a glide recorded with the note): a line at the real pitch the note passes through, up = higher */}
+              {notes.map((raw) => {
+                if (!raw.bend || raw.bend.length < 2) return null;
+                const n = view(raw);
+                const cy = pitchToY(n.pitch, rowH) + rowH / 2;
+                const d = (n.bend ?? raw.bend).map((pt, i) => `${i ? "L" : "M"}${tickToPx(pt.tick, pxPerBeat).toFixed(1)} ${(-pt.semis * rowH).toFixed(1)}`).join(" ");
+                return (
+                  <svg key={`bend-${n.id}`} className="pointer-events-none absolute" style={{ left: tickToPx(n.startTick, pxPerBeat), top: cy, overflow: "visible" }} width={1} height={1} data-testid="bend-curve" data-bend-note={n.id}>
+                    <path d={d} fill="none" stroke="#0b0f14" strokeWidth={3.5} strokeLinejoin="round" strokeLinecap="round" opacity={0.55} />
+                    <path d={d} fill="none" stroke="#f8fafc" strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
+                  </svg>
+                );
+              })}
             </div>
           </div>
 
@@ -825,6 +871,7 @@ export function PianoRoll({ track, clip, keysEnabled, tool: requestedTool, snap,
         </div>
       </div>
       )}
+      {handOpen && <GesturePanel track={track} clip={clip} musicKey={musicKey} gridTicks={gridTicks} onClose={() => setHandOpen(false)} />}
     </div>
   );
 }

@@ -14,7 +14,7 @@ int64_t songFrames(const PlaybackModel& model, double sampleRate)
 }
 
 int64_t renderSong(const PlaybackModel& model, double sampleRate, double tailSeconds, const BlockSink& sink,
-                   const std::function<void(double)>& progress, const std::atomic<bool>* cancel)
+                   const std::function<void(double)>& progress, const std::atomic<bool>* cancel, const BlockProbe& probe)
 {
     const int64_t song = songFrames(model, sampleRate);
     if (song <= 0)
@@ -29,8 +29,34 @@ int64_t renderSong(const PlaybackModel& model, double sampleRate, double tailSec
     engine->sequencer.setBpm(model.tempo);
     engine->sequencer.setPlaying(true);
 
-    std::vector<float> left(kBlock), right(kBlock);
+    // Plugin tracks: start a private host per plugin in BLOCKING mode so each block waits for the plugin (exact timing, no latency).
+    // A plugin that fails to start is left silent in the file; the live hosts are never used for an export.
+    engine->setUseModelPlugins(false);
+    std::vector<std::unique_ptr<PluginClient>> exportHosts;
+    const std::string hostExe = findPluginHostExe();
+    for (const auto& tr : model.tracks)
+    {
+        if (tr.instrument != kPlugin || tr.pluginPath.empty() || hostExe.empty()) continue;
+        auto client = std::make_unique<PluginClient>(hostExe, tr.pluginPath, writePluginStateFile(tr.pluginState), sampleRate, true);
+        if (!client->launch()) continue;
+        const auto t0 = juce::Time::getMillisecondCounter();
+        while (client->state() == PluginState::Starting && juce::Time::getMillisecondCounter() - t0 < 60000)
+        {
+            if (cancel != nullptr && cancel->load()) { engine->sequencer.setModel(nullptr); return -1; }
+            client->poll();
+            juce::Thread::sleep(20);
+        }
+        if (client->state() == PluginState::Ready) engine->setPluginOverride(tr.slot, client.get());
+        exportHosts.push_back(std::move(client));
+    }
+
+    std::vector<float> left(kBlock), right(kBlock), preL(kBlock), preR(kBlock);
     float* out[2] = { left.data(), right.data() };
+    if (probe)
+    {
+        engine->preClipTapL = preL.data();
+        engine->preClipTapR = preR.data();
+    }
 
     int64_t done = 0;
     bool stopped = false;
@@ -51,12 +77,14 @@ int64_t renderSong(const PlaybackModel& model, double sampleRate, double tailSec
             n = std::min<int64_t>(n, song - done); // never straddle the song end
         const int block = static_cast<int>(n);
         engine->process(out, 2, block);
+        if (probe) probe(*engine, preL.data(), preR.data(), block);
         sink(left.data(), right.data(), block);
         done += block;
         if (progress && (done % (kBlock * 40) < kBlock || done == total))
             progress(static_cast<double>(done) / static_cast<double>(total));
     }
     engine->sequencer.setModel(nullptr);
+    for (auto& h : exportHosts) h->shutdown();
     return done;
 }
 
@@ -112,4 +140,84 @@ ExportResult exportWav(const PlaybackModel& model, const juce::File& file, doubl
     result.ok = true;
     result.frames = frames;
     return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------- analysis
+
+TruePeakMeter::TruePeakMeter()
+{
+    // The newest sample is hist[kTaps - 1]; the value between hist[5] and hist[6] at fraction p is a Hann-windowed sinc over all taps.
+    const double pi = 3.14159265358979323846;
+    for (int phase = 0; phase < 3; ++phase)
+    {
+        const double p = 0.25 * (phase + 1);
+        const double centre = 5.0 + p;
+        double sum = 0.0;
+        double raw[kTaps] = {};
+        for (int k = 0; k < kTaps; ++k)
+        {
+            const double d = centre - k;
+            const double sinc = std::fabs(d) < 1e-9 ? 1.0 : std::sin(pi * d) / (pi * d);
+            const double w = std::fabs(d) < 6.0 ? 0.5 * (1.0 + std::cos(pi * d / 6.0)) : 0.0;
+            raw[k] = sinc * w;
+            sum += raw[k];
+        }
+        for (int k = 0; k < kTaps; ++k) coef[phase][k] = static_cast<float>(raw[k] / sum); // exact at DC
+    }
+}
+
+void TruePeakMeter::process(const float* x, int n)
+{
+    for (int i = 0; i < n; ++i)
+    {
+        for (int k = 0; k < kTaps - 1; ++k) hist[k] = hist[k + 1];
+        hist[kTaps - 1] = x[i];
+        maxPeak = std::max(maxPeak, std::fabs(x[i]));
+        if (++filled < kTaps) continue;
+        for (int phase = 0; phase < 3; ++phase)
+        {
+            float v = 0.0f;
+            for (int k = 0; k < kTaps; ++k) v += coef[phase][k] * hist[k];
+            maxPeak = std::max(maxPeak, std::fabs(v));
+        }
+    }
+}
+
+MixAnalysisResult analyzeMixOffline(const PlaybackModel& model, double sampleRate, double tailSeconds, const std::function<void(double)>& progress, const std::atomic<bool>* cancel)
+{
+    MixAnalysisResult r;
+    r.sampleRate = sampleRate;
+    r.bus.assign(kMaxSlots, 0.0f);
+    r.sumSq.assign(kMaxSlots, 0.0);
+    r.slotFrames.assign(kMaxSlots, 0);
+    if (songFrames(model, sampleRate) <= 0)
+    {
+        r.error = "nothing to analyse (empty song)";
+        return r;
+    }
+    TruePeakMeter tpL, tpR;
+    const auto probe = [&](AudioEngine& e, const float* pl, const float* pr, int n) {
+        tpL.process(pl, n);
+        tpR.process(pr, n);
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            r.bus[static_cast<size_t>(s)] = std::max(r.bus[static_cast<size_t>(s)], e.slotBusPeak[s].exchange(0.0f));
+            r.sumSq[static_cast<size_t>(s)] += e.slotSumSq[s].exchange(0.0);
+            r.slotFrames[static_cast<size_t>(s)] += e.slotFrames[s].exchange(0);
+        }
+        r.prePeak = std::max(r.prePeak, e.masterPrePeak.exchange(0.0f));
+        r.outPeak = std::max({ r.outPeak, e.masterPeakL.exchange(0.0f), e.masterPeakR.exchange(0.0f) });
+        r.softClips += e.softClipSamples.exchange(0);
+        r.overs += e.overSamples.exchange(0);
+    };
+    const int64_t frames = renderSong(model, sampleRate, tailSeconds, [](const float*, const float*, int) {}, progress, cancel, probe);
+    if (frames < 0)
+    {
+        r.error = "cancelled";
+        return r;
+    }
+    r.truePeak = std::max(tpL.peak(), tpR.peak());
+    r.frames = frames;
+    r.ok = true;
+    return r;
 }

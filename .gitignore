@@ -19,5 +19,9 @@ starter-lib/
 *.zip
 *.rar
 engine/build-vst3/
+engine/build-gesture/
 release/
 apps/desktop/build-resources/
+
+# hand-tracking model and WebAssembly files: fetched by `npm run gesture:assets`, not committed
+apps/desktop/resources/mediapipe/

@@ -1,12 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { EngineCommand, EngineEvent, EngineReady, EngineStatus, ExportEvent, SampleInfo } from "@daw/engine-protocol";
+import type { EngineCommand, EngineEvent, EngineReady, EngineStatus, ExportEvent, MixAnalysisEvent, MixProgressEvent, PluginSavedEvent, PluginStateEvent, SampleInfo } from "@daw/engine-protocol";
 
 export interface EngineBridgeEvents {
   ready: (info: EngineReady) => void;
   status: (status: EngineStatus) => void;
   exportEvent: (event: ExportEvent) => void;
   sampleInfo: (info: SampleInfo) => void;
+  pluginState: (e: PluginStateEvent) => void;
+  pluginSaved: (e: PluginSavedEvent) => void;
+  mixProgress: (e: MixProgressEvent) => void;
+  mixAnalysis: (e: MixAnalysisEvent) => void;
   down: () => void;
   error: (message: string) => void;
 }
@@ -110,6 +114,10 @@ export class EngineBridge extends EventEmitter {
       else if (msg.t === "status") this.emit("status", msg);
       else if (msg.t === "exportProgress" || msg.t === "exportDone" || msg.t === "exportError") this.emit("exportEvent", msg);
       else if (msg.t === "sampleInfo") this.emit("sampleInfo", msg);
+      else if (msg.t === "pluginState") this.emit("pluginState", msg);
+      else if (msg.t === "pluginSaved") this.emit("pluginSaved", msg);
+      else if (msg.t === "mixProgress") this.emit("mixProgress", msg);
+      else if (msg.t === "mixAnalysis") this.emit("mixAnalysis", msg);
       else if (msg.t === "error") this.emit("error", msg.message);
     }
   }

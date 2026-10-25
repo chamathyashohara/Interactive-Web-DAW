@@ -1,4 +1,4 @@
-import { isInKey, nearestInKey, type Note, type OpBody, type ProjectKey } from "@daw/shared";
+import { isInKey, nearestInKey, sliceBend, type Note, type OpBody, type ProjectKey } from "@daw/shared";
 
 /** Pure builders for multi-note edits. Each returns ops that the main process applies as ONE undo step. */
 
@@ -28,6 +28,7 @@ export function pasteOps(clip: NoteClip, copied: Note[], atTick: number, newId: 
     if (duration < 1) continue;
     const note: Note = { id: newId(), pitch: n.pitch, startTick: start, durationTicks: duration, velocity: n.velocity };
     if (n.muted) note.muted = true;
+    if (n.bend) note.bend = n.bend.map((p) => ({ ...p })); // a pasted note glides like the one it was copied from
     ops.push({ type: "addNote", trackId: clip.trackId, clipId: clip.clipId, note });
   }
   return ops;
@@ -57,6 +58,8 @@ export function sliceOps(clip: NoteClip, note: Note, atTick: number, newId: NewI
   if (atTick <= note.startTick || atTick >= note.startTick + note.durationTicks) return null;
   const right: Note = { id: newId(), pitch: note.pitch, startTick: atTick, durationTicks: note.startTick + note.durationTicks - atTick, velocity: note.velocity };
   if (note.muted) right.muted = true;
+  const rightBend = sliceBend(note.bend, atTick - note.startTick, note.durationTicks); // the right part carries its share of the glide; the left keeps the original curve
+  if (rightBend) right.bend = rightBend;
   return [
     { type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: note.id, changes: { durationTicks: atTick - note.startTick } },
     { type: "addNote", trackId: clip.trackId, clipId: clip.clipId, note: right },
@@ -101,4 +104,17 @@ export function fixOutOfKeyOps(clip: NoteClip, notes: Note[], key: ProjectKey): 
     ops.push({ type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: n.id, changes: { pitch: nearestInKey(n.pitch, key) } });
   }
   return ops;
+}
+
+/**
+ * Transpose: shift every given note by `semitones` (negative = down). Moves as a group so chords stay intact: the shift
+ * is clamped so no note leaves 0-127, and nothing moves if the group cannot shift that way at all. One undo step.
+ */
+export function transposeOps(clip: NoteClip, notes: Note[], semitones: number): OpBody[] {
+  if (notes.length === 0 || semitones === 0) return [];
+  const minPitch = Math.min(...notes.map((n) => n.pitch));
+  const maxPitch = Math.max(...notes.map((n) => n.pitch));
+  const d = Math.min(127 - maxPitch, Math.max(-minPitch, semitones));
+  if (d === 0) return [];
+  return notes.map((n) => ({ type: "updateNote", trackId: clip.trackId, clipId: clip.clipId, noteId: n.id, changes: { pitch: n.pitch + d } }));
 }

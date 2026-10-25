@@ -2,6 +2,7 @@
 #include "Drums.h"
 #include "Samples.h"
 #include "Sequencer.h"
+#include "PluginClient.h"
 #include "Synth.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <algorithm>
@@ -64,6 +65,9 @@ public:
         int pitch = 60;
         int velocity = 90;
         bool on = false;
+        /** A pitch bend for the note being played live on this slot (semitones above its pitch), not a note on or off. */
+        bool bend = false;
+        float semis = 0.0f;
     };
 
     Sequencer sequencer;
@@ -116,6 +120,10 @@ public:
         sampR.assign(n, 0.0f);
         bufL.assign(n, 0.0f);
         bufR.assign(n, 0.0f);
+        plugStride = n;
+        plugL.assign(n * kMaxSlots, 0.0f);
+        plugR.assign(n * kMaxSlots, 0.0f);
+        plugMidi.assign(static_cast<size_t>(kMaxSlots) * plugipc::kMaxMidi, plugipc::MidiEv{});
     }
 
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* out, int numOut, int numSamples,
@@ -144,6 +152,7 @@ public:
         }
 
         const PlaybackModel* m = sequencer.currentModel();
+        for (int s = 0; s < kMaxSlots; ++s) plugMidiCount[s] = 0;
 
         {
             int s1, n1, s2, n2;
@@ -155,7 +164,7 @@ public:
         }
 
         // Which sample each slot plays comes from the current model (the audio thread reads it, never writes it).
-        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; slotVolumeAuto[s] = nullptr; slotFilterAuto[s] = nullptr; }
+        for (int s = 0; s < kMaxSlots; ++s) { slotSample[s] = nullptr; slotGate[s] = false; slotVolumeAuto[s] = nullptr; slotFilterAuto[s] = nullptr; slotPlugin[s] = pluginOverride[s]; }
         const bool playingNow = sequencer.isPlaying();
         blockTick = sequencer.getTick();
         segTps = playingNow ? sequencer.getBpm() * (m != nullptr ? m->ppq : 960) / (60.0 * sampleRate) : 0.0;
@@ -174,6 +183,8 @@ public:
                 slotGate[s] = tr.gate;
                 slotVolumeAuto[s] = tr.volumeAuto.empty() ? nullptr : &tr.volumeAuto;
                 slotFilterAuto[s] = tr.filterAuto.empty() ? nullptr : &tr.filterAuto;
+                if (tr.instrument == kSynth) slots[s].synth.setParams(tr.synth); // the track's synth preset
+                if (tr.instrument == kPlugin && slotPlugin[s] == nullptr && useModelPlugins) slotPlugin[s] = tr.plugin;
             }
         const int cut = cutSerial.load(std::memory_order_acquire);
         if (cut != seenCut)
@@ -184,6 +195,7 @@ public:
 
         eventCount = 0;
         sequencer.process(numSamples, *this);
+        runPlugins(numSamples);
 
         float targetGain[kMaxSlots] = {};
         float targetPan[kMaxSlots] = {};
@@ -203,7 +215,7 @@ public:
         // starts at the right level and pan instead of ramping in from zero.
         for (int s = 0; s < kMaxSlots; ++s)
         {
-            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive())
+            if (!slots[s].synth.anyActive() && !slots[s].drums.anyActive() && !slots[s].samp.anyActive() && !plugActive[s])
             {
                 slots[s].gain = targetGain[s] * volumeMul(s, blockTick);
                 slots[s].pan = targetPan[s];
@@ -218,6 +230,12 @@ public:
         juce::FloatVectorOperations::clear(bufL.data(), numSamples);
         juce::FloatVectorOperations::clear(bufR.data(), numSamples);
         float localPeak[kMaxSlots] = {};
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            busPeakLocal[s] = 0.0f;
+            busSumSqLocal[s] = 0.0;
+            busFramesLocal[s] = 0;
+        }
 
         int cursor = 0;
         for (int i = 0; i < eventCount; ++i)
@@ -234,7 +252,9 @@ public:
             {
                 if (e.instrument == kDrums) slots[e.slot].drums.trigger(e.pitch, e.velocity);
                 else if (e.instrument == kSample) slots[e.slot].samp.trigger(slotSample[e.slot], e.pitch, e.velocity, slotGate[e.slot], &e.note);
-                else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
+                else if (e.instrument == kPlugin) { /* its MIDI was sent to the plugin host before rendering */ }
+                else if (e.note.bendN > 0 && segTps > 0.0) slots[e.slot].synth.noteOnBend(e.pitch, e.velocity, e.note.bendTick, e.note.bendSemis, e.note.bendN, 1.0 / segTps);
+            else slots[e.slot].synth.noteOn(e.pitch, e.velocity);
             }
             else
             {
@@ -250,13 +270,22 @@ public:
 
         preview.renderAdd(bufL.data(), bufR.data(), numSamples);
 
-        // Master: smoothed gain, soft clip, peak meters.
-        float pl = 0.0f, pr = 0.0f;
+        // Master: smoothed gain, soft clip, peak meters. The level BEFORE the soft clip is measured too: the soft clip keeps the
+        // output under 1.0, so the output meter alone can never show that the mix is being squashed.
+        float pl = 0.0f, pr = 0.0f, prePeak = 0.0f;
+        uint64_t softClipped = 0, overs = 0;
         for (int i = 0; i < numSamples; ++i)
         {
             masterGain += (masterTarget - masterGain) * sampleCoef;
-            const float l = softClip(bufL[static_cast<size_t>(i)] * masterGain);
-            const float r = softClip(bufR[static_cast<size_t>(i)] * masterGain);
+            const float xl = bufL[static_cast<size_t>(i)] * masterGain;
+            const float xr = bufR[static_cast<size_t>(i)] * masterGain;
+            if (preClipTapL != nullptr) { preClipTapL[i] = xl; preClipTapR[i] = xr; } // offline analysis only (the true-peak meter reads these)
+            const float ax = std::max(std::fabs(xl), std::fabs(xr));
+            prePeak = std::max(prePeak, ax);
+            if (ax > kSoftClipKnee) ++softClipped;
+            if (ax >= 1.0f) ++overs;
+            const float l = softClip(xl);
+            const float r = softClip(xr);
             bufL[static_cast<size_t>(i)] = l;
             bufR[static_cast<size_t>(i)] = r;
             pl = std::max(pl, std::fabs(l));
@@ -274,8 +303,19 @@ public:
 
         raise(masterPeakL, pl);
         raise(masterPeakR, pr);
+        raise(masterPrePeak, prePeak);
+        if (softClipped > 0) softClipSamples.fetch_add(softClipped, std::memory_order_relaxed);
+        if (overs > 0) overSamples.fetch_add(overs, std::memory_order_relaxed);
         for (int s = 0; s < kMaxSlots; ++s)
+        {
             raise(slotPeak[s], localPeak[s]);
+            raise(slotBusPeak[s], busPeakLocal[s]);
+            if (busFramesLocal[s] > 0)
+            {
+                addDouble(slotSumSq[s], busSumSqLocal[s]);
+                slotFrames[s].fetch_add(static_cast<uint64_t>(busFramesLocal[s]), std::memory_order_relaxed);
+            }
+        }
     }
 
     std::atomic<uint64_t> callbacks{ 0 };
@@ -284,11 +324,30 @@ public:
     std::atomic<float> masterPeakL{ 0.0f };
     std::atomic<float> masterPeakR{ 0.0f };
     std::atomic<float> slotPeak[kMaxSlots] = {};
+    /** Mix analysis (read and reset by the status thread). What a channel puts on the master bus: after its fader and pan, before the master. */
+    std::atomic<float> slotBusPeak[kMaxSlots] = {};
+    std::atomic<double> slotSumSq[kMaxSlots] = {}; // sum of squares over both channels of the bus signal (RMS = sqrt(sum / (2 * frames)))
+    std::atomic<uint64_t> slotFrames[kMaxSlots] = {}; // frames in which the channel was audible (idle, muted and silent stretches add nothing)
+    std::atomic<float> masterPrePeak{ 0.0f };         // master peak before the soft clip (linear, can exceed 1.0)
+    std::atomic<uint64_t> softClipSamples{ 0 };       // samples above the soft-clip knee (the clipper is shaping them)
+    std::atomic<uint64_t> overSamples{ 0 };           // samples at or above full scale before the clip
+    /** Offline analysis only: when set, the master signal before the soft clip is copied here every block (room for the block size). */
+    float* preClipTapL = nullptr;
+    float* preClipTapR = nullptr;
+    static constexpr float kSoftClipKnee = 0.8f;
+    static constexpr float kAudibleBus = 1.0e-4f; // -80 dBFS: below this a channel counts as silent in the mix analysis
     double sampleRate = 48000.0;
     int bufferSize = 0;
 
     /** Metronome click on the quarter notes while playing (off by default; the offline export never has it). */
     void setMetronome(bool on) { sequencer.setClick(on); }
+    /** Offline export: never use the model's live (non-blocking) plugin hosts. */
+    void setUseModelPlugins(bool on) { useModelPlugins = on; }
+    /** Offline export: use these plugin hosts (blocking mode) for these slots instead of the model's live ones. */
+    void setPluginOverride(int slot, PluginClient* client)
+    {
+        if (slot >= 0 && slot < kMaxSlots) pluginOverride[slot] = client;
+    }
     /** Live playback wraps inside the project's loop region. */
     void setLoopRegionEnabled(bool on)
     {
@@ -323,6 +382,43 @@ private:
         }
     };
     bool useRegionNow = false;
+
+    // ---- plugin tracks (the plugin itself runs in a separate host process; see PluginClient.h) ----
+    PluginClient* slotPlugin[kMaxSlots] = {};
+    PluginClient* pluginOverride[kMaxSlots] = {};
+    bool useModelPlugins = true;
+    bool plugActive[kMaxSlots] = {};
+    int plugMidiCount[kMaxSlots] = {};
+    std::vector<plugipc::MidiEv> plugMidi; // kMaxSlots x kMaxMidi, on the heap (the engine object lives on the stack)
+    std::vector<float> plugL, plugR;       // kMaxSlots x plugStride: the audio the hosts returned for this block
+    size_t plugStride = 0;
+
+    void addPluginMidi(int slot, int offset, uint8_t status, int d1, int d2)
+    {
+        if (slot < 0 || slot >= kMaxSlots || plugMidiCount[slot] >= plugipc::kMaxMidi) return;
+        plugMidi[static_cast<size_t>(slot) * plugipc::kMaxMidi + static_cast<size_t>(plugMidiCount[slot]++)] =
+            { offset, status, static_cast<uint8_t>(std::clamp(d1, 0, 127)), static_cast<uint8_t>(std::clamp(d2, 0, 127)), 0 };
+    }
+    /** Builds each plugin track's MIDI for this block from the sequencer's events, hands it to the host and collects the audio. */
+    void runPlugins(int numSamples)
+    {
+        for (int i = 0; i < eventCount; ++i)
+        {
+            const Event& e = events[i];
+            if (slotPlugin[e.slot] == nullptr) continue;
+            if (e.type == 1 && e.instrument == kPlugin) addPluginMidi(e.slot, e.offset, 0x90, e.pitch, e.velocity);
+            else if (e.type == 0) addPluginMidi(e.slot, e.offset, 0x80, e.pitch, 0);
+        }
+        for (int s = 0; s < kMaxSlots; ++s)
+        {
+            plugActive[s] = false;
+            PluginClient* c = slotPlugin[s];
+            if (c == nullptr) continue;
+            c->process(&plugMidi[static_cast<size_t>(s) * plugipc::kMaxMidi], plugMidiCount[s], numSamples,
+                       plugL.data() + static_cast<size_t>(s) * plugStride, plugR.data() + static_cast<size_t>(s) * plugStride);
+            plugActive[s] = c->state() == PluginState::Ready;
+        }
+    }
     struct Event
     {
         int offset;
@@ -362,6 +458,9 @@ private:
     int seenCut = 0;
     float masterGain = 0.64f;
     bool masterInitialised = false;
+    float busPeakLocal[kMaxSlots] = {};
+    double busSumSqLocal[kMaxSlots] = {};
+    int64_t busFramesLocal[kMaxSlots] = {};
     float invTau = 0.002f, sampleCoef = 0.002f;
     juce::AbstractFifo fifo{ 64 };
     PreviewMsg previewBuf[64];
@@ -371,11 +470,16 @@ private:
     {
         if (v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
     }
+    static void addDouble(std::atomic<double>& a, double v)
+    {
+        double cur = a.load(std::memory_order_relaxed);
+        while (!a.compare_exchange_weak(cur, cur + v, std::memory_order_relaxed)) {} // lock-free; the status thread only swaps it for zero
+    }
     static float softClip(float x)
     {
         const float a = std::fabs(x);
-        if (a <= 0.8f) return x;
-        const float y = 0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f);
+        if (a <= kSoftClipKnee) return x;
+        const float y = kSoftClipKnee + 0.2f * std::tanh((a - kSoftClipKnee) / 0.2f);
         return x < 0.0f ? -y : y;
     }
 
@@ -420,6 +524,11 @@ private:
     void applyPreview(const PreviewMsg& pm, const PlaybackModel* m)
     {
         const int slot = std::clamp(pm.slot, 0, kMaxSlots - 1);
+        if (pm.bend)
+        {
+            slots[slot].synth.setPreviewBend(pm.semis); // only the built-in synth bends (a plugin's bend range is its own)
+            return;
+        }
         int instrument = kSynth;
         if (m != nullptr)
             for (const auto& tr : m->tracks)
@@ -427,6 +536,7 @@ private:
         if (pm.on)
         {
             if (instrument == kDrums) slots[slot].drums.trigger(pm.pitch, pm.velocity);
+            else if (instrument == kPlugin) addPluginMidi(slot, 0, 0x90, pm.pitch, pm.velocity);
             else if (instrument == kSample)
             {
                 const SampleData* d = nullptr;
@@ -436,12 +546,13 @@ private:
                         if (tr.slot == slot) { d = tr.sample.get(); gate = tr.gate; break; }
                 slots[slot].samp.trigger(d, pm.pitch, pm.velocity, gate);
             }
-            else slots[slot].synth.noteOn(pm.pitch, pm.velocity);
+            else slots[slot].synth.noteOn(pm.pitch, pm.velocity, true);
         }
         else
         {
             slots[slot].synth.noteOff(pm.pitch);
             slots[slot].samp.release(pm.pitch);
+            addPluginMidi(slot, 0, 0x80, pm.pitch, 0);
         }
     }
 
@@ -452,7 +563,7 @@ private:
         for (int s = 0; s < kMaxSlots; ++s)
         {
             SlotState& st = slots[s];
-            if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive())
+            if (!st.synth.anyActive() && !st.drums.anyActive() && !st.samp.anyActive() && !plugActive[s])
             {
                 st.gain = targetGain[s] * volumeMul(s, segTick); // idle: no ramp needed
                 st.filter.reset();
@@ -475,10 +586,13 @@ private:
             const float gl = std::cos(angle) * 1.41421356f;
             const float gr = std::sin(angle) * 1.41421356f;
             float pk = localPeak[s];
+            float busPk = busPeakLocal[s];
+            float segPk = 0.0f; // this segment only: decides whether the channel was audible (a muted channel keeps its voices running at zero gain)
+            float busSq = 0.0f;
             float g = st.gain;
             float* L = bufL.data() + start;
             float* R = bufR.data() + start;
-            const bool hasSamples = st.samp.anyActive();
+            const bool hasSamples = st.samp.anyActive() || plugActive[s];
             float* sl = sampL.data();
             float* sr = sampR.data();
             if (hasSamples)
@@ -486,6 +600,12 @@ private:
                 juce::FloatVectorOperations::clear(sl, len);
                 juce::FloatVectorOperations::clear(sr, len);
                 st.samp.render(sl, sr, len);
+                if (plugActive[s])
+                {
+                    const float* pl = plugL.data() + static_cast<size_t>(s) * plugStride + static_cast<size_t>(start);
+                    const float* pr = plugR.data() + static_cast<size_t>(s) * plugStride + static_cast<size_t>(start);
+                    for (int i = 0; i < len; ++i) { sl[i] += pl[i]; sr[i] += pr[i]; }
+                }
                 if (filtering)
                 {
                     st.filter.run(1, sl, len);
@@ -512,9 +632,19 @@ private:
                 L[i] += lo;
                 R[i] += ro;
                 pk = std::max(pk, spk);
+                const float bp = std::max(std::fabs(lo), std::fabs(ro));
+                segPk = std::max(segPk, bp);
+                busSq += lo * lo + ro * ro;
             }
             st.gain = g;
             localPeak[s] = pk;
+            if (segPk > kAudibleBus) // silent stretches (muted, faded out, between notes) are not part of the channel's average level
+            {
+                busPk = std::max(busPk, segPk);
+                busPeakLocal[s] = busPk;
+                busSumSqLocal[s] += static_cast<double>(busSq);
+                busFramesLocal[s] += len;
+            }
         }
         click.renderAdd(bufL.data() + start, bufR.data() + start, len);
     }

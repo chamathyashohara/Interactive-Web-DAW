@@ -36,6 +36,7 @@ export function buildSeedProject(seed: unknown, projectId: string): SeedResult {
   if (s.tempo !== undefined) bodies.push({ type: 'setTempo', bpm: s.tempo });
   if (s.masterVolume !== undefined) bodies.push({ type: 'setMasterVolume', volume: s.masterVolume });
   if (s.key !== undefined) bodies.push({ type: 'setKey', key: s.key });
+  if (s.mixReference !== undefined) bodies.push({ type: 'setMixReference', reference: s.mixReference });
   if (s.loop) bodies.push({ type: 'setLoop', loop: s.loop });
   if (Array.isArray(s.markers) && s.markers.length) bodies.push({ type: 'setMarkers', markers: s.markers });
 

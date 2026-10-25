@@ -51,6 +51,14 @@ export interface SampleRef {
 
 export const TRACK_COLORS = ["#22d3ee", "#f472b6", "#a3e635", "#fb923c", "#a78bfa", "#facc15", "#34d399", "#f87171"];
 
+/** One point of a note's pitch bend: `tick` after the note starts, `semis` semitones above (or below, negative) the note's own pitch. */
+export interface BendPoint {
+  tick: number;
+  semis: number;
+}
+export const MAX_BEND_POINTS = 48;
+export const MAX_BEND_SEMITONES = 24;
+
 export interface Note {
   id: string;
   pitch: number;
@@ -60,6 +68,11 @@ export interface Note {
   velocity: number;
   /** Muted notes stay in the project but are not played. Absent means not muted. */
   muted?: boolean;
+  /**
+   * The note's pitch glides along this curve (straight lines between the points; before the first point it stays at the first value,
+   * after the last it stays at the last). Absent = the note stays on its pitch. Only synth tracks play it for now.
+   */
+  bend?: BendPoint[];
 }
 
 /**
@@ -138,6 +151,8 @@ export interface Track {
   sample?: SampleRef;
   /** Only for instrument "plugin": the VST3 instrument this track plays (absent until one is chosen). */
   plugin?: PluginRef;
+  /** Only for instrument "synth": which built-in preset it plays (absent = the default "classic" sound). */
+  synthPreset?: string;
   /** Curves that move a control over the song. A parameter without a curve is not automated. */
   automation?: Partial<Record<AutoParam, AutoPoint[]>>;
   /** Clips on one track never overlap. */
@@ -177,6 +192,8 @@ export interface Project {
   markers?: Marker[];
   /** 0..100 */
   masterVolume: number;
+  /** The levels the mixer assistant compares the mix with. Absent = the defaults. */
+  mixReference?: MixReference;
   tracks: Record<string, Track>;
   trackOrder: string[];
   /** Bounded list of recently applied opIds, used to make re-delivery idempotent. */
@@ -199,6 +216,23 @@ export function createTrack(id: string, name: string, instrument: InstrumentKind
     clips: { [clipId]: { id: clipId, name: "Clip 1", startTick: 0, lengthTicks: DEFAULT_CLIP_BARS * TICKS_PER_BAR, notes: {} } },
   };
 }
+
+/**
+ * Reference levels for the mixer assistant. They are the user's own mixing targets, not rules: a quiet ballad and a loud dance track
+ * want different peaks. All values are dBFS sample peaks.
+ */
+export interface MixReference {
+  /** The master peak the user wants to stay under (default -6: room to work with, a common mixing habit and not a mastering requirement). */
+  masterPeakDb: number;
+  /** The peak a channel is compared with unless it has its own target below (default -8). */
+  channelPeakDb: number;
+  /** Above this master peak a warning is shown (default -1.9, about where this DAW's soft clip starts to shape the sound). */
+  safetyDb: number;
+  /** Own peak target for particular channels, by track id. */
+  channels?: Record<string, number>;
+}
+export const DEFAULT_MIX_REFERENCE: MixReference = { masterPeakDb: -6, channelPeakDb: -8, safetyDb: -1.9 };
+export const MIX_REFERENCE_LIMITS = { masterPeakDb: [-30, 0], channelPeakDb: [-40, 0], safetyDb: [-12, 0] } as const;
 
 export function createProject(id: string, name = "Untitled"): Project {
   const trackId = "track-1";
