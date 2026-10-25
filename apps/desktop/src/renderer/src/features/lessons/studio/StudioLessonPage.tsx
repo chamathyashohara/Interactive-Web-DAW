@@ -8,6 +8,7 @@ import { ArrowLeft, BookIcon, BulbIcon, CheckIcon, HelpIcon, NotesIcon, SpeakerI
 import { NotesTab } from "../LessonPage";
 import { ResultCard } from "../ResultCard";
 import { speak, stopSpeaking } from "../speech";
+import { studioSpeech } from "../voiceLines";
 import { STAGES, type StageId } from "../subLesson";
 import type { CheckResult } from "../types";
 import { lessonView, runStudioCheck, songView } from "./checks";
@@ -306,8 +307,7 @@ export function StudioLessonPage({ lesson, project, moduleCode, courseTitle, onA
     const i = STAGES.findIndex((x) => x.id === s);
     save({ stage: s, reached: Math.max(studioState.progress(lesson.id).reached, i) });
   };
-  const speech = (s: StageId) =>
-    s === "hook" ? `${lesson.hook.headline}. ${lesson.hook.text}` : s === "watch" ? (steps[Math.max(0, watchIndex)]?.caption ?? "") : s === "try" ? lesson.tryIt.instruction : s === "practice" ? lesson.practice.instruction : s === "quick" ? lesson.quick.question : `Well done. ${lesson.recap.join(" ")}`;
+  const speech = (s: StageId) => studioSpeech(lesson, s, watchIndex);
   useEffect(() => {
     if (voice && canSpeak && stage !== "watch") speak(speech(stage));
     else if (!voice) stopSpeaking();
