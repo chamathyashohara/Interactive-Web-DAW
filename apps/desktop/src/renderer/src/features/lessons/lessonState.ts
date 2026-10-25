@@ -18,10 +18,15 @@ export type LearnViewState =
   | { kind: "path" }
   | { kind: "kick" }
   | { kind: "sequencer" }
+  | { kind: "mixing" }
   | { kind: "collection"; id: string }
+  /** `from`: the course it was opened from (a Piano sub-lesson linked in Make a Song goes back there). */
   | { kind: "sub"; id: string }
   | { kind: "earlier"; id: string }
-  | { kind: "studio"; id: string };
+  /** `course`: the course it was opened from (a lesson in two courses goes back to the right one). */
+  | { kind: "studio"; id: string; course?: "piano" | "mixing" | "kick" | "sequencer" }
+  /** A Special task (the last part of a course) or the final "Build the whole song" card. */
+  | { kind: "special"; id: string };
 export type WorkStage = "try" | "practice";
 
 export interface SubProgress {

@@ -7,9 +7,14 @@ import { categoryCounts, filterSamples } from "../../../samples/filter";
 import { libraryStore, previewIdStore, statusStore, useStore } from "../../../store";
 import { PianoPane } from "../PianoPane";
 import { browserStore, readJson, writeJson } from "../storage";
-import { LESSON_TRACK_PREFIX, lessonView } from "./checks";
+import { LESSON_TRACK_PREFIX, lessonView, songView } from "./checks";
+import { trackElement } from "./songChecks";
+import { studioCtx, studioState } from "./studioState";
+import { toGuideNotes } from "../subLesson";
 import { barTick } from "./exampleSong";
-import type { Target } from "./types";
+import { newTrackOps } from "./lessonTools";
+import type { Ghost, Target, Tool } from "./types";
+import { AutomationLane, ClipTools, LessonMixer } from "./WorkspaceTools";
 
 /**
  * The Kick lessons' workspace (the right-hand pane, like the Piano lessons' piano roll): a sound browser and an
@@ -29,7 +34,23 @@ export interface StudioGuide {
   editNotes?: boolean;
   /** No editing (Hook, Watch, Quick check). */
   readOnly?: boolean;
+  /** Extra tools for this exercise (Make a Song lessons). */
+  tools?: Tool[];
+  /** Faint notes to copy in the notes editor (Special tasks). */
+  ghosts?: Ghost[];
 }
+
+/** Tracks the learner can add (Make a Song): the name says which element it is. */
+const NEW_TRACKS: { name: string; kind: "synth" | "drums"; color: string }[] = [
+  { name: "Pads", kind: "synth", color: "#818cf8" },
+  { name: "Strings", kind: "synth", color: "#c084fc" },
+  { name: "Bass", kind: "synth", color: "#a78bfa" },
+  { name: "Arp", kind: "synth", color: "#34d399" },
+  { name: "Melody", kind: "synth", color: "#facc15" },
+  { name: "Kick", kind: "drums", color: "#f97316" },
+  { name: "Hats", kind: "drums", color: "#a3e635" },
+  { name: "Clap", kind: "drums", color: "#fb7185" },
+];
 
 const CATEGORY_ORDER: Category[] = ["Kick", "Snare", "Clap", "Hat", "Cymbal", "Tom", "Percussion", "Bass", "Keys", "Pad", "Synth", "FX", "Loop", "Other"];
 const DRAG_TYPE = "application/x-lesson-sound";
@@ -152,8 +173,11 @@ function beatsText(ticks: number) {
 const snapTo = (ticks: number, grid: number, snap: boolean) => Math.max(0, snap ? Math.floor(ticks / grid) * grid : Math.round(ticks));
 
 /** `ready` is false while the lesson's own workspace is being swapped in (the previous lesson's tracks are hidden). */
-export function StudioPane({ project, guide, ready = true }: { project: Project; guide: StudioGuide; ready?: boolean }) {
-  const all = lessonView(project);
+/** `scope: "song"` works on the learner's own song (the last card) instead of the lesson's workspace tracks. */
+export function StudioPane({ project, guide, ready = true, scope }: { project: Project; guide: StudioGuide; ready?: boolean; scope?: "song" }) {
+  const all = scope === "song" ? songView(project) : lessonView(project);
+  /** New tracks belong to the lesson workspace, or to the song itself on the last card. */
+  const newTrackId = () => (scope === "song" ? `track-${uuid()}` : `${LESSON_TRACK_PREFIX}${uuid()}`);
   const view = ready ? all : { ...all, trackOrder: [], tracks: {} };
   const status = useStore(statusStore);
   const lib = useStore(libraryStore);
@@ -173,6 +197,26 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
     setDragState(d);
   };
   const [message, setMessage] = useState("");
+  const tools = guide.tools ?? [];
+  const has = (t: Tool) => tools.includes(t) && !guide.readOnly;
+  const [lanes, setLanes] = useState<Record<string, boolean>>({});
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const addTrack = (name: string) => {
+    const t = NEW_TRACKS.find((x) => x.name === name);
+    if (!t) return;
+    const id = newTrackId();
+    const clipId = uuid();
+    void batch(newTrackOps(t.kind, t.name, t.color, id, clipId), "");
+    setSelected({ trackId: id, clipId });
+  };
+  const rename = () => {
+    if (renaming && renaming.name.trim()) void window.daw.dispatch({ type: "updateTrack", trackId: renaming.id, changes: { name: renaming.name.trim().slice(0, 40) } });
+    setRenaming(null);
+  };
+  const exportSong = async () => {
+    const r = await window.daw.exportWav();
+    setMessage(r.ok ? "Exporting your song: it is saved where you chose." : r.canceled ? "" : `Export failed: ${r.reason ?? "unknown error"}`);
+  };
   const [bpm, setBpm] = useState(String(project.tempo));
   useEffect(() => setBpm(String(project.tempo)), [project.tempo]);
   useEffect(() => setPxPerBar(project.songBars > 12 ? 56 : 110), [project.songBars > 12]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -195,7 +239,7 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
   const dropSound = (sampleId: string, tick: number, laneTrackId: string | null) => {
     const e = lib.entries.find((x) => x.id === sampleId);
     if (!e) return;
-    const r = dropSampleOps(project, { id: e.id, name: e.name, category: e.category, durationSec: e.durationSec, meta: e.meta }, snapTo(tick, grid, snap), laneTrackId, { trackId: `${LESSON_TRACK_PREFIX}${uuid()}`, clipId: uuid(), noteId: uuid() }, CATEGORY_COLORS[e.category]);
+    const r = dropSampleOps(project, { id: e.id, name: e.name, category: e.category, durationSec: e.durationSec, meta: e.meta }, snapTo(tick, grid, snap), laneTrackId, { trackId: newTrackId(), clipId: uuid(), noteId: uuid() }, CATEGORY_COLORS[e.category]);
     if (!r.ok) return setMessage(r.reason);
     void batch(r.ops, "");
     setSelected({ trackId: r.trackId, clipId: r.clipId });
@@ -292,6 +336,31 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
   );
   const gridBg = { backgroundImage: `repeating-linear-gradient(90deg, rgba(255,255,255,.10) 0 1px, transparent 1px ${pxPerBar}px), repeating-linear-gradient(90deg, rgba(255,255,255,.04) 0 1px, transparent 1px ${pxPerBar / 4}px)` };
   const editable = selTrack && selClip && selTrack.instrument !== "sample" ? { track: selTrack, clip: selClip } : null;
+  /** The faint notes for the selected clip: a ghost for this track's element on the bar where the clip starts. */
+  const ghostNotes = (() => {
+    if (!editable || !guide.ghosts?.length) return undefined;
+    const el = trackElement(editable.track, studioCtx());
+    const g = guide.ghosts.find((x) => x.element === el && barTick(x.bar) === editable.clip.startTick);
+    return g ? toGuideNotes(g.notes, true) : undefined;
+  })();
+  const [songBars, setSongBars] = useState(String(project.songBars));
+  useEffect(() => setSongBars(String(project.songBars)), [project.songBars]);
+  const commitSongBars = () => {
+    const v = Math.round(Number(songBars));
+    if (Number.isFinite(v) && v >= 1 && v <= 128 && v !== project.songBars) void batch([{ type: "setSongLength", bars: v }], "");
+    else setSongBars(String(project.songBars));
+  };
+  /** The Mixing Special task's levels and pans, put on the tracks by element. */
+  const useMix = () => {
+    const mix = studioState.mix();
+    if (!mix) return setMessage("No saved mix yet: finish the Mixing Special task and press Save my mix.");
+    const ops: OpBody[] = [];
+    for (const id of view.trackOrder) {
+      const m = mix[trackElement(view.tracks[id]!, studioCtx())];
+      if (m) ops.push({ type: "updateTrack", trackId: id, changes: { volume: m.volume, pan: m.pan } });
+    }
+    void batch(ops, "");
+  };
 
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-3" data-testid="studio-pane">
@@ -325,6 +394,37 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
             Zoom
             <input type="range" min={36} max={220} value={pxPerBar} onChange={(e) => setPxPerBar(Number(e.target.value))} className="w-20 accent-violet-400" aria-label="Zoom" />
           </label>
+          {has("loop") && (
+            <button className={`${btn} ${project.loop ? "!bg-emerald-400/15 !text-emerald-200" : ""}`} onClick={() => void window.daw.dispatch({ type: "setLoop", loop: project.loop ? null : { startTick: 0, endTick: 4 * TICKS_PER_BAR } })} aria-pressed={Boolean(project.loop)} title="Loop: play the first 4 bars over and over" data-testid="kloop">
+              Loop {project.loop ? "on" : "off"}
+            </button>
+          )}
+          {has("addTrack") && (
+            <select value="" onChange={(e) => addTrack(e.target.value)} className="rounded-lg bg-white/5 px-1.5 py-1 text-xs text-slate-100" aria-label="Add a track" data-testid="kadd-track">
+              <option value="">+ Add track…</option>
+              {NEW_TRACKS.map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.name} ({t.kind === "drums" ? "drums" : "synth"})
+                </option>
+              ))}
+            </select>
+          )}
+          {has("songLength") && (
+            <label className="flex items-center gap-1.5 text-xs text-slate-400">
+              Song bars
+              <input value={songBars} onChange={(e) => setSongBars(e.target.value)} onBlur={commitSongBars} onKeyDown={(e) => e.key === "Enter" && commitSongBars()} className="w-12 rounded-lg bg-white/5 px-1.5 py-1 text-slate-100 ring-1 ring-white/10" aria-label="Song length in bars" data-testid="ksong-bars" />
+            </label>
+          )}
+          {has("useMix") && (
+            <button className={btn} onClick={useMix} title="Put the levels and pans from your Mixing Special task on these tracks" data-testid="kuse-mix">
+              Use my mix
+            </button>
+          )}
+          {has("export") && (
+            <button className={btn} onClick={() => void exportSong()} title="Render the whole song to a WAV file" data-testid="kexport">
+              ⤓ Export WAV
+            </button>
+          )}
           <span className="ml-auto flex gap-1.5">
             <button className={btn} disabled={readOnly || !selClip} onClick={cmdDuplicate} title="Duplicate the selected clip into the next free space (Ctrl+D)" data-testid="kduplicate">
               Duplicate
@@ -356,12 +456,22 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
                   const t = view.tracks[id]!;
                   const fit = t.sample?.bpm ? t.sample : null;
                   return (
-                    <div key={id} className="flex border-b border-white/5" style={{ height: LANE_H }} data-testid={`klane-${id}`}>
+                    <div key={id}>
+                    <div className="flex border-b border-white/5" style={{ height: LANE_H }} data-testid={`klane-${id}`}>
                       <div className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-white/10 bg-[#141821] px-2" style={{ width: HEAD_W }}>
                         <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: t.color }} />
-                        <span className="min-w-0 flex-1 truncate text-xs text-slate-100" title={t.name}>
-                          {t.name}
-                        </span>
+                        {renaming?.id === id ? (
+                          <input autoFocus value={renaming.name} onChange={(e) => setRenaming({ id, name: e.target.value })} onBlur={rename} onKeyDown={(e) => (e.key === "Enter" ? rename() : e.key === "Escape" && setRenaming(null))} className="min-w-0 flex-1 rounded bg-white/10 px-1 text-xs text-white" aria-label="Track name" data-testid={`krename-${id}`} />
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-xs text-slate-100" title={has("rename") ? `${t.name}: double-click to rename` : t.name} onDoubleClick={() => has("rename") && setRenaming({ id, name: t.name })} data-testid={`kname-${id}`}>
+                            {t.name}
+                          </span>
+                        )}
+                        {has("automation") && (
+                          <button className={`rounded px-1 text-[11px] ${lanes[id] ? "bg-sky-400/25 text-sky-100" : "bg-white/5 text-slate-400"}`} onClick={() => setLanes({ ...lanes, [id]: !lanes[id] })} aria-pressed={!!lanes[id]} title="Automation lane (filter or volume)" data-testid={`kauto-toggle-${id}`}>
+                            ∿
+                          </button>
+                        )}
                         {fit && (
                           <button className={`rounded px-1 text-[10px] ${fit.fit ? "bg-emerald-400/20 text-emerald-200" : "bg-white/5 text-slate-400"}`} disabled={readOnly} onClick={() => void window.daw.dispatch({ type: "updateSample", trackId: id, changes: { fit: !fit.fit } })} aria-pressed={!!fit.fit} title="Fit the loop to the song tempo" data-testid={`kfit-${id}`}>
                             {fit.fit && fit.bpm !== project.tempo ? `${fit.bpm}→${project.tempo}` : "Fit"}
@@ -411,6 +521,8 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
                         })}
                       </div>
                     </div>
+                    {lanes[id] && <AutomationLane track={t} project={project} width={width} pxPerBar={pxPerBar} grid={grid} snap={snap} readOnly={readOnly} />}
+                    </div>
                   );
                 })}
                 <div className="flex" style={{ height: view.trackOrder.length ? 56 : 150 }}>
@@ -431,15 +543,17 @@ export function StudioPane({ project, guide, ready = true }: { project: Project;
             {message}
           </div>
         )}
+        {!readOnly && <ClipTools project={project} tracks={view.trackOrder.map((id) => view.tracks[id]!)} track={selTrack} clip={selClip} tools={tools} run={(ops, refused) => void batch(ops, refused)} />}
+        {has("mixer") && <LessonMixer project={project} tracks={view.trackOrder.map((id) => view.tracks[id]!)} />}
       </div>
       {guide.editNotes &&
         (editable ? (
           <div className="flex h-[400px] flex-col" data-testid="knotes">
-            <PianoPane project={project} shown={editable} guide={{}} />
+            <PianoPane project={project} shown={editable} guide={ghostNotes ? { notes: ghostNotes } : {}} />
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-white/15 px-4 py-3 text-sm text-slate-400" data-testid="knotes-empty">
-            Select a clip on Song: Drums or Song: Chords to edit its notes here.
+            Select a clip on a drum or synth track to edit its notes here.
           </div>
         ))}
     </section>

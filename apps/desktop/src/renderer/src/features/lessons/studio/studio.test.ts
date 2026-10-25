@@ -61,8 +61,9 @@ describe("Kick Drums course content", () => {
       expect(l.recap.length).toBeGreaterThanOrEqual(2);
       expect(l.hook.text.length).toBeGreaterThan(60);
     }
-    expect(nextStudioLesson("M12.6")?.id).toBe("M13.1");
-    expect(nextStudioLesson("M13.6")).toBeNull();
+    expect(nextStudioLesson("M12.6")?.id).toBe("M33.1"); // K1 ends; K2 Arranging with clips
+    expect(nextStudioLesson("M13.6")?.id).toBe("M38.4"); // K3 ends; K4 The drop and the ending
+    expect(nextStudioLesson("M39.1")).toBeNull();
   });
 });
 
@@ -349,7 +350,7 @@ describe("Drum sequencer course", () => {
       expect(setUp(id).tracks["lesson-k-seq"]!.instrument, id).toBe("drums");
     }
     expect(nextStudioLesson("M14.10")).toBeNull();
-    expect(nextStudioLesson("M14.5")?.id).toBe("M14.6");
+    expect(nextStudioLesson("M14.5")?.id).toBe("M32.2"); // S1 ends; S2 Hats, clap and snare
   });
 
   it("M14.1: a kick (36) on pad 1; the hint names the top row", () => {

@@ -1,9 +1,11 @@
-import { EARLIER_LESSONS, MODULES, isBuilt, moduleProgress, type PathModule } from "./curriculum";
+import { EARLIER_LESSONS, MODULES, isReady, moduleProgress, type PathModule } from "./curriculum";
 import { lessonEvents } from "./events";
 import { CheckIcon, ConceptIcon } from "./Icons";
+import { SpecialCards } from "./studio/SpecialCards";
+import { COURSE_SPECIALS } from "./studio/specials";
 
 /** One module of a course; `ready` says which of its lessons can be opened (default: the Piano sub-lessons). */
-export function ModuleCard({ m, onOpen, ready = isBuilt }: { m: PathModule; onOpen: (subId: string) => void; ready?: (id: string) => boolean }) {
+export function ModuleCard({ m, onOpen, ready = isReady }: { m: PathModule; onOpen: (subId: string) => void; ready?: (id: string) => boolean }) {
   const p = moduleProgress(m, lessonEvents.isCompleted, ready);
   return (
     <section className="flex flex-col rounded-2xl border border-white/10 bg-[#11141c] p-5" data-testid={`module-${m.id}`}>
@@ -66,6 +68,7 @@ export function LearningPath({ onOpenSub, onOpenEarlier }: { onOpenSub: (id: str
         {MODULES.map((m) => (
           <ModuleCard key={m.id} m={m} onOpen={onOpenSub} />
         ))}
+        <SpecialCards ids={COURSE_SPECIALS.piano} onOpen={onOpenSub} />
         <section className="flex flex-col rounded-2xl border border-white/10 bg-[#11141c] p-5" data-testid="module-earlier">
           <h2 className="text-base font-semibold text-white">Earlier lessons</h2>
           <p className="mt-1 text-xs text-slate-500">Short single-exercise lessons. They will be folded into the modules above.</p>

@@ -574,3 +574,38 @@ Note: the DAW records every song change in Undo, so taking lesson tracks out or 
 Verified: 2 unit tests (save on leaving / restore on return, copies with new ids and all notes); 13/13 in the built
 app (sequencer and Kick lessons leave nothing in the Studio, their work comes back, Apply adds one copy, restart in a
 lesson leaves the Studio clean); regressions home 27/27, Kick 44/44, sequencer 29/29, Piano 196/196, 585 unit tests.
+
+## Song-making lessons inside the courses, Special tasks and the whole song (2026-10-25)
+
+Source: `Song-Making-Learning-Workflow.pdf` (comparison in `SONG-WORKFLOW-GAPS.md`). There is no separate "Make a Song"
+course. Its new lessons go into the course they teach, easiest first. Each course ends with **Special task** cards that
+build one part of a single song (Am-F-C-G, 124 BPM). The last main card puts all those parts together in the DAW.
+
+**Where the lessons are**
+
+| Course | Modules (lessons, easiest first) | Special tasks at the end |
+| --- | --- | --- |
+| Piano | L1-L4 as before; L5 + M31.3 Repeat and transpose, M31.4 Layer on pads; L6 + M38.2 Melody theory, M38.3 The four melody patterns; **new L7 "Bass and arp"**: M35.1 Bass from the roots, M35.2 Chop the bass, M36.1 Arp preset | M50.1 chords, pads and melody; M50.2 bass and arp |
+| Kick Drums | K1 DAW basics and sounds (M30.1, M12.1-M12.6); K2 Arranging with clips (M33.1, M33.2, M34.1, M34.2, M36.2); K3 Build-up and drop (M13.1, M13.2, M37.1, M37.2, M13.3, M37.3, M13.4, M13.5, M13.6); K4 The drop and the ending (M38.4, M39.1) | M50.4 transitions |
+| Drum sequencer | S1 Kick basics (M14.1-M14.5); S2 Hats, clap and snare (M32.2, M32.3, M14.7); S3 Shaping the beat (M14.6, M14.8-M14.10) | M50.3 drum beat |
+| Mixing | X1 (M40.1-M40.5) | M50.5 mix |
+| Main page, last card | **Build the whole song** (cyan, progress = Special tasks done of 6) | M51.1 |
+
+**Special tasks** (`studio/specials.ts`, page `studio/SpecialTaskPage.tsx`, amber "★ Special task" cards)
+
+- A short brief, then steps. Each step has its own Check button (the result names the bar and track), 2-3 hints and the
+  tools it needs. M50.1 draws faint "ghost" notes to copy over. Each task runs in its own workspace, like a lesson.
+- Reference parts (tracks named "Reference: X") play under the task so the learner hears the song. They are never copied.
+- When a task is done, **Apply it in the studio** copies the learner's part into the song as "Song · Piano", "Song ·
+  Bass", ... Applying again replaces the earlier copy. M50.5 saves the mix (levels and pans) instead, under **Save my mix**.
+- **M51.1 Build the whole song** works on the learner's real song (the Studio tracks). It checks that every part is there
+  (a missing part names the Special task that makes it), then: 112 bars, intro, first drop 17-32, strip back with the
+  filter rising, full drop 65-96, outro, the transitions, headroom with the saved mix, then export (tick).
+
+Removed: the "Make a Song" card and the U0-U11 module list, M41.1 (replaced by M51.1), and the links to existing lessons
+(0.2, 1.1, 1.2, 2.1 and 8.1 are already in Piano and the Drum sequencer).
+
+Verified: typecheck clean; 638 desktop unit tests (course order, every Special task's setup failing and the intended
+part passing, apply replacing older copies, the whole-song checks). In the built app: Special tasks 32/32 (every task
+done step by step, applied, then the whole song built, mixed and exported), main page 27/27, Kick 44/44, Drum
+sequencer 29/29, Apply 13/13, Piano 196/196.

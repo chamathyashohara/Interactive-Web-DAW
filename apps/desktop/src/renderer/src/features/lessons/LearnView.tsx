@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Project } from "@daw/shared";
 import { LESSONS } from "./content";
-import { BUILT, MODULES, nextBuilt, searchPath, type PathHit } from "./curriculum";
+import { BUILT, MODULES, PIANO_STUDIO_IDS, nextBuilt, searchPath, type PathHit } from "./curriculum";
 import { lessonEvents } from "./events";
 import { CollectionPage } from "./CollectionPage";
 import { ArrowLeft, ArrowRight, BellIcon, BookIcon, ConceptIcon, DrumIcon, FolderIcon, GearIcon, HomeIcon, LogoutIcon, MusicIcon, PadsIcon, SearchIcon, SpeakerIcon, UsersIcon, WaveLogoIcon } from "./Icons";
@@ -16,8 +16,10 @@ import { lessonState, type LearnViewState } from "./lessonState";
 import { StudySection } from "./StudySection";
 import { studyLog } from "./studyLog";
 import { CoursePath } from "./studio/CoursePath";
-import { applyCopiesOps, parkLessonWork } from "./studio/park";
-import { COURSES, STUDIO_LESSONS, courseOf, nextStudioLesson, studioModuleOf } from "./studio/courses";
+import { applyCopiesOps, applyPartOps, parkLessonWork } from "./studio/park";
+import { COURSES, STUDIO_LESSONS, courseOf, nextStudioLesson, studioModuleOf, type CourseId } from "./studio/courses";
+import { SPECIAL_TASKS } from "./studio/specials";
+import { SpecialTaskPage } from "./studio/SpecialTaskPage";
 import { StudioLessonPage } from "./studio/StudioLessonPage";
 import { studioState } from "./studio/studioState";
 import { SubLessonPage } from "./SubLessonPage";
@@ -43,7 +45,8 @@ function restoredView(): View {
   if (v.kind === "sub" && BUILT[v.id]) return v;
   if (v.kind === "earlier" && LESSONS.some((l) => l.id === v.id)) return v;
   if (v.kind === "collection" && mainLesson(v.id)) return v;
-  if (v.kind === "path" || v.kind === "kick" || v.kind === "sequencer") return v;
+  if (v.kind === "path" || v.kind === "kick" || v.kind === "sequencer" || v.kind === "mixing") return v;
+  if (v.kind === "special" && SPECIAL_TASKS[v.id]) return v;
   if (v.kind === "studio" && STUDIO_LESSONS[v.id]) return v;
   return { kind: "lessons" };
 }
@@ -166,26 +169,46 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
     if (open) onOpenClip(open.trackId, open.clipId);
     onExit();
   };
+  /** "Apply it in the studio" on a Special task: the part's tracks go into the song as "Song · ..." (replacing an earlier copy). */
+  const applyPart = async () => {
+    stopSpeaking();
+    const { ops, open } = applyPartOps((await window.daw.getInitial()).project, () => crypto.randomUUID());
+    if (!(await parkLessonWork(ops))) return;
+    if (open) onOpenClip(open.trackId, open.clipId);
+    onExit();
+  };
   /** Opens a sub-lesson; one the learner finished starts again from Hook (see `lessonState.replaySub`). */
   const openSub = (id: string) => {
     lessonState.replaySub(id);
     show({ kind: "sub", id });
   };
-  const openHit = (h: PathHit) => (h.kind === "sub" ? openSub(h.id) : show({ kind: "earlier", id: h.id }));
-  /** Piano opens the L1-L6 learning path, Kick Drums and Drum sequencer their own courses; the others a collection page. */
-  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : id === "kick" || id === "sequencer" ? { kind: id } : { kind: "collection", id });
-  /** Opens a studio lesson (Kick Drums, Drum sequencer); a finished one starts again from Hook. */
-  const openStudio = (id: string) => {
+  /** Piano opens the L1-L7 learning path, Kick Drums, Drum sequencer and Mixing their courses, the last card its task. */
+  const openMain = (id: MainLessonId) => show(id === "piano" ? { kind: "path" } : id === "kick" || id === "sequencer" || id === "mixing" ? { kind: id } : id === "final" ? { kind: "special", id: "M51.1" } : { kind: "collection", id });
+  /** Opens a workspace lesson; a finished one starts again from Hook. `course` says where it was opened from. */
+  const openStudio = (id: string, course?: CourseId | "piano") => {
     studioState.replay(id);
-    show({ kind: "studio", id });
+    show(course ? { kind: "studio", id, course } : { kind: "studio", id });
   };
-  const openRelated = (r: RelatedLesson) => (r.kind === "sub" ? openSub(r.id) : show({ kind: "earlier", id: r.id }));
+  /** Any lesson of a list: a Piano sub-lesson, a workspace lesson or a Special task. */
+  const openAny = (id: string, course?: CourseId | "piano") => (BUILT[id] ? openSub(id) : SPECIAL_TASKS[id] ? show({ kind: "special", id }) : openStudio(id, course));
+  const openHit = (h: PathHit) => (h.kind === "sub" ? openAny(h.id, "piano") : show({ kind: "earlier", id: h.id }));
+  const openFromCourse = (id: string, course: CourseId) => openAny(id, course);
+  const openRelated = (r: RelatedLesson) => (r.kind === "sub" ? openSub(r.id) : r.kind === "studio" ? openStudio(r.id) : show({ kind: "earlier", id: r.id }));
   const participant = studyLog.session()?.participant ?? null;
 
   const sub = view.kind === "sub" ? BUILT[view.id] : undefined;
   const studio = view.kind === "studio" ? STUDIO_LESSONS[view.id] : undefined;
-  const studioModule = studio ? studioModuleOf(studio.id) : undefined;
-  const studioCourse = studio ? courseOf(studio.id) : undefined;
+  /** Where a workspace lesson belongs: the Piano path (L5-L7) or a course; its way back and its next lesson. */
+  const onPiano = studio && (PIANO_STUDIO_IDS.includes(studio.id) || (view.kind === "studio" && view.course === "piano"));
+  const studioModule = studio ? (studioModuleOf(studio.id) ?? MODULES.find((m) => m.items.some((i) => i.id === studio.id))) : undefined;
+  const course = studio && !onPiano ? (view.kind === "studio" && view.course && view.course !== "piano" ? COURSES[view.course] : courseOf(studio.id)) : undefined;
+  const where = studio
+    ? onPiano || !course
+      ? { title: "Learning Path", back: { kind: "path" } as View, next: (id: string) => nextBuilt(id), open: (id: string) => openAny(id, "piano") }
+      : { title: course.title, back: { kind: course.id } as View, next: (id: string) => nextStudioLesson(id, course.id), open: (id: string) => openAny(id, course.id) }
+    : undefined;
+  const special = view.kind === "special" ? SPECIAL_TASKS[view.id] : undefined;
+  const specialHome = special ? (special.id === "M51.1" ? { title: "All lessons", back: { kind: "lessons" } as View } : courseOf(special.id) ? { title: courseOf(special.id)!.title, back: { kind: courseOf(special.id)!.id } as View } : { title: "Learning Path", back: { kind: "path" } as View }) : undefined;
   const earlierIndex = view.kind === "earlier" ? LESSONS.findIndex((l) => l.id === view.id) : -1;
   const earlier = earlierIndex >= 0 ? LESSONS[earlierIndex] : undefined;
   const progress = overallProgress(LESSONS, lessonEvents.isCompleted);
@@ -265,11 +288,11 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               <span className="text-slate-600">/</span>
               <span className="text-slate-200">Piano</span>
             </nav>
-            <LearningPath onOpenSub={openSub} onOpenEarlier={(id) => show({ kind: "earlier", id })} />
+            <LearningPath onOpenSub={(id) => openAny(id, "piano")} onOpenEarlier={(id) => show({ kind: "earlier", id })} />
           </>
         )}
 
-        {(view.kind === "kick" || view.kind === "sequencer") && (
+        {(view.kind === "kick" || view.kind === "sequencer" || view.kind === "mixing") && (
           <>
             <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-400">
               <button onClick={() => show({ kind: "lessons" })} className="flex items-center gap-2 hover:text-slate-200" data-testid="back-to-lessons">
@@ -278,22 +301,22 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               <span className="text-slate-600">/</span>
               <span className="text-slate-200">{COURSES[view.kind].title}</span>
             </nav>
-            <CoursePath course={view.kind} onOpen={openStudio} />
+            <CoursePath course={view.kind} onOpen={(id) => openFromCourse(id, view.kind as CourseId)} />
           </>
         )}
 
         {studio && (
           <>
-            <button onClick={() => show({ kind: studioCourse!.id })} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-kick">
-              <ArrowLeft size={16} /> Back to {studioCourse!.title}
+            <button onClick={() => show(where!.back)} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-kick">
+              <ArrowLeft size={16} /> Back to {where!.title}
             </button>
             <div className="flex flex-wrap items-center gap-5">
               <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500 text-white shadow-lg shadow-violet-500/25">
-                {studioCourse?.id === "sequencer" ? <PadsIcon size={30} /> : <DrumIcon size={30} />}
+                {course?.id === "sequencer" ? <PadsIcon size={30} /> : course?.id === "kick" ? <DrumIcon size={30} /> : <MusicIcon size={30} />}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold tracking-widest text-violet-300 uppercase">
-                  {studioModule?.code} · {studioModule?.title} · {studio.id}
+                  {studioModule?.code} · {studioModule?.title}
                 </div>
                 <h1 className="mt-0.5 text-3xl font-semibold text-white" data-testid="learn-title">
                   {studio.title}
@@ -306,16 +329,37 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               lesson={studio}
               project={project}
               moduleCode={studioModule?.code ?? ""}
-              courseTitle={studioCourse!.title}
+              courseTitle={where!.title}
               onApply={() => void applyStudio()}
-              onBackToPath={() => show({ kind: studioCourse!.id })}
+              onBackToPath={() => show(where!.back)}
               next={(() => {
-                const n = nextStudioLesson(studio.id);
-                return n ? { title: n.title, open: () => openStudio(n.id) } : null;
+                const n = where!.next(studio.id);
+                return n ? { title: n.title, open: () => where!.open(n.id) } : null;
               })()}
               voice={voice}
               canSpeak={canSpeak}
             />
+          </>
+        )}
+
+        {special && (
+          <>
+            <button onClick={() => show(specialHome!.back)} className="flex items-center gap-2 self-start text-sm text-slate-400 hover:text-slate-200" data-testid="learn-back-special">
+              <ArrowLeft size={16} /> Back to {specialHome!.title}
+            </button>
+            <div className="flex flex-wrap items-center gap-5">
+              <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-400 text-2xl text-slate-900 shadow-lg shadow-amber-400/25" aria-hidden="true">
+                ★
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-semibold tracking-widest text-amber-300 uppercase">{special.id === "M51.1" ? "The course song" : `${specialHome!.title} · Special task`}</div>
+                <h1 className="mt-0.5 text-3xl font-semibold text-white" data-testid="learn-title">
+                  {special.title}
+                </h1>
+                <p className="mt-1 text-[15px] text-slate-400">{special.summary}</p>
+              </div>
+            </div>
+            <SpecialTaskPage key={special.id} task={special} project={project} onApply={() => void applyPart()} onBack={() => show(specialHome!.back)} backLabel={`Back to ${specialHome!.title}`} />
           </>
         )}
 
@@ -351,7 +395,7 @@ export function LearnView({ project, onOpenClip, onExit }: LearnViewProps) {
               moduleCode={module?.code ?? ""}
               next={(() => {
                 const n = nextBuilt(sub.id);
-                return n ? { title: n.title, open: () => openSub(n.id) } : null;
+                return n ? { title: n.title, open: () => openAny(n.id, "piano") } : null;
               })()}
               voice={voice}
               canSpeak={canSpeak}

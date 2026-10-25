@@ -2,11 +2,18 @@ import { TICKS_PER_BAR, type Project, type Track } from "@daw/shared";
 import type { CheckResult } from "../types";
 import { KICK, SNARE, SONG, barTick } from "./exampleSong";
 import { runSeqCheck } from "./seqChecks";
+import { runSongCheck } from "./songChecks";
 import type { Role, SoundInfo, SoundWant, StudioCheck, StudioCtx } from "./types";
 
 /** Tracks the Kick lessons create: sounds dropped in the lesson workspace, and the example song. */
 export const LESSON_TRACK_PREFIX = "lesson-k-";
 export const isLessonTrack = (id: string) => id.startsWith(LESSON_TRACK_PREFIX) || id.startsWith("lesson-song-");
+
+/** The learner's own song: every track except the lessons' (the capstone checks this). */
+export function songView(p: Project): Project {
+  const trackOrder = p.trackOrder.filter((id) => !isLessonTrack(id) && id !== "lesson-practice");
+  return { ...p, trackOrder, tracks: Object.fromEntries(trackOrder.map((id) => [id, p.tracks[id]!])) };
+}
 
 /** The project as the lessons see it: only their own tracks, so the learner's song never affects a check. */
 export function lessonView(p: Project): Project {
@@ -283,7 +290,7 @@ export function runStudioCheck(p: Project, check: StudioCheck, ctx: StudioCtx): 
       );
     }
     default:
-      // The step sequencer lessons (Drum sequencer course).
-      return runSeqCheck(p, check)!;
+      // The step sequencer lessons (Drum sequencer), then the Make a Song lessons.
+      return runSeqCheck(p, check) ?? runSongCheck(p, check, ctx)!;
   }
 }
